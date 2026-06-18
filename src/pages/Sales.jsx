@@ -1,0 +1,324 @@
+import { useEffect, useState } from 'react'
+import { supabase } from '../lib/supabaseClient'
+
+function formatCurrency(n) {
+  return '₹' + Number(n || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })
+}
+
+function formatDate(dateStr) {
+  return new Date(dateStr).toLocaleDateString('en-IN', {
+    day: '2-digit', month: 'short', year: 'numeric',
+  })
+}
+
+function batchLabel(batch) {
+  if (!batch) return '—'
+  return `${batch.farms?.name ?? 'Farm'} — ${formatDate(batch.start_date)} (${batch.chick_count?.toLocaleString()} chicks)`
+}
+
+// ─── Record Sale Modal ────────────────────────────────────────────────────────
+
+function SaleModal({ batches, vendors, onClose, onSaved }) {
+  const [form, setForm] = useState({
+    batch_id:     batches[0]?.id ?? '',
+    vendor_id:    vendors[0]?.id ?? '',
+    kg_sold:      '',
+    price_per_kg: '',
+    date:         new Date().toISOString().slice(0, 10),
+    notes:        '',
+  })
+  const [saving, setSaving] = useState(false)
+  const [error, setError]   = useState('')
+
+  function set(field) {
+    return e => setForm(prev => ({ ...prev, [field]: e.target.value }))
+  }
+
+  const total =
+    form.kg_sold && form.price_per_kg
+      ? (parseFloat(form.kg_sold) * parseFloat(form.price_per_kg)).toFixed(2)
+      : null
+
+  async function handleSubmit(e) {
+    e.preventDefault()
+    setError('')
+    setSaving(true)
+
+    const { error } = await supabase.from('sales').insert({
+      batch_id:     form.batch_id,
+      vendor_id:    form.vendor_id,
+      kg_sold:      parseFloat(form.kg_sold),
+      price_per_kg: parseFloat(form.price_per_kg),
+      date:         form.date,
+      notes:        form.notes.trim() || null,
+    })
+
+    if (error) { setError(error.message); setSaving(false) }
+    else        { onSaved() }
+  }
+
+  const inputCls = "w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+      <div className="w-full max-w-lg bg-white rounded-2xl shadow-xl p-6">
+        <div className="flex items-center justify-between mb-5">
+          <h2 className="text-lg font-semibold text-gray-800">Record Sale</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
+        </div>
+
+        {batches.length === 0 ? (
+          <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-4 py-3">
+            No active batches. Start a batch first before recording a sale.
+          </p>
+        ) : vendors.length === 0 ? (
+          <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-4 py-3">
+            No vendors found. Add a vendor first.
+          </p>
+        ) : (
+          <form onSubmit={handleSubmit} className="space-y-4">
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Batch (active only) *</label>
+              <select required value={form.batch_id} onChange={set('batch_id')} className={inputCls}>
+                {batches.map(b => (
+                  <option key={b.id} value={b.id}>{batchLabel(b)}</option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Vendor *</label>
+              <select required value={form.vendor_id} onChange={set('vendor_id')} className={inputCls}>
+                {vendors.map(v => (
+                  <option key={v.id} value={v.id}>{v.name}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Kg Sold *</label>
+                <input
+                  required type="number" min="0.01" step="0.01"
+                  value={form.kg_sold} onChange={set('kg_sold')}
+                  placeholder="e.g. 120.5"
+                  className={inputCls}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Price / kg (₹) *</label>
+                <input
+                  required type="number" min="0.01" step="0.01"
+                  value={form.price_per_kg} onChange={set('price_per_kg')}
+                  placeholder="e.g. 95"
+                  className={inputCls}
+                />
+              </div>
+            </div>
+
+            {/* Auto-calculated total */}
+            <div className={`rounded-xl px-4 py-3 flex items-center justify-between ${
+              total ? 'bg-green-50 border border-green-200' : 'bg-gray-50 border border-gray-100'
+            }`}>
+              <span className="text-sm font-medium text-gray-600">Total Amount</span>
+              <span className={`text-lg font-bold ${total ? 'text-green-700' : 'text-gray-300'}`}>
+                {total ? formatCurrency(total) : '—'}
+              </span>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Date *</label>
+              <input
+                required type="date"
+                value={form.date} onChange={set('date')}
+                className={inputCls}
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
+              <input
+                type="text"
+                value={form.notes} onChange={set('notes')}
+                placeholder="Optional"
+                className={inputCls}
+              />
+            </div>
+
+            {error && (
+              <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</p>
+            )}
+
+            <div className="flex gap-3 pt-1">
+              <button
+                type="button" onClick={onClose}
+                className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit" disabled={saving}
+                className="flex-1 rounded-lg bg-amber-500 hover:bg-amber-600 disabled:opacity-60 px-4 py-2 text-sm font-semibold text-white transition"
+              >
+                {saving ? 'Saving…' : 'Record Sale'}
+              </button>
+            </div>
+          </form>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ─── Main page ────────────────────────────────────────────────────────────────
+
+export default function Sales() {
+  const [sales, setSales]       = useState([])
+  const [batches, setBatches]   = useState([])   // active only for modal
+  const [vendors, setVendors]   = useState([])
+  const [loading, setLoading]   = useState(true)
+  const [showModal, setShowModal] = useState(false)
+
+  async function fetchData() {
+    setLoading(true)
+    const [
+      { data: salesData },
+      { data: batchData },
+      { data: vendorData },
+    ] = await Promise.all([
+      supabase
+        .from('sales')
+        .select('*, batches(start_date, chick_count, farms(name)), vendors(name)')
+        .order('date', { ascending: false })
+        .order('created_at', { ascending: false }),
+      supabase
+        .from('batches')
+        .select('id, start_date, chick_count, farms(name)')
+        .eq('status', 'active')
+        .order('start_date', { ascending: false }),
+      supabase
+        .from('vendors')
+        .select('id, name')
+        .order('name'),
+    ])
+    setSales(salesData || [])
+    setBatches(batchData || [])
+    setVendors(vendorData || [])
+    setLoading(false)
+  }
+
+  useEffect(() => { fetchData() }, [])
+
+  // Revenue this month
+  const now = new Date()
+  const thisMonthRevenue = sales
+    .filter(s => {
+      const d = new Date(s.date)
+      return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth()
+    })
+    .reduce((sum, s) => sum + Number(s.total_amount || 0), 0)
+
+  const monthLabel = now.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' })
+
+  return (
+    <div>
+      {/* Header */}
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-800">Sales</h1>
+          <p className="text-sm text-gray-500 mt-0.5">Record and track all sales</p>
+        </div>
+        <button
+          onClick={() => setShowModal(true)}
+          className="inline-flex items-center gap-2 rounded-lg bg-amber-500 hover:bg-amber-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition"
+        >
+          <span className="text-base leading-none">+</span> Record Sale
+        </button>
+      </div>
+
+      {/* Revenue this month */}
+      <div className="bg-gradient-to-r from-amber-500 to-amber-400 rounded-2xl px-6 py-5 mb-6 shadow-sm flex items-center justify-between">
+        <div>
+          <p className="text-sm text-amber-100 font-medium">Revenue — {monthLabel}</p>
+          <p className="text-3xl font-bold text-white mt-0.5">
+            {loading ? '…' : formatCurrency(thisMonthRevenue)}
+          </p>
+        </div>
+        <span className="text-5xl opacity-30">💰</span>
+      </div>
+
+      {/* Sales table */}
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+        {loading ? (
+          <div className="flex items-center justify-center py-20">
+            <div className="h-8 w-8 rounded-full border-4 border-amber-400 border-t-transparent animate-spin" />
+          </div>
+        ) : sales.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-20 text-gray-400">
+            <span className="text-5xl mb-3">📦</span>
+            <p className="text-sm font-medium">No sales recorded yet</p>
+            <p className="text-xs mt-1">Click "Record Sale" to add one</p>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+          <table className="w-full text-sm min-w-[600px]">
+            <thead>
+              <tr className="bg-gray-50 border-b border-gray-100 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                <th className="px-5 py-3">Date</th>
+                <th className="px-5 py-3">Batch</th>
+                <th className="px-5 py-3">Vendor</th>
+                <th className="px-5 py-3 text-right">Kg Sold</th>
+                <th className="px-5 py-3 text-right">Price / kg</th>
+                <th className="px-5 py-3 text-right">Total</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-50">
+              {sales.map(s => (
+                <tr key={s.id} className="hover:bg-amber-50/40 transition">
+                  <td className="px-5 py-4 text-gray-600 whitespace-nowrap">{formatDate(s.date)}</td>
+                  <td className="px-5 py-4 text-gray-700">
+                    {s.batches
+                      ? `${s.batches.farms?.name ?? '—'} (${formatDate(s.batches.start_date)})`
+                      : '—'}
+                  </td>
+                  <td className="px-5 py-4 text-gray-700">{s.vendors?.name ?? '—'}</td>
+                  <td className="px-5 py-4 text-right text-gray-700">
+                    {Number(s.kg_sold).toLocaleString('en-IN', { maximumFractionDigits: 2 })} kg
+                  </td>
+                  <td className="px-5 py-4 text-right text-gray-700">
+                    {formatCurrency(s.price_per_kg)}
+                  </td>
+                  <td className="px-5 py-4 text-right font-semibold text-gray-800">
+                    {formatCurrency(s.total_amount)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr className="bg-gray-50 border-t border-gray-200">
+                <td colSpan={5} className="px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider text-right">
+                  All-time Total
+                </td>
+                <td className="px-5 py-3 text-right font-bold text-gray-800">
+                  {formatCurrency(sales.reduce((sum, s) => sum + Number(s.total_amount || 0), 0))}
+                </td>
+              </tr>
+            </tfoot>
+          </table>
+          </div>
+        )}
+      </div>
+
+      {/* Modal */}
+      {showModal && (
+        <SaleModal
+          batches={batches}
+          vendors={vendors}
+          onClose={() => setShowModal(false)}
+          onSaved={() => { setShowModal(false); fetchData() }}
+        />
+      )}
+    </div>
+  )
+}
