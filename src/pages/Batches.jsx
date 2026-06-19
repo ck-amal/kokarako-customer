@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { supabase } from '../lib/supabaseClient'
+import { ledgerOut, getChickBalance } from '../lib/stockLedger'
 
 const GROW_OUT_DAYS = 45
 
@@ -58,8 +59,9 @@ function NewBatchModal({ farms, onClose, onSaved }) {
     chick_count: '',
     start_date:  new Date().toISOString().slice(0, 10),
   })
-  const [saving, setSaving] = useState(false)
-  const [error, setError]   = useState('')
+  const [saving,  setSaving]  = useState(false)
+  const [error,   setError]   = useState('')
+  const [warning, setWarning] = useState('')
 
   function set(field) {
     return e => setForm(prev => ({ ...prev, [field]: e.target.value }))
@@ -70,15 +72,35 @@ function NewBatchModal({ farms, onClose, onSaved }) {
     setError('')
     setSaving(true)
 
-    const { error } = await supabase.from('batches').insert({
+    const chickCount = Number(form.chick_count)
+
+    // Check chick stock balance — warn but don't block
+    const balance = await getChickBalance()
+    if (balance < chickCount) {
+      setWarning(`⚠ Chick stock balance is ${balance.toLocaleString('en-IN')} — this batch needs ${chickCount.toLocaleString('en-IN')}. Saving anyway.`)
+    }
+
+    const { data: inserted, error } = await supabase.from('batches').insert({
       farm_id:     form.farm_id,
-      chick_count: Number(form.chick_count),
+      chick_count: chickCount,
       start_date:  form.start_date,
       status:      'active',
+    }).select('id').single()
+
+    if (error) { setError(error.message); setSaving(false); return }
+
+    // Deduct chicks from stock ledger
+    await ledgerOut({
+      itemName:      'Chicks',
+      itemType:      'chicks',
+      quantity:      chickCount,
+      unit:          'birds',
+      referenceType: 'batch',
+      referenceId:   inserted.id,
+      date:          form.start_date,
     })
 
-    if (error) { setError(error.message); setSaving(false) }
-    else        { onSaved() }
+    onSaved()
   }
 
   return (
@@ -130,6 +152,9 @@ function NewBatchModal({ farms, onClose, onSaved }) {
             />
           </div>
 
+          {warning && (
+            <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">{warning}</p>
+          )}
           {error && (
             <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</p>
           )}

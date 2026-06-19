@@ -52,11 +52,13 @@ All tables have `id UUID PRIMARY KEY DEFAULT gen_random_uuid()` and `created_at 
 
 | Table              | Key Columns | Notes |
 |--------------------|-------------|-------|
-| `farms`            | name, location, capacity | Base entity |
+| `farms`            | name, location, capacity, phone_number (text, nullable) | Base entity — phone_number added in migration 002 |
 | `batches`          | farm_id, start_date, chick_count, status (active/sold/closed) | 45-day grow-out cycle |
 | `vendors`          | name, phone, address | Buyers / traders |
-| `procurement`      | type (chicks/feed/medicine/equipment/other), item_name, quantity, unit, cost, supplier, date | Auto-syncs to stock (except chicks) |
-| `stock`            | item_name, quantity, unit, reorder_level | Upserted on procurement; deducted on distribution |
+| `procurement`      | type, item_name, quantity, unit, cost, cost_per_unit, supplier, date | Writes to stock_ledger (IN) + stock table cache |
+| `stock`            | item_name, quantity, unit, reorder_level | Denormalized cache only — source of truth is stock_ledger |
+| `stock_ledger`     | item_name, item_type, change_type (in/out), quantity, unit, reference_type, reference_id, date | **Source of truth for all stock movements** |
+| `farm_expenses`    | farm_id, distribution_id, item_name, item_type, quantity, unit, cost_per_unit, total_cost, date | Auto-created on every distribution; used for farm P&L |
 | `sales`            | batch_id, vendor_id, kg_sold, price_per_kg, total_amount (generated), date | total_amount is a generated column |
 | `expenses`         | batch_id (optional), category, amount, description, date | Optional batch link for P&L |
 | `cash_collection`  | vendor_id, sale_id, amount_paid, date, balance_due, notes | Per-sale partial payment tracking |
@@ -68,6 +70,20 @@ All tables have `id UUID PRIMARY KEY DEFAULT gen_random_uuid()` and `created_at 
 | `vendor_balances`   | total_sales − total_collected = outstanding_balance per vendor |
 | `batch_summary`     | Per-batch P&L (revenue − procurement − expenses) |
 | `low_stock_alerts`  | Items at or below reorder level |
+
+### New Table — `distributions`
+Logs feed/medicine/other items sent to a specific farm. Created in migration 002.
+
+| Column    | Type     | Notes |
+|-----------|----------|-------|
+| farm_id   | UUID FK  | references farms(id) ON DELETE CASCADE |
+| stock_id  | UUID FK  | references stock(id) ON DELETE SET NULL |
+| item_name | TEXT     | denormalised at insert time |
+| type      | TEXT     | CHECK IN ('feed','medicine','other') |
+| quantity  | NUMERIC  | > 0 |
+| unit      | TEXT     | copied from stock at insert time |
+| date      | DATE     | |
+| notes     | TEXT     | nullable |
 
 Schema file: `supabase/schema.sql`
 
@@ -128,6 +144,68 @@ src/
 ---
 
 ## Sessions Log
+
+### Session 9 — Stock Ledger Architecture (CORE CHANGE)
+> ⚠ **Core architecture decision — all future sessions must respect this.**
+
+**Completed:**
+- `supabase/migrations/003_stock_ledger.sql`:
+  - `cost_per_unit NUMERIC` column added to `procurement`
+  - `stock_ledger` table created — records every stock movement ever
+  - `farm_expenses` table created — auto-populated on every distribution
+- `src/lib/stockLedger.js` — helper functions: `ledgerIn()`, `ledgerOut()`, `getChickBalance()`, `getAverageCostPerUnit()`
+- `Procurement.jsx` — on save: writes `stock_ledger` IN entry for all types (including chicks); still writes to `stock` table for backward compat (dashboard/low_stock_alerts)
+- `Batches.jsx` — on batch creation: writes `stock_ledger` OUT for chick count; warns user if chick balance would go negative (but allows save)
+- `FarmDetail.jsx` DistributionModal — on save: writes `stock_ledger` OUT + calculates weighted-avg cost from procurement + inserts `farm_expenses` row automatically
+- `FarmDetail.jsx` P&L — feed/medicine costs now come from `farm_expenses` table (not from procurement linked to batches)
+- `Stock.jsx` — **fully rewritten as read-only live view**: computes balance per item from `stock_ledger` (sum IN - sum OUT), shows total in/out/balance/status table; "View History" button opens a right-side drawer with full ledger for that item; no manual entry modals remain
+
+**New business rules (canonical):**
+1. Stock is NEVER entered manually — it moves only via: Procurement → IN, Batch created → chicks OUT, Distribution → OUT
+2. `stock_ledger` is the source of truth for all stock levels
+3. `stock` table kept as a denormalized cache (dual-written) for backward compat with `low_stock_alerts` view and dashboard
+4. `farm_expenses` is auto-populated on every distribution — feed/medicine cost uses weighted-average procurement price at time of distribution
+5. Chick stock: procurement of type=chicks creates a ledger IN; batch creation creates a ledger OUT equal to chick_count
+6. Farm P&L uses `farm_expenses` for feed/medicine cost — NOT procurement records
+
+**Current blockers:**
+- Migration 003 must be run in Supabase SQL Editor before new stock flow works
+
+**Next session task:**
+- Push to GitHub (git push) to redeploy on Vercel, then run migration 003 and validate full end-to-end flow
+
+---
+
+### Session 8 — Farms Module Deep Build
+**Completed:**
+- `supabase/migrations/002_farm_enhancements.sql` — adds `phone_number TEXT` to `farms`; creates `distributions` table (farm_id, stock_id, item_name, type, quantity, unit, date, notes)
+- `Farms.jsx` updated:
+  - `phone_number` field added to Add/Edit modal and shown in table
+  - Farm name is now a clickable link to `/farms/:id`
+  - Filter bar: text search by name, status filter (All / Has Active Batch / No Active Batch), location dropdown (unique values from DB)
+  - "View" action button added to each row
+- `FarmDetail.jsx` created at `/farms/:id`:
+  - **Farm profile card** — name, location, capacity, phone; Edit button opens inline modal
+  - **Active batch quick stats** — Chicks Alive, Days Elapsed, Days Remaining/Overdue, Harvest Date (shown only when a batch is active)
+  - **Batches table** — start date, chick count, status pill, days left/overdue, feed kg, medicine qty (from procurement linked to batch), revenue; "Start New Batch" button pre-fills farm_id
+  - **Distribution history** — table of all distributions to this farm (date, type pill, item, quantity, notes); "Record Distribution" modal selects stock item, validates against available qty, inserts into `distributions` AND deducts from `stock`
+  - **Sales table** — date, vendor, kg sold, price/kg, total; "Record Sale" modal pre-fills active batch, select vendor; shows empty state if no active batch
+  - **P&L card** — Revenue, Chick Cost (proportional: farm_chicks/total_all_chicks × total_chick_procurement_cost), Feed Cost, Medicine Cost (both from procurement linked to this farm's batch_ids), Gross Profit, Profit Margin %
+- `App.jsx` updated — added `/farms/:id` route + `FarmDetail` import
+
+**New decisions:**
+- Distributions are farm-level (not batch-level) — simpler UX; date-based context is sufficient
+- Feed/medicine costs in farm P&L come from procurement records linked to this farm's batch_ids (not from distributions), because procurement captures actual purchase price
+- Chick cost is proportional share: `(this_farm_chick_count / all_batches_chick_count) × total_chick_procurement_cost`
+- `distributions.item_name` is denormalised at insert time so the history stays accurate even if stock items are renamed/deleted
+
+**Current blockers:**
+- Migration 002 must be run manually in Supabase SQL Editor before farm detail page works
+
+**Next session task:**
+- Deploy updated code to Vercel (git push) and verify farm detail page end-to-end with real data
+
+---
 
 ### Session 1 — Project Setup & Auth
 **Completed:**

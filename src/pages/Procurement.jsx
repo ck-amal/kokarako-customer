@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { addToStock } from '../lib/stockHelpers'
+import { ledgerIn } from '../lib/stockLedger'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -125,22 +126,38 @@ function ProcurementModal({ onClose, onSaved }) {
     setError('')
     setSaving(true)
 
-    const { error } = await supabase.from('procurement').insert({
-      type:      form.type,
-      item_name: form.item_name.trim(),
-      quantity:  Number(form.quantity),
-      unit:      form.unit,
-      cost:      Number(form.cost),
-      supplier:  form.supplier.trim() || null,
-      date:      form.date,
-      notes:     form.notes.trim() || null,
-    })
+    const qty = Number(form.quantity)
+    const cpu = parseFloat(form.cost_per_unit) || (Number(form.cost) / qty) || 0
+
+    const { data: inserted, error } = await supabase.from('procurement').insert({
+      type:          form.type,
+      item_name:     form.item_name.trim(),
+      quantity:      qty,
+      unit:          form.unit,
+      cost:          Number(form.cost),
+      cost_per_unit: cpu,
+      supplier:      form.supplier.trim() || null,
+      date:          form.date,
+      notes:         form.notes.trim() || null,
+    }).select('id').single()
 
     if (error) { setError(error.message); setSaving(false); return }
 
-    // Auto-sync stock: chicks don't go into stock inventory
+    // Write to stock ledger (all types including chicks)
+    await ledgerIn({
+      itemName:      form.item_name.trim(),
+      itemType:      form.type,
+      quantity:      qty,
+      unit:          form.unit,
+      referenceType: 'procurement',
+      referenceId:   inserted.id,
+      date:          form.date,
+    })
+
+    // Also update stock table for backward compat (dashboard/alerts)
+    // Chicks are not tracked in stock inventory table
     if (form.type !== 'chicks') {
-      await addToStock(form.item_name.trim(), form.quantity, form.unit)
+      await addToStock(form.item_name.trim(), qty, form.unit)
     }
 
     onSaved()

@@ -12,6 +12,7 @@ import Sales from './pages/Sales'
 import CashCollection from './pages/CashCollection'
 import Expenses from './pages/Expenses'
 import BatchReport from './pages/BatchReport'
+import FarmDetail  from './pages/FarmDetail'
 import './index.css'
 
 function AppLayout({ children }) {
@@ -130,6 +131,17 @@ export default function App() {
             <ProtectedRoute>
               <AppLayout>
                 <Expenses />
+              </AppLayout>
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/farms/:id"
+          element={
+            <ProtectedRoute>
+              <AppLayout>
+                <FarmDetail />
               </AppLayout>
             </ProtectedRoute>
           }
