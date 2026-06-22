@@ -1,8 +1,30 @@
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabaseClient'
 
-// ─── Modal (create & edit) ────────────────────────────────────────────────────
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function daysElapsed(startDate) {
+  return Math.floor((Date.now() - new Date(startDate)) / 86400000)
+}
+
+function barColor(pct) {
+  if (pct > 75) return '#166534'   // very full — dark green
+  if (pct > 50) return '#16a34a'   // getting full — medium green
+  if (pct > 25) return '#4ade80'   // healthy fill — light green
+  return '#bbf7d0'                  // nearly empty — very light green
+}
+
+function harvestColor(days) {
+  if (days < 0)   return '#991b1b'  // overdue — dark red
+  if (days <= 3)  return '#dc2626'  // 1–3 days — red
+  if (days <= 7)  return '#ea580c'  // 4–7 days — orange
+  if (days <= 14) return '#f59e0b'  // 8–14 days — amber
+  if (days <= 25) return '#16a34a'  // 15–25 days — green
+  return '#9ca3af'                   // > 25 days — gray (no urgency)
+}
+
+// ─── Farm Create / Edit Modal ─────────────────────────────────────────────────
 
 function FarmModal({ farm, onClose, onSaved }) {
   const isEdit = Boolean(farm)
@@ -133,11 +155,102 @@ function DeleteModal({ farm, onClose, onDeleted }) {
   )
 }
 
+// ─── Farm Card ────────────────────────────────────────────────────────────────
+
+function FarmCard({ farm, batchInfo, onEdit, onDelete, onClick }) {
+  const { activeBatchCount = 0, liveChicks = 0, nextHarvestDays = null, totalBatches = 0 } = batchInfo || {}
+  const hasActive = activeBatchCount > 0
+  const capacity  = Number(farm.capacity || 0)
+  const pct       = capacity > 0 ? Math.min((liveChicks / capacity) * 100, 100) : 0
+  const overCap   = capacity > 0 && liveChicks > capacity
+  const fillColor = hasActive ? barColor(pct) : '#d1d5db'
+
+  return (
+    <div
+      onClick={onClick}
+      className="relative flex items-center gap-4 rounded-xl border px-5 py-4 cursor-pointer transition-all duration-150 hover:shadow-md"
+      style={{
+        backgroundColor: hasActive ? '#f9fefb' : '#fff8f8',
+        borderColor:     hasActive ? '#bbf7d0' : '#fecaca',
+      }}
+    >
+      {/* Left: main info */}
+      <div className="flex-1 min-w-0">
+        {/* Name + batch pill */}
+        <div className="flex items-center gap-2 flex-wrap mb-1">
+          <h3 className="text-base font-bold text-gray-800">{farm.name}</h3>
+          {hasActive ? (
+            <span className="rounded-full bg-green-100 px-2.5 py-0.5 text-xs font-semibold text-green-700">
+              {activeBatchCount} active batch{activeBatchCount !== 1 ? 'es' : ''}
+            </span>
+          ) : (
+            <span className="rounded-full bg-red-100 px-2.5 py-0.5 text-xs font-semibold text-red-600">
+              No active batches
+            </span>
+          )}
+        </div>
+
+        {/* Meta row: location · phone */}
+        {(farm.location || farm.phone_number) && (
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-gray-500 mb-2">
+            {farm.location     && <span>📍 {farm.location}</span>}
+            {farm.phone_number && <span>📞 {farm.phone_number}</span>}
+          </div>
+        )}
+
+        {/* Capacity bar row */}
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-gray-500 shrink-0">
+            🐔 {liveChicks.toLocaleString('en-IN')}
+            {capacity > 0 ? ` / ${capacity.toLocaleString('en-IN')}` : ''}
+          </span>
+          <div className="flex-1 rounded-full overflow-hidden" style={{ height: 4, backgroundColor: '#e5e7eb' }}>
+            <div style={{ width: `${pct}%`, height: 4, backgroundColor: fillColor, borderRadius: 9999 }} />
+          </div>
+          <span className="text-xs font-semibold shrink-0" style={{ color: fillColor }}>
+            {overCap ? '⚠️ ' : ''}{capacity > 0 ? `${Math.round(pct)}%` : '—'}
+          </span>
+        </div>
+
+        {/* Footer: total batches + harvest */}
+        <div className="flex items-center gap-3 mt-1.5 text-xs text-gray-400">
+          <span>{totalBatches} batch{totalBatches !== 1 ? 'es' : ''} total</span>
+          {hasActive && nextHarvestDays !== null && (
+            <span className="font-semibold" style={{ color: harvestColor(nextHarvestDays) }}>
+              {nextHarvestDays < 0
+                ? `${Math.abs(nextHarvestDays)}d overdue`
+                : `Next harvest in ${nextHarvestDays}d`}
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* Right: action buttons */}
+      <div className="flex gap-1.5 shrink-0" onClick={e => e.stopPropagation()}>
+        <button
+          onClick={onEdit}
+          className="rounded-lg border border-gray-300 bg-white px-2.5 py-1 text-xs font-semibold text-gray-600 hover:bg-gray-50 transition"
+        >
+          Edit
+        </button>
+        <button
+          onClick={onDelete}
+          className="rounded-lg border border-red-200 bg-white px-2.5 py-1 text-xs font-semibold text-red-500 hover:bg-red-50 transition"
+        >
+          Delete
+        </button>
+      </div>
+    </div>
+  )
+}
+
 // ─── Main page ────────────────────────────────────────────────────────────────
 
 export default function Farms() {
+  const navigate = useNavigate()
+
   const [farms,        setFarms]        = useState([])
-  const [activeCounts, setActiveCounts] = useState({})
+  const [farmBatchMap, setFarmBatchMap] = useState({}) // farm_id → { activeBatchCount, liveChicks, nextHarvestDays, totalBatches }
   const [loading,      setLoading]      = useState(true)
   const [modalOpen,    setModalOpen]    = useState(false)
   const [editingFarm,  setEditingFarm]  = useState(null)
@@ -145,41 +258,62 @@ export default function Farms() {
 
   // Filters
   const [search,         setSearch]         = useState('')
-  const [statusFilter,   setStatusFilter]   = useState('all') // all | active | inactive
+  const [statusFilter,   setStatusFilter]   = useState('all')
   const [locationFilter, setLocationFilter] = useState('all')
 
   async function fetchData() {
     setLoading(true)
     const [{ data: farmsData }, { data: batchData }] = await Promise.all([
       supabase.from('farms').select('*').order('name'),
-      supabase.from('batches').select('farm_id').eq('status', 'active'),
+      supabase.from('batches').select('farm_id, chick_count, mortality_count, start_date, status'),
     ])
 
     setFarms(farmsData || [])
 
-    const counts = {}
+    // Build per-farm batch info
+    const map = {}
     for (const b of (batchData || [])) {
-      counts[b.farm_id] = (counts[b.farm_id] || 0) + 1
+      if (!map[b.farm_id]) map[b.farm_id] = { activeBatchCount: 0, liveChicks: 0, nextHarvestDays: Infinity, totalBatches: 0 }
+      map[b.farm_id].totalBatches++
+      if (b.status === 'active') {
+        map[b.farm_id].activeBatchCount++
+        const alive    = Number(b.chick_count || 0) - Number(b.mortality_count || 0)
+        map[b.farm_id].liveChicks += Math.max(0, alive)
+        const daysLeft = 45 - daysElapsed(b.start_date)
+        map[b.farm_id].nextHarvestDays = Math.min(map[b.farm_id].nextHarvestDays, daysLeft)
+      }
     }
-    setActiveCounts(counts)
+    // Resolve Infinity (no active batches)
+    for (const id of Object.keys(map)) {
+      if (map[id].nextHarvestDays === Infinity) map[id].nextHarvestDays = null
+    }
+    setFarmBatchMap(map)
     setLoading(false)
   }
 
   useEffect(() => { fetchData() }, [])
 
-  function handleSaved()  { setModalOpen(false); setEditingFarm(null); fetchData() }
+  function handleSaved()   { setModalOpen(false); setEditingFarm(null); fetchData() }
   function handleDeleted() { setDeletingFarm(null); fetchData() }
 
-  // Unique locations for dropdown
+  // Unique locations
   const locations = ['all', ...Array.from(new Set(farms.map(f => f.location).filter(Boolean))).sort()]
 
-  // Apply filters
+  // Filter
   const filtered = farms.filter(farm => {
+    const hasActive     = (farmBatchMap[farm.id]?.activeBatchCount || 0) > 0
     const matchSearch   = farm.name.toLowerCase().includes(search.toLowerCase())
-    const hasActive     = (activeCounts[farm.id] || 0) > 0
     const matchStatus   = statusFilter === 'all' ? true : statusFilter === 'active' ? hasActive : !hasActive
     const matchLocation = locationFilter === 'all' || farm.location === locationFilter
     return matchSearch && matchStatus && matchLocation
+  })
+
+  // Sort: live chick count desc, then alpha for no-active farms
+  const sorted = [...filtered].sort((a, b) => {
+    const aLive = farmBatchMap[a.id]?.liveChicks || 0
+    const bLive = farmBatchMap[b.id]?.liveChicks || 0
+    if (aLive !== bLive) return bLive - aLive
+    return a.name.localeCompare(b.name)
   })
 
   return (
@@ -199,7 +333,7 @@ export default function Farms() {
       </div>
 
       {/* Filters */}
-      <div className="flex flex-wrap gap-3 mb-4">
+      <div className="flex flex-wrap gap-3 mb-6">
         <input
           type="text"
           placeholder="Search farms…"
@@ -232,84 +366,47 @@ export default function Farms() {
         </select>
       </div>
 
-      {/* Table card */}
-      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-        {loading ? (
-          <div className="flex items-center justify-center py-20">
-            <div className="h-8 w-8 rounded-full border-4 border-amber-400 border-t-transparent animate-spin" />
-          </div>
-        ) : filtered.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-20 text-gray-400">
-            <span className="text-5xl mb-3">🏡</span>
-            <p className="text-sm font-medium">{farms.length === 0 ? 'No farms yet' : 'No farms match your filters'}</p>
-            {farms.length === 0 && <p className="text-xs mt-1">Click "New Farm" to add your first one</p>}
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm min-w-[700px]">
-              <thead>
-                <tr className="bg-gray-50 border-b border-gray-100 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                  <th className="px-5 py-3">Farm Name</th>
-                  <th className="px-5 py-3">Location</th>
-                  <th className="px-5 py-3">Phone</th>
-                  <th className="px-5 py-3 text-right">Capacity</th>
-                  <th className="px-5 py-3 text-center">Active Batches</th>
-                  <th className="px-5 py-3 text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-50">
-                {filtered.map(farm => (
-                  <tr key={farm.id} className="hover:bg-amber-50/40 transition">
-                    <td className="px-5 py-4">
-                      <Link
-                        to={`/farms/${farm.id}`}
-                        className="font-medium text-gray-800 hover:text-amber-600 hover:underline"
-                      >
-                        {farm.name}
-                      </Link>
-                    </td>
-                    <td className="px-5 py-4 text-gray-500">{farm.location || '—'}</td>
-                    <td className="px-5 py-4 text-gray-500">{farm.phone_number || '—'}</td>
-                    <td className="px-5 py-4 text-right text-gray-700">
-                      {Number(farm.capacity).toLocaleString()}
-                    </td>
-                    <td className="px-5 py-4 text-center">
-                      <span className={`inline-flex items-center justify-center rounded-full px-2.5 py-0.5 text-xs font-semibold
-                        ${(activeCounts[farm.id] || 0) > 0
-                          ? 'bg-green-100 text-green-700'
-                          : 'bg-gray-100 text-gray-500'}`}>
-                        {activeCounts[farm.id] || 0}
-                      </span>
-                    </td>
-                    <td className="px-5 py-4 text-right">
-                      <div className="inline-flex gap-2">
-                        <Link
-                          to={`/farms/${farm.id}`}
-                          className="rounded-lg border border-amber-200 px-3 py-1.5 text-xs font-medium text-amber-600 hover:bg-amber-50 transition"
-                        >
-                          View
-                        </Link>
-                        <button
-                          onClick={() => { setEditingFarm(farm); setModalOpen(true) }}
-                          className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 transition"
-                        >
-                          Edit
-                        </button>
-                        <button
-                          onClick={() => setDeletingFarm(farm)}
-                          className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-medium text-red-500 hover:bg-red-50 transition"
-                        >
-                          Delete
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+      {/* Content */}
+      {loading ? (
+        <div className="flex items-center justify-center py-24">
+          <div className="h-8 w-8 rounded-full border-4 border-amber-400 border-t-transparent animate-spin" />
+        </div>
+      ) : sorted.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-24 text-gray-400">
+          <span className="text-5xl mb-3">🏡</span>
+          <p className="text-sm font-medium">
+            {farms.length === 0 ? 'No farms yet' : 'No farms match your filter'}
+          </p>
+          {farms.length === 0 ? (
+            <button
+              onClick={() => { setEditingFarm(null); setModalOpen(true) }}
+              className="mt-4 rounded-lg bg-amber-500 hover:bg-amber-600 px-4 py-2 text-sm font-semibold text-white transition"
+            >
+              Add Farm
+            </button>
+          ) : (
+            <button
+              onClick={() => { setSearch(''); setStatusFilter('all'); setLocationFilter('all') }}
+              className="mt-4 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 transition"
+            >
+              Clear filters
+            </button>
+          )}
+        </div>
+      ) : (
+        <div className="flex flex-col gap-4">
+          {sorted.map(farm => (
+            <FarmCard
+              key={farm.id}
+              farm={farm}
+              batchInfo={farmBatchMap[farm.id]}
+              onClick={() => navigate(`/farms/${farm.id}`)}
+              onEdit={() => { setEditingFarm(farm); setModalOpen(true) }}
+              onDelete={() => setDeletingFarm(farm)}
+            />
+          ))}
+        </div>
+      )}
 
       {/* Modals */}
       {modalOpen && (

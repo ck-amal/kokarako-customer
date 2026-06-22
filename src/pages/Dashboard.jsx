@@ -110,6 +110,11 @@ export default function Dashboard() {
         { data: recentSales },
         { data: recentExpenses },
         { data: monthSales },
+        { data: supplierProcs },
+        { data: supplierPays },
+        { data: accounts },
+        { data: transactions },
+        { data: stockItems },
       ] = await Promise.all([
         // Active batches (for count, chick total, table)
         supabase
@@ -148,12 +153,58 @@ export default function Dashboard() {
           .select('total_amount')
           .gte('date', start)
           .lte('date', end),
+
+        // Supplier dues — total procurement cost with supplier_id
+        supabase
+          .from('procurement')
+          .select('cost')
+          .not('supplier_id', 'is', null),
+
+        // Supplier payments — total paid
+        supabase
+          .from('supplier_payments')
+          .select('amount'),
+
+        // Accounts (for cash/bank balance)
+        supabase
+          .from('accounts')
+          .select('id, name, type, opening_balance')
+          .eq('is_active', true),
+
+        // All transactions (for computing account balances)
+        supabase
+          .from('transactions')
+          .select('account_id, transaction_type, amount'),
+
+        // Stock (for stock value)
+        supabase
+          .from('stock')
+          .select('quantity, avg_cost'),
       ])
 
       const monthRevenue  = (monthSales || []).reduce((s, r) => s + Number(r.total_amount || 0), 0)
       const totalOutstanding = (vendorBals || [])
         .reduce((s, v) => s + Math.max(0, Number(v.outstanding_balance)), 0)
       const totalChicks = (batches || []).reduce((s, b) => s + Number(b.chick_count), 0)
+      const supplierDues = Math.max(0,
+        (supplierProcs || []).reduce((s, r) => s + Number(r.cost), 0) -
+        (supplierPays  || []).reduce((s, r) => s + Number(r.amount), 0)
+      )
+
+      // Business Health calculations
+      const txByAccount = {}
+      for (const tx of (transactions || [])) {
+        if (!txByAccount[tx.account_id]) txByAccount[tx.account_id] = { in: 0, out: 0 }
+        if (tx.transaction_type === 'in')  txByAccount[tx.account_id].in  += Number(tx.amount)
+        else                                txByAccount[tx.account_id].out += Number(tx.amount)
+      }
+      const cashAndBank = (accounts || []).reduce((s, a) => {
+        const t = txByAccount[a.id] || { in: 0, out: 0 }
+        return s + Number(a.opening_balance) + t.in - t.out
+      }, 0)
+      const stockValue = (stockItems || []).reduce((s, i) => s + Number(i.quantity || 0) * Number(i.avg_cost || 0), 0)
+      const totalAssets = cashAndBank + totalOutstanding + stockValue
+      const netWorth = totalAssets - supplierDues
 
       // Merge and sort recent transactions (sales + expenses) by date, take 5
       const txns = [
@@ -185,7 +236,12 @@ export default function Dashboard() {
         monthRevenue,
         totalOutstanding,
         lowStockCount:  (lowStock || []).length,
+        supplierDues,
         txns,
+        cashAndBank,
+        stockValue,
+        totalAssets,
+        netWorth,
       })
       setLoading(false)
     }
@@ -207,7 +263,7 @@ export default function Dashboard() {
       </div>
 
       {/* Summary cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
         <StatCard
           label="Active Batches"
           value={loading ? '…' : data.batches.length}
@@ -250,6 +306,87 @@ export default function Dashboard() {
           to="/stock"
           loading={loading}
         />
+        <StatCard
+          label="Supplier Dues"
+          value={loading ? '…' : formatCurrency(data.supplierDues)}
+          sub={loading || data.supplierDues === 0 ? 'Nothing owed' : 'owed to suppliers'}
+          icon="🏭"
+          accent={!loading && data.supplierDues > 0 ? 'red' : undefined}
+          to="/suppliers"
+          loading={loading}
+        />
+      </div>
+
+      {/* Business Health */}
+      <div>
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-base font-semibold text-gray-700">Business Health</h2>
+          <Link to="/accounts" className="text-xs text-amber-600 hover:underline font-medium">Cash & Bank →</Link>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          {/* Assets */}
+          <div className="bg-white rounded-2xl border border-green-100 shadow-sm px-5 py-4">
+            <p className="text-xs font-semibold text-green-700 uppercase tracking-wide mb-3">Assets</p>
+            <div className="space-y-2">
+              <div className="flex justify-between text-sm">
+                <span className="text-gray-500">Cash & Bank</span>
+                <span className="font-semibold text-gray-800">{loading ? '…' : formatCurrency(data.cashAndBank)}</span>
+              </div>
+              <div className="flex justify-between text-sm">
+                <span className="text-gray-500">Vendor Receivables</span>
+                <span className="font-semibold text-gray-800">{loading ? '…' : formatCurrency(data.totalOutstanding)}</span>
+              </div>
+              <div className="flex justify-between text-sm">
+                <span className="text-gray-500">Stock Value</span>
+                <span className="font-semibold text-gray-800">{loading ? '…' : formatCurrency(data.stockValue)}</span>
+              </div>
+              <div className="flex justify-between text-sm border-t border-gray-100 pt-2 mt-2">
+                <span className="font-semibold text-gray-700">Total Assets</span>
+                <span className="font-bold text-green-700">{loading ? '…' : formatCurrency(data.totalAssets)}</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Liabilities */}
+          <div className="bg-white rounded-2xl border border-red-100 shadow-sm px-5 py-4">
+            <p className="text-xs font-semibold text-red-600 uppercase tracking-wide mb-3">Liabilities</p>
+            <div className="space-y-2">
+              <div className="flex justify-between text-sm">
+                <span className="text-gray-500">Supplier Payables</span>
+                <span className="font-semibold text-gray-800">{loading ? '…' : formatCurrency(data.supplierDues)}</span>
+              </div>
+              <div className="flex justify-between text-sm border-t border-gray-100 pt-2 mt-2">
+                <span className="font-semibold text-gray-700">Total Liabilities</span>
+                <span className="font-bold text-red-600">{loading ? '…' : formatCurrency(data.supplierDues)}</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Net Worth */}
+          <div className={`rounded-2xl border shadow-sm px-5 py-4 ${
+            !loading && data.netWorth >= 0
+              ? 'bg-amber-50 border-amber-200'
+              : 'bg-red-50 border-red-200'
+          }`}>
+            <p className="text-xs font-semibold text-amber-700 uppercase tracking-wide mb-3">Net Worth</p>
+            <p className={`text-3xl font-bold mt-1 ${loading ? 'text-gray-400' : data.netWorth >= 0 ? 'text-amber-700' : 'text-red-600'}`}>
+              {loading ? '…' : formatCurrency(data.netWorth)}
+            </p>
+            <p className="text-xs text-gray-500 mt-2">Assets − Liabilities</p>
+            {!loading && (
+              <div className="mt-3 pt-3 border-t border-amber-200/60 grid grid-cols-2 gap-2 text-xs">
+                <div>
+                  <p className="text-gray-500">Receivables</p>
+                  <p className="font-semibold text-gray-700">{formatCurrency(data.totalOutstanding)}</p>
+                </div>
+                <div>
+                  <p className="text-gray-500">Payables</p>
+                  <p className="font-semibold text-gray-700">{formatCurrency(data.supplierDues)}</p>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
       </div>
 
       {/* Active batches table */}

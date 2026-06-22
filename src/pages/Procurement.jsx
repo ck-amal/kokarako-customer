@@ -5,8 +5,6 @@ import { ledgerIn } from '../lib/stockLedger'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const TYPES = ['chicks', 'feed', 'medicine', 'equipment', 'other']
-
 const TYPE_STYLES = {
   chicks:    'bg-yellow-100 text-yellow-700',
   feed:      'bg-green-100  text-green-700',
@@ -14,8 +12,6 @@ const TYPE_STYLES = {
   equipment: 'bg-purple-100 text-purple-700',
   other:     'bg-gray-100   text-gray-600',
 }
-
-const UNITS = ['kg', 'bags', 'litres', 'units', 'bottles', 'boxes', 'tonnes']
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -88,29 +84,101 @@ function SummaryBar({ records }) {
 
 // ─── New procurement modal ────────────────────────────────────────────────────
 
-const EMPTY_FORM = {
-  type:       'feed',
-  item_name:  '',
-  quantity:   '',
-  unit:       'kg',
-  cost_per_unit: '',
-  cost:       '',
-  supplier:   '',
-  date:       new Date().toISOString().slice(0, 10),
-  notes:      '',
-}
-
 function ProcurementModal({ onClose, onSaved }) {
-  const [form, setForm]   = useState(EMPTY_FORM)
+  const [itemTypes, setItemTypes]   = useState([])
+  const [items, setItems]           = useState([])
+  const [allItems, setAllItems]     = useState([])
+  const [suppliers, setSuppliers]   = useState([])
+  const [accounts, setAccounts]     = useState([])
+  const [supplierOutstanding, setSupplierOutstanding] = useState(null)
+  const [form, setForm] = useState({
+    item_type_id: '',
+    item_id: '',
+    quantity: '',
+    cost_per_unit: '',
+    cost: '',
+    supplier_id: '',
+    date: new Date().toISOString().slice(0, 10),
+    notes: '',
+    pay_now:    false,
+    account_id: '',
+  })
+  const [selectedItem, setSelectedItem] = useState(null)
   const [saving, setSaving] = useState(false)
-  const [error, setError]   = useState('')
+  const [error, setError] = useState('')
 
+  // On mount: load item types, items, and suppliers
+  useEffect(() => {
+    async function loadInitial() {
+      const [{ data: types }, { data: sups }, { data: accs }] = await Promise.all([
+        supabase.from('item_types').select('id, name').order('name'),
+        supabase.from('suppliers').select('id, name, business_name').eq('is_active', true).order('name'),
+        supabase.from('accounts').select('id, name, type').eq('is_active', true).order('name'),
+      ])
+      setItemTypes(types || [])
+      setSuppliers(sups || [])
+      const accList = accs || []
+      setAccounts(accList)
+      const cash = accList.find(a => a.type === 'cash')
+      if (cash) setForm(f => ({ ...f, account_id: cash.id }))
+      if (types?.length) {
+        setForm(f => ({ ...f, item_type_id: types[0].id }))
+        const { data: initialItems } = await supabase
+          .from('items')
+          .select('id, name, unit, item_type_id')
+          .eq('item_type_id', types[0].id)
+          .eq('is_active', true)
+          .order('name')
+        setItems(initialItems || [])
+        setAllItems(initialItems || [])
+      }
+    }
+    loadInitial()
+  }, [])
+
+  // When item_type_id changes: reload items for that type
+  async function handleTypeChange(newTypeId) {
+    setForm(f => ({ ...f, item_type_id: newTypeId, item_id: '', cost_per_unit: '', cost: '' }))
+    setSelectedItem(null)
+    if (!newTypeId) {
+      setItems([])
+      return
+    }
+    const { data } = await supabase
+      .from('items')
+      .select('id, name, unit, item_type_id')
+      .eq('item_type_id', newTypeId)
+      .eq('is_active', true)
+      .order('name')
+    setItems(data || [])
+  }
+
+  // When item_id changes: find item in local list
+  function handleItemChange(newItemId) {
+    const item = items.find(i => i.id === newItemId)
+    setSelectedItem(item || null)
+    setForm(f => ({ ...f, item_id: newItemId }))
+  }
+
+  // When supplier changes: fetch their outstanding balance
+  async function handleSupplierChange(supplierId) {
+    setForm(f => ({ ...f, supplier_id: supplierId }))
+    if (!supplierId) { setSupplierOutstanding(null); return }
+    const [{ data: procs }, { data: pays }] = await Promise.all([
+      supabase.from('procurement').select('cost').eq('supplier_id', supplierId),
+      supabase.from('supplier_payments').select('amount').eq('supplier_id', supplierId),
+    ])
+    const totalCost = (procs || []).reduce((s, r) => s + Number(r.cost), 0)
+    const totalPaid = (pays  || []).reduce((s, r) => s + Number(r.amount), 0)
+    setSupplierOutstanding(Math.max(0, totalCost - totalPaid))
+  }
+
+  // Generic field setter with auto-calculate for quantity/cost_per_unit
   function set(field) {
     return e => {
       const value = e.target.value
       setForm(prev => {
         const next = { ...prev, [field]: value }
-        // Auto-calculate total cost when quantity or cost_per_unit changes
         if (field === 'quantity' || field === 'cost_per_unit') {
           const qty = parseFloat(field === 'quantity' ? value : prev.quantity) || 0
           const cpu = parseFloat(field === 'cost_per_unit' ? value : prev.cost_per_unit) || 0
@@ -124,40 +192,58 @@ function ProcurementModal({ onClose, onSaved }) {
   async function handleSubmit(e) {
     e.preventDefault()
     setError('')
+    if (!form.item_type_id) { setError('Select an item type'); return }
+    if (!form.item_id) { setError('Select an item'); return }
+    if (!selectedItem) { setError('Invalid item'); return }
     setSaving(true)
 
     const qty = Number(form.quantity)
     const cpu = parseFloat(form.cost_per_unit) || (Number(form.cost) / qty) || 0
 
-    const { data: inserted, error } = await supabase.from('procurement').insert({
-      type:          form.type,
-      item_name:     form.item_name.trim(),
+    const { data: inserted, error: insertErr } = await supabase.from('procurement').insert({
+      type:          selectedItem.unit === 'Chicks' ? 'chicks' : itemTypes.find(t => t.id === form.item_type_id)?.name?.toLowerCase() ?? 'other',
+      item_name:     selectedItem.name,
+      item_id:       form.item_id,
       quantity:      qty,
-      unit:          form.unit,
+      unit:          selectedItem.unit,
       cost:          Number(form.cost),
       cost_per_unit: cpu,
-      supplier:      form.supplier.trim() || null,
+      supplier_id:   form.supplier_id || null,
       date:          form.date,
       notes:         form.notes.trim() || null,
     }).select('id').single()
 
-    if (error) { setError(error.message); setSaving(false); return }
+    if (insertErr) { setError(insertErr.message); setSaving(false); return }
 
-    // Write to stock ledger (all types including chicks)
+    // Auto-record payment transaction if "Pay now" is checked
+    if (form.pay_now && form.account_id) {
+      await supabase.from('transactions').insert({
+        account_id:       form.account_id,
+        transaction_type: 'out',
+        category:         'procurement',
+        description:      `Purchase — ${selectedItem.name}`,
+        amount:           Number(form.cost),
+        transaction_date: form.date,
+        reference_type:   'procurement',
+        reference_id:     inserted.id,
+      })
+    }
+
+    // Write to stock ledger
     await ledgerIn({
-      itemName:      form.item_name.trim(),
-      itemType:      form.type,
+      itemName:      selectedItem.name,
+      itemType:      itemTypes.find(t => t.id === form.item_type_id)?.name?.toLowerCase() ?? 'other',
       quantity:      qty,
-      unit:          form.unit,
+      unit:          selectedItem.unit,
       referenceType: 'procurement',
       referenceId:   inserted.id,
       date:          form.date,
     })
 
-    // Also update stock table for backward compat (dashboard/alerts)
-    // Chicks are not tracked in stock inventory table
-    if (form.type !== 'chicks') {
-      await addToStock(form.item_name.trim(), qty, form.unit)
+    // Update stock table (not for chicks type)
+    const typeName = itemTypes.find(t => t.id === form.item_type_id)?.name?.toLowerCase()
+    if (typeName !== 'chicks') {
+      await addToStock(selectedItem.name, qty, selectedItem.unit, cpu)
     }
 
     onSaved()
@@ -176,28 +262,50 @@ function ProcurementModal({ onClose, onSaved }) {
 
         <form onSubmit={handleSubmit} className="space-y-4">
 
-          {/* Type + Item name */}
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Type *</label>
-              <select
-                required value={form.type} onChange={set('type')}
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-amber-400"
-              >
-                {TYPES.map(t => <option key={t} value={t} className="capitalize">{t}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Item Name *</label>
-              <input
-                required value={form.item_name} onChange={set('item_name')}
-                placeholder="e.g. Starter Feed"
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
-              />
-            </div>
+          {/* Item Type */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Item Type *</label>
+            <select
+              required
+              value={form.item_type_id}
+              onChange={e => handleTypeChange(e.target.value)}
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-amber-400"
+            >
+              <option value="">Select a type…</option>
+              {itemTypes.map(t => (
+                <option key={t.id} value={t.id}>{t.name}</option>
+              ))}
+            </select>
           </div>
 
-          {/* Quantity + Unit */}
+          {/* Item */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Item *</label>
+            <select
+              required
+              value={form.item_id}
+              onChange={e => handleItemChange(e.target.value)}
+              disabled={!form.item_type_id}
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-amber-400 disabled:bg-gray-50 disabled:text-gray-400"
+            >
+              <option value="">
+                {form.item_type_id ? 'Select an item…' : 'Select an item type first'}
+              </option>
+              {items.map(i => (
+                <option key={i.id} value={i.id}>{i.name} ({i.unit})</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Unit — read-only badge */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Unit</label>
+            <span className="inline-flex items-center rounded-lg bg-gray-100 border border-gray-200 px-3 py-2 text-sm text-gray-600 font-medium min-w-[80px]">
+              {selectedItem?.unit ?? '—'}
+            </span>
+          </div>
+
+          {/* Quantity + Cost per unit */}
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Quantity *</label>
@@ -209,19 +317,6 @@ function ProcurementModal({ onClose, onSaved }) {
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Unit *</label>
-              <select
-                required value={form.unit} onChange={set('unit')}
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-amber-400"
-              >
-                {UNITS.map(u => <option key={u} value={u}>{u}</option>)}
-              </select>
-            </div>
-          </div>
-
-          {/* Cost per unit + Total cost */}
-          <div className="grid grid-cols-2 gap-3">
-            <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Cost per Unit (₹)</label>
               <input
                 type="number" min="0" step="0.01"
@@ -230,15 +325,17 @@ function ProcurementModal({ onClose, onSaved }) {
                 className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
               />
             </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Total Cost (₹) *</label>
-              <input
-                required type="number" min="0" step="0.01"
-                value={form.cost} onChange={set('cost')}
-                placeholder="Auto-calculated"
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
-              />
-            </div>
+          </div>
+
+          {/* Total Cost */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Total Cost (₹) *</label>
+            <input
+              required type="number" min="0" step="0.01"
+              value={form.cost} onChange={set('cost')}
+              placeholder="Auto-calculated"
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
+            />
           </div>
 
           {/* Total preview pill */}
@@ -249,24 +346,36 @@ function ProcurementModal({ onClose, onSaved }) {
             </div>
           )}
 
-          {/* Supplier + Date */}
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Supplier</label>
-              <input
-                value={form.supplier} onChange={set('supplier')}
-                placeholder="e.g. AgroMart"
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Date *</label>
-              <input
-                required type="date"
-                value={form.date} onChange={set('date')}
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
-              />
-            </div>
+          {/* Supplier */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Supplier</label>
+            <select
+              value={form.supplier_id}
+              onChange={e => handleSupplierChange(e.target.value)}
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-amber-400"
+            >
+              <option value="">No supplier / unknown</option>
+              {suppliers.map(s => (
+                <option key={s.id} value={s.id}>
+                  {s.name}{s.business_name ? ` — ${s.business_name}` : ''}
+                </option>
+              ))}
+            </select>
+            {supplierOutstanding !== null && form.supplier_id && (
+              <p className={`text-xs mt-1 font-medium ${supplierOutstanding > 0 ? 'text-red-600' : 'text-green-600'}`}>
+                Current outstanding: {formatCurrency(supplierOutstanding)}
+              </p>
+            )}
+          </div>
+
+          {/* Date */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Date *</label>
+            <input
+              required type="date"
+              value={form.date} onChange={set('date')}
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
+            />
           </div>
 
           {/* Notes */}
@@ -279,6 +388,36 @@ function ProcurementModal({ onClose, onSaved }) {
               className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-amber-400"
             />
           </div>
+
+          {/* Pay now */}
+          {accounts.length > 0 && (
+            <div className="rounded-lg border border-gray-200 px-4 py-3 space-y-3">
+              <label className="flex items-center gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={form.pay_now}
+                  onChange={e => setForm(f => ({ ...f, pay_now: e.target.checked }))}
+                  className="h-4 w-4 rounded border-gray-300 accent-amber-500"
+                />
+                <span className="text-sm font-medium text-gray-700">Pay now (record cash outflow)</span>
+              </label>
+              {form.pay_now && (
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Pay from Account</label>
+                  <select
+                    value={form.account_id}
+                    onChange={set('account_id')}
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-amber-400"
+                  >
+                    <option value="">— select account —</option>
+                    {accounts.map(a => (
+                      <option key={a.id} value={a.id}>{a.name}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+            </div>
+          )}
 
           {error && (
             <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</p>
@@ -308,18 +447,20 @@ function ProcurementModal({ onClose, onSaved }) {
 // ─── Main page ────────────────────────────────────────────────────────────────
 
 export default function Procurement() {
-  const [records, setRecords]     = useState([])
-  const [loading, setLoading]     = useState(true)
-  const [modalOpen, setModalOpen] = useState(false)
+  const [records, setRecords]       = useState([])
+  const [itemTypes, setItemTypes]   = useState([])
+  const [loading, setLoading]       = useState(true)
+  const [modalOpen, setModalOpen]   = useState(false)
   const [typeFilter, setTypeFilter] = useState('all')
 
   async function fetchData() {
     setLoading(true)
-    const { data } = await supabase
-      .from('procurement')
-      .select('*')
-      .order('date', { ascending: false })
-    setRecords(data || [])
+    const [{ data: batchData }, { data: typesData }] = await Promise.all([
+      supabase.from('procurement').select('*, suppliers(name)').order('date', { ascending: false }),
+      supabase.from('item_types').select('id, name'),
+    ])
+    setRecords(batchData || [])
+    setItemTypes(typesData || [])
     setLoading(false)
   }
 
@@ -352,7 +493,7 @@ export default function Procurement() {
 
       {/* Type filter pills */}
       <div className="flex items-center gap-2 mb-4 flex-wrap">
-        {['all', ...TYPES].map(t => (
+        {['all', ...itemTypes.map(t => t.name.toLowerCase())].map(t => (
           <button
             key={t}
             onClick={() => setTypeFilter(t)}
@@ -400,7 +541,9 @@ export default function Procurement() {
               <tbody className="divide-y divide-gray-50">
                 {visible.map(r => (
                   <tr key={r.id} className="hover:bg-amber-50/40 transition">
-                    <td className="px-5 py-3.5"><TypeBadge type={r.type} /></td>
+                    <td className="px-5 py-3.5">
+                      <TypeBadge type={r.item_type_name?.toLowerCase() ?? r.type} />
+                    </td>
                     <td className="px-5 py-3.5 font-medium text-gray-800">{r.item_name}</td>
                     <td className="px-5 py-3.5 text-right text-gray-700">
                       {Number(r.quantity).toLocaleString('en-IN')}
@@ -409,7 +552,7 @@ export default function Procurement() {
                     <td className="px-5 py-3.5 text-right font-semibold text-gray-800">
                       {formatCurrency(r.cost)}
                     </td>
-                    <td className="px-5 py-3.5 text-gray-600">{r.supplier || '—'}</td>
+                    <td className="px-5 py-3.5 text-gray-600">{r.suppliers?.name || '—'}</td>
                     <td className="px-5 py-3.5 text-gray-500 whitespace-nowrap">{formatDate(r.date)}</td>
                     <td className="px-5 py-3.5 text-gray-400 max-w-[140px] truncate" title={r.notes || ''}>
                       {r.notes || '—'}

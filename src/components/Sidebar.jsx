@@ -3,15 +3,19 @@ import { NavLink, useNavigate, useLocation } from 'react-router-dom'
 import { supabase } from '../lib/supabaseClient'
 
 const NAV = [
-  { to: '/dashboard',       label: 'Dashboard',       icon: '🏠' },
-  { to: '/farms',           label: 'Farms',           icon: '🏡' },
-  { to: '/batches',         label: 'Batches',         icon: '🐣' },
-  { to: '/procurement',     label: 'Procurement',     icon: '🛒' },
-  { to: '/stock',           label: 'Stock',           icon: '📦' },
-  { to: '/vendors',         label: 'Vendors',         icon: '🤝' },
-  { to: '/sales',           label: 'Sales',           icon: '💰' },
-  { to: '/cash-collection', label: 'Cash Collection', icon: '💳' },
-  { to: '/expenses',        label: 'Expenses',        icon: '🧾' },
+  { to: '/dashboard',        label: 'Dashboard',       icon: '🏠' },
+  { to: '/farms',            label: 'Farms',           icon: '🏡' },
+  { to: '/batches',          label: 'Batches',         icon: '🐣' },
+  { to: '/procurement',      label: 'Procurement',     icon: '🛒' },
+  { to: '/suppliers',        label: 'Suppliers',       icon: '🏭' },
+  { to: '/stock',            label: 'Stock',           icon: '📦' },
+  { to: '/vendors',          label: 'Vendors',         icon: '🤝' },
+  { to: '/sales',            label: 'Sales',           icon: '💰' },
+  { to: '/cash-collection',  label: 'Cash Collection', icon: '💳' },
+  { to: '/expenses',         label: 'Expenses',        icon: '🧾' },
+  { to: '/accounts',         label: 'Cash & Bank',     icon: '💵' },
+  { to: '/reports/pl',       label: 'P&L Report',      icon: '📊' },
+  { to: '/settings/catalog', label: 'Item Catalog',    icon: '⚙️' },
 ]
 
 function NavItem({ to, label, icon, onClick }) {

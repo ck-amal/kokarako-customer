@@ -142,14 +142,21 @@ CREATE VIEW vendor_balances AS
 SELECT
   v.id          AS vendor_id,
   v.name        AS vendor_name,
-  COALESCE(SUM(s.total_amount), 0)   AS total_sales,
-  COALESCE(SUM(cc.amount_paid), 0)   AS total_collected,
-  COALESCE(SUM(s.total_amount), 0)
-    - COALESCE(SUM(cc.amount_paid), 0) AS outstanding_balance
+  COALESCE(s.total_sales,     0) AS total_sales,
+  COALESCE(cc.total_collected, 0) AS total_collected,
+  COALESCE(s.total_sales,     0)
+    - COALESCE(cc.total_collected, 0) AS outstanding_balance
 FROM vendors v
-LEFT JOIN sales          s  ON s.vendor_id  = v.id
-LEFT JOIN cash_collection cc ON cc.vendor_id = v.id
-GROUP BY v.id, v.name;
+LEFT JOIN (
+  SELECT vendor_id, SUM(total_amount) AS total_sales
+  FROM sales
+  GROUP BY vendor_id
+) s ON s.vendor_id = v.id
+LEFT JOIN (
+  SELECT vendor_id, SUM(amount_paid) AS total_collected
+  FROM cash_collection
+  GROUP BY vendor_id
+) cc ON cc.vendor_id = v.id;
 
 -- Batch P&L summary
 CREATE VIEW batch_summary AS

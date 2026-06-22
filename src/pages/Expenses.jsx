@@ -42,14 +42,27 @@ function CategoryBadge({ category }) {
 
 function ExpenseModal({ batches, onClose, onSaved }) {
   const [form, setForm] = useState({
-    batch_id:    '',
-    category:    'labour',
-    amount:      '',
-    description: '',
-    date:        new Date().toISOString().slice(0, 10),
+    batch_id:             '',
+    category:             'labour',
+    amount:               '',
+    description:          '',
+    date:                 new Date().toISOString().slice(0, 10),
+    expense_category_type: 'operating',
+    account_id:           '',
   })
+  const [accounts, setAccounts] = useState([])
   const [saving, setSaving] = useState(false)
   const [error, setError]   = useState('')
+
+  useEffect(() => {
+    supabase.from('accounts').select('id, name, type').eq('is_active', true).order('name')
+      .then(({ data }) => {
+        const list = data || []
+        setAccounts(list)
+        const cash = list.find(a => a.type === 'cash')
+        if (cash) setForm(f => ({ ...f, account_id: cash.id }))
+      })
+  }, [])
 
   function set(field) { return e => setForm(p => ({ ...p, [field]: e.target.value })) }
 
@@ -58,16 +71,31 @@ function ExpenseModal({ batches, onClose, onSaved }) {
     setError('')
     setSaving(true)
 
-    const { error } = await supabase.from('expenses').insert({
-      batch_id:    form.batch_id || null,
-      category:    form.category,
-      amount:      Number(form.amount),
-      description: form.description.trim() || null,
-      date:        form.date,
-    })
+    const { data: inserted, error } = await supabase.from('expenses').insert({
+      batch_id:             form.batch_id || null,
+      category:             form.category,
+      amount:               Number(form.amount),
+      description:          form.description.trim() || null,
+      date:                 form.date,
+      expense_category_type: form.expense_category_type,
+    }).select('id').single()
 
-    if (error) { setError(error.message); setSaving(false) }
-    else        { onSaved() }
+    if (error) { setError(error.message); setSaving(false); return }
+
+    if (form.account_id && inserted) {
+      await supabase.from('transactions').insert({
+        account_id:       form.account_id,
+        transaction_type: 'out',
+        category:         'expense',
+        description:      form.description.trim() || `Expense — ${form.category}`,
+        amount:           Number(form.amount),
+        transaction_date: form.date,
+        reference_type:   'expense',
+        reference_id:     inserted.id,
+      })
+    }
+
+    onSaved()
   }
 
   const inputCls = "w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
@@ -133,6 +161,47 @@ function ExpenseModal({ batches, onClose, onSaved }) {
               </select>
             </div>
           </div>
+
+          {/* Cost type */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Expense Type</label>
+            <div className="flex gap-2">
+              {[
+                { value: 'operating', label: 'Operating', sub: 'Labour, transport, utilities…' },
+                { value: 'cogs',      label: 'Direct Cost', sub: 'Goes into COGS / P&L' },
+              ].map(opt => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => setForm(f => ({ ...f, expense_category_type: opt.value }))}
+                  className={`flex-1 rounded-lg border px-3 py-2 text-left text-xs transition ${
+                    form.expense_category_type === opt.value
+                      ? 'bg-amber-50 border-amber-400 text-amber-700'
+                      : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
+                  }`}
+                >
+                  <div className="font-semibold">{opt.label}</div>
+                  <div className="text-gray-400 mt-0.5">{opt.sub}</div>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Account */}
+          {accounts.length > 0 && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Pay from Account</label>
+              <select
+                value={form.account_id} onChange={set('account_id')}
+                className={inputCls + ' bg-white'}
+              >
+                <option value="">— don't record in ledger —</option>
+                {accounts.map(a => (
+                  <option key={a.id} value={a.id}>{a.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
 
           {error && (
             <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</p>

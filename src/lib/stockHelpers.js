@@ -6,19 +6,27 @@ import { supabase } from './supabaseClient'
  * If found → increments quantity.
  * If not found → creates a new row with reorder_level = 0.
  */
-export async function addToStock(itemName, quantity, unit) {
+export async function addToStock(itemName, quantity, unit, costPerUnit = 0) {
   const name = itemName.trim()
 
   const { data: existing } = await supabase
     .from('stock')
-    .select('id, quantity')
+    .select('id, quantity, avg_cost')
     .ilike('item_name', name)
     .maybeSingle()
 
   if (existing) {
+    const oldQty  = Number(existing.quantity)
+    const newQty  = oldQty + Number(quantity)
+    const oldCost = Number(existing.avg_cost || 0)
+    const cpu     = Number(costPerUnit || 0)
+    // Weighted average cost
+    const newAvg  = cpu > 0
+      ? (oldQty * oldCost + Number(quantity) * cpu) / newQty
+      : oldCost
     return supabase
       .from('stock')
-      .update({ quantity: Number(existing.quantity) + Number(quantity) })
+      .update({ quantity: newQty, avg_cost: newAvg })
       .eq('id', existing.id)
   }
 
@@ -27,6 +35,7 @@ export async function addToStock(itemName, quantity, unit) {
     quantity:      Number(quantity),
     unit,
     reorder_level: 0,
+    avg_cost:      Number(costPerUnit || 0),
   })
 }
 

@@ -11,8 +11,14 @@ import Vendors from './pages/Vendors'
 import Sales from './pages/Sales'
 import CashCollection from './pages/CashCollection'
 import Expenses from './pages/Expenses'
-import BatchReport from './pages/BatchReport'
-import FarmDetail  from './pages/FarmDetail'
+import BatchReport     from './pages/BatchReport'
+import FarmDetail      from './pages/FarmDetail'
+import BatchDetail     from './pages/BatchDetail'
+import CatalogSettings  from './pages/CatalogSettings'
+import Suppliers        from './pages/Suppliers'
+import SupplierDetail   from './pages/SupplierDetail'
+import AccountsPage     from './pages/AccountsPage'
+import PLReport         from './pages/PLReport'
 import './index.css'
 
 function AppLayout({ children }) {
@@ -148,11 +154,77 @@ export default function App() {
         />
 
         <Route
+          path="/farms/:farmId/batches/:batchId"
+          element={
+            <ProtectedRoute>
+              <AppLayout>
+                <BatchDetail />
+              </AppLayout>
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
           path="/batches/:id/report"
           element={
             <ProtectedRoute>
               <AppLayout>
                 <BatchReport />
+              </AppLayout>
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/settings/catalog"
+          element={
+            <ProtectedRoute>
+              <AppLayout>
+                <CatalogSettings />
+              </AppLayout>
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/suppliers"
+          element={
+            <ProtectedRoute>
+              <AppLayout>
+                <Suppliers />
+              </AppLayout>
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/suppliers/:id"
+          element={
+            <ProtectedRoute>
+              <AppLayout>
+                <SupplierDetail />
+              </AppLayout>
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/accounts"
+          element={
+            <ProtectedRoute>
+              <AppLayout>
+                <AccountsPage />
+              </AppLayout>
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/reports/pl"
+          element={
+            <ProtectedRoute>
+              <AppLayout>
+                <PLReport />
               </AppLayout>
             </ProtectedRoute>
           }

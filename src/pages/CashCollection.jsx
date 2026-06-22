@@ -17,9 +17,21 @@ function PaymentModal({ vendor, sales, onClose, onSaved }) {
     amount_paid: '',
     date:        new Date().toISOString().slice(0, 10),
     notes:       '',
+    account_id:  '',
   })
+  const [accounts, setAccounts] = useState([])
   const [saving, setSaving] = useState(false)
   const [error, setError]   = useState('')
+
+  useEffect(() => {
+    supabase.from('accounts').select('id, name, type').eq('is_active', true).order('name')
+      .then(({ data }) => {
+        const list = data || []
+        setAccounts(list)
+        const cash = list.find(a => a.type === 'cash')
+        if (cash) setForm(f => ({ ...f, account_id: cash.id }))
+      })
+  }, [])
 
   function set(field) { return e => setForm(p => ({ ...p, [field]: e.target.value })) }
 
@@ -40,17 +52,31 @@ function PaymentModal({ vendor, sales, onClose, onSaved }) {
       (balanceOnSale ?? Number(form.amount_paid)) - Number(form.amount_paid)
     )
 
-    const { error } = await supabase.from('cash_collection').insert({
+    const { data: inserted, error } = await supabase.from('cash_collection').insert({
       vendor_id:   vendor.vendor_id,
       sale_id:     form.sale_id,
       amount_paid: Number(form.amount_paid),
       date:        form.date,
       balance_due: remaining,
       notes:       form.notes.trim() || null,
-    })
+    }).select('id').single()
 
-    if (error) { setError(error.message); setSaving(false) }
-    else        { onSaved() }
+    if (error) { setError(error.message); setSaving(false); return }
+
+    if (form.account_id && inserted) {
+      await supabase.from('transactions').insert({
+        account_id:       form.account_id,
+        transaction_type: 'in',
+        category:         'vendor_payment',
+        description:      `Payment from ${vendor.vendor_name}`,
+        amount:           Number(form.amount_paid),
+        transaction_date: form.date,
+        reference_type:   'cash_collection',
+        reference_id:     inserted.id,
+      })
+    }
+
+    onSaved()
   }
 
   return (
@@ -123,6 +149,22 @@ function PaymentModal({ vendor, sales, onClose, onSaved }) {
               className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
             />
           </div>
+
+          {/* Account */}
+          {accounts.length > 0 && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Deposit to Account</label>
+              <select
+                value={form.account_id} onChange={set('account_id')}
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-amber-400"
+              >
+                <option value="">— don't record in ledger —</option>
+                {accounts.map(a => (
+                  <option key={a.id} value={a.id}>{a.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
 
           {/* Notes */}
           <div>
