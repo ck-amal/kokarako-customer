@@ -134,10 +134,13 @@ export default function PLReport() {
   const [batchFilter, setBatchFilter] = useState('')
 
   // Raw data
-  const [sales,       setSales]       = useState([])
-  const [procurement, setProcurement] = useState([])
-  const [farmExp,     setFarmExp]     = useState([])
-  const [expenses,    setExpenses]    = useState([])
+  const [sales,            setSales]            = useState([])
+  const [procurement,      setProcurement]      = useState([])
+  const [farmExp,          setFarmExp]          = useState([])
+  const [expenses,         setExpenses]         = useState([])
+  const [fcrBatches,       setFcrBatches]       = useState([])
+  const [growingFeesPaid,  setGrowingFeesPaid]  = useState([])
+  const [advancesSettled,  setAdvancesSettled]  = useState([])
 
   // Expanded rows
   const [expanded,    setExpanded]    = useState({})
@@ -178,7 +181,7 @@ export default function PLReport() {
       batchIds = (fb || []).map(b => b.id)
     }
 
-    const [{ data: s }, { data: p }, { data: fe }, { data: ex }] = await Promise.all([
+    const [{ data: s }, { data: p }, { data: fe }, { data: ex }, { data: gf }, { data: soldBatchesInPeriod }] = await Promise.all([
       // Sales
       (() => {
         let q = supabase.from('sales').select('id, total_amount, date, batch_id, vendors(name)').gte('date', start).lte('date', end)
@@ -203,12 +206,47 @@ export default function PLReport() {
         if (batchIds) q = q.in('batch_id', batchIds)
         return q
       })(),
+      // Growing fee payments (post-close, from transactions ledger)
+      supabase.from('transactions')
+        .select('id, amount, transaction_date, description')
+        .eq('category', 'growing_fee_payment')
+        .gte('transaction_date', start)
+        .lte('transaction_date', end),
+      // Batches sold in this period (to correctly filter growing_fee_ledger by sold_at)
+      (() => {
+        let q = supabase.from('batches').select('id').eq('status', 'sold').gte('sold_at', start).lte('sold_at', end)
+        if (batchIds) q = q.in('id', batchIds)
+        return q
+      })(),
     ])
+
+    // Fetch growing fee ledger for batches actually sold in this period (uses sold_at, not created_at)
+    const soldBatchIdsInPeriod = (soldBatchesInPeriod || []).map(b => b.id)
+    let advSettled = []
+    if (soldBatchIdsInPeriod.length > 0) {
+      const { data } = await supabase
+        .from('growing_fee_ledger')
+        .select('batch_id, total_advances, total_fee, created_at')
+        .gt('total_advances', 0)
+        .in('batch_id', soldBatchIdsInPeriod)
+      advSettled = data || []
+    }
+
+    // Fetch FCR data for batches in scope that have FCR computed
+    let fcrQuery = supabase.from('batches')
+      .select('id, start_date, status, fcr, fcr_rating, total_feed_kg, total_sale_kg, farms(name)')
+      .not('fcr', 'is', null)
+    if (batchIds) fcrQuery = fcrQuery.in('id', batchIds)
+    else if (farmFilter) fcrQuery = fcrQuery.eq('farm_id', farmFilter)
+    const { data: fcrData } = await fcrQuery
 
     setSales(s || [])
     setProcurement(p || [])
     setFarmExp(fe || [])
     setExpenses(ex || [])
+    setGrowingFeesPaid(gf || [])
+    setAdvancesSettled(advSettled)
+    setFcrBatches(fcrData || [])
     setLoading(false)
   }
 
@@ -231,7 +269,10 @@ export default function PLReport() {
     }
     return map
   }, [expenses])
-  const totalOpEx   = Object.values(opExpByCategory).reduce((s, v) => s + v, 0)
+  const totalGrowingFeesPaid  = useMemo(() => growingFeesPaid.reduce((s, r) => s + Number(r.amount), 0), [growingFeesPaid])
+  const totalAdvancesSettled  = useMemo(() => advancesSettled.reduce((s, r) => s + Number(r.total_advances), 0), [advancesSettled])
+  const totalGrowingFeeCost   = totalGrowingFeesPaid + totalAdvancesSettled
+  const totalOpEx   = Object.values(opExpByCategory).reduce((s, v) => s + v, 0) + totalGrowingFeeCost
   const netProfit   = grossProfit - totalOpEx
 
   function toggleExpanded(key) {
@@ -358,15 +399,31 @@ export default function PLReport() {
 
           {/* OPERATING EXPENSES */}
           <SectionCard title="Operating Expenses">
-            {Object.entries(opExpByCategory).length === 0 ? (
+            {Object.entries(opExpByCategory).length === 0 && totalGrowingFeeCost === 0 ? (
               <p className="text-sm text-gray-400 py-2">No operating expenses in this period</p>
             ) : (
-              Object.entries(opExpByCategory).map(([cat, amt]) => (
-                <PLRow key={cat} label={cat.charAt(0).toUpperCase() + cat.slice(1)} amount={amt} indent
-                  detail={expenses.filter(e => (e.expense_category_type === 'operating' || !e.expense_category_type) && e.category === cat)
-                    .map(e => ({ label: `${fmtDate(e.date)} — ${e.description || cat}`, amount: e.amount }))}
-                  onExpand={() => toggleExpanded(`opex_${cat}`)} expanded={expanded[`opex_${cat}`]} />
-              ))
+              <>
+                {Object.entries(opExpByCategory).map(([cat, amt]) => (
+                  <PLRow key={cat} label={cat.charAt(0).toUpperCase() + cat.slice(1)} amount={amt} indent
+                    detail={expenses.filter(e => (e.expense_category_type === 'operating' || !e.expense_category_type) && e.category === cat)
+                      .map(e => ({ label: `${fmtDate(e.date)} — ${e.description || cat}`, amount: e.amount }))}
+                    onExpand={() => toggleExpanded(`opex_${cat}`)} expanded={expanded[`opex_${cat}`]} />
+                ))}
+                {totalGrowingFeeCost > 0 && (
+                  <>
+                    {totalAdvancesSettled > 0 && (
+                      <PLRow label="Growing Fees (advances settled)" amount={totalAdvancesSettled} indent
+                        detail={advancesSettled.map(r => ({ label: `Batch settled — ₹${Number(r.total_fee).toLocaleString('en-IN', { minimumFractionDigits: 0 })} fee`, amount: r.total_advances }))}
+                        onExpand={() => toggleExpanded('growing_adv')} expanded={expanded.growing_adv} />
+                    )}
+                    {totalGrowingFeesPaid > 0 && (
+                      <PLRow label="Growing Fees (post-close payments)" amount={totalGrowingFeesPaid} indent
+                        detail={growingFeesPaid.map(r => ({ label: `${fmtDate(r.transaction_date)} — ${r.description || 'Growing fee payment'}`, amount: r.amount }))}
+                        onExpand={() => toggleExpanded('growing_fees')} expanded={expanded.growing_fees} />
+                    )}
+                  </>
+                )}
+              </>
             )}
             <Divider />
             <PLRow label="Total Operating Expenses" amount={totalOpEx} bold />
@@ -385,6 +442,32 @@ export default function PLReport() {
 
           {/* Visual summary */}
           <BarChart revenue={revenue} cogs={totalCOGS} opex={totalOpEx} net={netProfit} />
+
+          {/* FCR section */}
+          {fcrBatches.length > 0 && (
+            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm px-5 py-4">
+              <p className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-4">Feed Conversion Ratio (FCR)</p>
+              <div className="space-y-2">
+                {fcrBatches.map((b, i) => {
+                  const fcr = Number(b.fcr)
+                  const color = fcr <= 1.8 ? '#15803d' : fcr <= 2.1 ? '#2563eb' : fcr <= 2.5 ? '#d97706' : '#dc2626'
+                  const bg    = fcr <= 1.8 ? '#f0fdf4' : fcr <= 2.1 ? '#eff6ff' : fcr <= 2.5 ? '#fffbeb' : '#fef2f2'
+                  return (
+                    <div key={b.id} className="flex items-center justify-between py-2 border-b border-gray-50 last:border-0">
+                      <div>
+                        <p className="text-sm font-medium text-gray-800">{b.farms?.name ?? '—'} · Batch {fmtDate(b.start_date)}</p>
+                        <p className="text-xs text-gray-400">{Number(b.total_feed_kg || 0).toLocaleString('en-IN')} kg feed ÷ {Number(b.total_sale_kg || 0).toLocaleString('en-IN')} kg sold</p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-lg font-extrabold" style={{ color }}>{fcr.toFixed(2)}</span>
+                        <span className="rounded-full px-2 py-0.5 text-xs font-semibold" style={{ backgroundColor: bg, color }}>{b.fcr_rating}</span>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
 
         </div>
       )}

@@ -94,27 +94,51 @@ function HistoryDrawer({ item, entries, onClose }) {
 export default function Stock() {
   const [ledger,       setLedger]       = useState([])
   const [reorderMap,   setReorderMap]   = useState({}) // item_name (lowercase) → reorder_level
+  const [kgPerUnitMap, setKgPerUnitMap] = useState({}) // item_name (lowercase) → kg_per_unit
+  const [stockIdMap,   setStockIdMap]   = useState({}) // item_name (lowercase) → stock.id
   const [loading,      setLoading]      = useState(true)
   const [search,       setSearch]       = useState('')
   const [typeFilter,   setTypeFilter]   = useState('all')
-  const [historyItem,  setHistoryItem]  = useState(null)  // the computed item row
+  const [historyItem,  setHistoryItem]  = useState(null)
   const [historyEntries, setHistoryEntries] = useState([])
+  const [kgEditItem,   setKgEditItem]   = useState(null)
+  const [kgEditVal,    setKgEditVal]    = useState('')
+  const [kgSaving,     setKgSaving]     = useState(false)
 
   async function fetchData() {
     setLoading(true)
     const [{ data: ledgerData }, { data: stockData }] = await Promise.all([
       supabase.from('stock_ledger').select('*').order('date', { ascending: false }),
-      supabase.from('stock').select('item_name, reorder_level'),
+      supabase.from('stock').select('id, item_name, reorder_level, kg_per_unit'),
     ])
 
     setLedger(ledgerData || [])
 
     const rMap = {}
+    const kMap = {}
+    const idMap = {}
     for (const s of (stockData || [])) {
-      rMap[s.item_name.toLowerCase().trim()] = Number(s.reorder_level || 0)
+      const key = s.item_name.toLowerCase().trim()
+      rMap[key]  = Number(s.reorder_level || 0)
+      kMap[key]  = s.kg_per_unit ?? null
+      idMap[key] = s.id
     }
     setReorderMap(rMap)
+    setKgPerUnitMap(kMap)
+    setStockIdMap(idMap)
     setLoading(false)
+  }
+
+  async function saveKgPerUnit() {
+    if (!kgEditItem) return
+    const key = kgEditItem.item_name.toLowerCase().trim()
+    const stockId = stockIdMap[key]
+    if (!stockId) return
+    setKgSaving(true)
+    await supabase.from('stock').update({ kg_per_unit: parseFloat(kgEditVal) || null }).eq('id', stockId)
+    setKgSaving(false)
+    setKgEditItem(null)
+    fetchData()
   }
 
   useEffect(() => { fetchData() }, [])
@@ -141,6 +165,7 @@ export default function Stock() {
     ...v,
     balance:      v.totalIn - v.totalOut,
     reorderLevel: reorderMap[key] ?? 0,
+    kgPerUnit:    kgPerUnitMap[key] ?? null,
   })).sort((a, b) => a.item_name.localeCompare(b.item_name))
 
   // ─── Filters ────────────────────────────────────────────────────────────────
@@ -278,6 +303,7 @@ export default function Stock() {
                   <th className="px-5 py-3 text-right">Total Out</th>
                   <th className="px-5 py-3 text-right">Balance</th>
                   <th className="px-5 py-3 text-center">Status</th>
+                  <th className="px-5 py-3 text-right">kg / Unit</th>
                   <th className="px-5 py-3 text-right">History</th>
                 </tr>
               </thead>
@@ -312,6 +338,16 @@ export default function Stock() {
                         </span>
                       </td>
                       <td className="px-5 py-3.5 text-right">
+                        {item.item_type === 'feed' ? (
+                          <button
+                            onClick={() => { setKgEditItem(item); setKgEditVal(item.kgPerUnit != null ? String(item.kgPerUnit) : '') }}
+                            className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition ${item.kgPerUnit != null ? 'border-green-200 text-green-700 hover:bg-green-50' : 'border-amber-200 text-amber-700 hover:bg-amber-50'}`}
+                          >
+                            {item.kgPerUnit != null ? `${item.kgPerUnit} kg` : 'Set ⚠'}
+                          </button>
+                        ) : <span className="text-gray-300 text-xs">—</span>}
+                      </td>
+                      <td className="px-5 py-3.5 text-right">
                         <button
                           onClick={() => openHistory(item)}
                           className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 transition"
@@ -335,6 +371,42 @@ export default function Stock() {
           entries={historyEntries}
           onClose={() => { setHistoryItem(null); setHistoryEntries([]) }}
         />
+      )}
+
+      {/* kg/unit edit modal */}
+      {kgEditItem && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+          <div className="w-full max-w-sm bg-white rounded-2xl shadow-xl p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-base font-semibold text-gray-800">Set kg per Unit</h2>
+              <button onClick={() => setKgEditItem(null)} className="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
+            </div>
+            <p className="text-sm text-gray-500 mb-4">
+              How many KG does one <strong>{kgEditItem.unit}</strong> of <strong>{kgEditItem.item_name}</strong> weigh?
+              Used to calculate FCR (Feed Conversion Ratio).
+            </p>
+            <input
+              autoFocus
+              type="number"
+              step="0.01"
+              min="0.01"
+              placeholder={`e.g. 50 (for a 50 kg bag)`}
+              value={kgEditVal}
+              onChange={e => setKgEditVal(e.target.value)}
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 mb-4"
+            />
+            <div className="flex gap-3">
+              <button onClick={() => setKgEditItem(null)}
+                className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition">
+                Cancel
+              </button>
+              <button onClick={saveKgPerUnit} disabled={!kgEditVal || kgSaving}
+                className="flex-1 rounded-lg bg-amber-500 hover:bg-amber-600 disabled:opacity-60 px-4 py-2 text-sm font-semibold text-white transition">
+                {kgSaving ? 'Saving…' : 'Save'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )

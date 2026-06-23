@@ -14,8 +14,11 @@ const NAV = [
   { to: '/cash-collection',  label: 'Cash Collection', icon: '💳' },
   { to: '/expenses',         label: 'Expenses',        icon: '🧾' },
   { to: '/accounts',         label: 'Cash & Bank',     icon: '💵' },
-  { to: '/reports/pl',       label: 'P&L Report',      icon: '📊' },
-  { to: '/settings/catalog', label: 'Item Catalog',    icon: '⚙️' },
+  { to: '/growing-fees',         label: 'Growing Fees',    icon: '🌿' },
+  { to: '/reports/pl',           label: 'P&L Report',      icon: '📊' },
+  { to: '/reports/fcr',          label: 'FCR Report',       icon: '🌾' },
+  { to: '/settings/catalog',     label: 'Item Catalog',     icon: '⚙️' },
+  { to: '/settings/growing-fee', label: 'Fee Config',       icon: '🔧' },
 ]
 
 function NavItem({ to, label, icon, onClick }) {

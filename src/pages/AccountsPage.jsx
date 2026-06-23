@@ -36,19 +36,23 @@ function yearRange() {
 const ACCOUNT_ICON = { cash: '💵', bank: '🏦', wallet: '📱' }
 
 const CATEGORY_LABELS = {
-  vendor_payment:   'Vendor Payment',
-  supplier_payment: 'Supplier Payment',
-  expense:          'Expense',
-  procurement:      'Procurement',
-  other:            'Other',
+  vendor_payment:      'Vendor Payment',
+  supplier_payment:    'Supplier Payment',
+  expense:             'Expense',
+  procurement:         'Procurement',
+  growing_fee_payment: 'Growing Fee Payment',
+  growing_fee_advance: 'Growing Fee Advance',
+  other:               'Other',
 }
 
 const CATEGORY_STYLES = {
-  vendor_payment:   'bg-green-100 text-green-700',
-  supplier_payment: 'bg-red-100   text-red-700',
-  expense:          'bg-orange-100 text-orange-700',
-  procurement:      'bg-blue-100  text-blue-700',
-  other:            'bg-gray-100  text-gray-600',
+  vendor_payment:      'bg-green-100  text-green-700',
+  supplier_payment:    'bg-red-100    text-red-700',
+  expense:             'bg-orange-100 text-orange-700',
+  procurement:         'bg-blue-100   text-blue-700',
+  growing_fee_payment: 'bg-purple-100 text-purple-700',
+  growing_fee_advance: 'bg-amber-100  text-amber-700',
+  other:               'bg-gray-100   text-gray-600',
 }
 
 // ─── Add Account Modal ────────────────────────────────────────────────────────

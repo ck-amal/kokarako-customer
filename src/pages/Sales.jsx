@@ -20,15 +20,39 @@ function batchLabel(batch) {
 
 function SaleModal({ batches, vendors, onClose, onSaved }) {
   const [form, setForm] = useState({
-    batch_id:     batches[0]?.id ?? '',
-    vendor_id:    vendors[0]?.id ?? '',
-    kg_sold:      '',
-    price_per_kg: '',
-    date:         new Date().toISOString().slice(0, 10),
-    notes:        '',
+    batch_id:       batches[0]?.id ?? '',
+    vendor_id:      vendors[0]?.id ?? '',
+    chicken_count:  '',
+    kg_sold:        '',
+    price_per_kg:   '',
+    date:           new Date().toISOString().slice(0, 10),
+    notes:          '',
   })
-  const [saving, setSaving] = useState(false)
-  const [error, setError]   = useState('')
+  const [saving,       setSaving]       = useState(false)
+  const [error,        setError]        = useState('')
+  const [alreadySold,  setAlreadySold]  = useState(0)
+  const [loadingBatch, setLoadingBatch] = useState(false)
+
+  // Fetch already-sold count for selected batch
+  useEffect(() => {
+    if (!form.batch_id) return
+    setLoadingBatch(true)
+    supabase
+      .from('sales')
+      .select('chicken_count')
+      .eq('batch_id', form.batch_id)
+      .then(({ data }) => {
+        setAlreadySold((data || []).reduce((s, r) => s + Number(r.chicken_count || 0), 0))
+        setLoadingBatch(false)
+      })
+  }, [form.batch_id])
+
+  const selectedBatch  = batches.find(b => b.id === form.batch_id)
+  const batchLive      = selectedBatch
+    ? Math.max(0, Number(selectedBatch.chick_count || 0) - Number(selectedBatch.mortality_count || 0))
+    : 0
+  const available      = Math.max(0, batchLive - alreadySold)
+  const chickensEntered = parseInt(form.chicken_count) || 0
 
   function set(field) {
     return e => setForm(prev => ({ ...prev, [field]: e.target.value }))
@@ -42,17 +66,22 @@ function SaleModal({ batches, vendors, onClose, onSaved }) {
   async function handleSubmit(e) {
     e.preventDefault()
     setError('')
+    const count = parseInt(form.chicken_count)
+    if (!count || count <= 0) { setError('Enter number of chickens'); return }
+    if (count > available) {
+      setError(`Only ${available.toLocaleString('en-IN')} birds available in this batch (${batchLive.toLocaleString('en-IN')} live − ${alreadySold.toLocaleString('en-IN')} already sold)`)
+      return
+    }
     setSaving(true)
-
     const { error } = await supabase.from('sales').insert({
-      batch_id:     form.batch_id,
-      vendor_id:    form.vendor_id,
-      kg_sold:      parseFloat(form.kg_sold),
-      price_per_kg: parseFloat(form.price_per_kg),
-      date:         form.date,
-      notes:        form.notes.trim() || null,
+      batch_id:      form.batch_id,
+      vendor_id:     form.vendor_id,
+      chicken_count: count,
+      kg_sold:       parseFloat(form.kg_sold),
+      price_per_kg:  parseFloat(form.price_per_kg),
+      date:          form.date,
+      notes:         form.notes.trim() || null,
     })
-
     if (error) { setError(error.message); setSaving(false) }
     else        { onSaved() }
   }
@@ -96,7 +125,25 @@ function SaleModal({ batches, vendors, onClose, onSaved }) {
               </select>
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-3 gap-3">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">No. of Chickens *</label>
+                <input
+                  required type="number" min="1" step="1"
+                  value={form.chicken_count} onChange={set('chicken_count')}
+                  placeholder="e.g. 500"
+                  className={inputCls}
+                />
+                {selectedBatch && !loadingBatch && (
+                  <p className={`text-xs mt-1 font-medium ${
+                    chickensEntered > available ? 'text-red-600' : 'text-gray-400'
+                  }`}>
+                    {chickensEntered > available
+                      ? `⚠ Exceeds available (${available.toLocaleString('en-IN')})`
+                      : `Available: ${available.toLocaleString('en-IN')} birds`}
+                  </p>
+                )}
+              </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Kg Sold *</label>
                 <input
@@ -194,7 +241,7 @@ export default function Sales() {
         .order('created_at', { ascending: false }),
       supabase
         .from('batches')
-        .select('id, start_date, chick_count, farms(name)')
+        .select('id, start_date, chick_count, mortality_count, farms(name)')
         .eq('status', 'active')
         .order('start_date', { ascending: false }),
       supabase
@@ -268,6 +315,7 @@ export default function Sales() {
                 <th className="px-5 py-3">Date</th>
                 <th className="px-5 py-3">Batch</th>
                 <th className="px-5 py-3">Vendor</th>
+                <th className="px-5 py-3 text-right">Chickens</th>
                 <th className="px-5 py-3 text-right">Kg Sold</th>
                 <th className="px-5 py-3 text-right">Price / kg</th>
                 <th className="px-5 py-3 text-right">Total</th>
@@ -284,6 +332,9 @@ export default function Sales() {
                   </td>
                   <td className="px-5 py-4 text-gray-700">{s.vendors?.name ?? '—'}</td>
                   <td className="px-5 py-4 text-right text-gray-700">
+                    {s.chicken_count != null ? Number(s.chicken_count).toLocaleString('en-IN') : '—'}
+                  </td>
+                  <td className="px-5 py-4 text-right text-gray-700">
                     {Number(s.kg_sold).toLocaleString('en-IN', { maximumFractionDigits: 2 })} kg
                   </td>
                   <td className="px-5 py-4 text-right text-gray-700">
@@ -297,7 +348,7 @@ export default function Sales() {
             </tbody>
             <tfoot>
               <tr className="bg-gray-50 border-t border-gray-200">
-                <td colSpan={5} className="px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider text-right">
+                <td colSpan={6} className="px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider text-right">
                   All-time Total
                 </td>
                 <td className="px-5 py-3 text-right font-bold text-gray-800">

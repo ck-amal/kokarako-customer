@@ -161,6 +161,100 @@ src/
 
 ## Sessions Log
 
+### Session 21 — Advance Growing Fee Payments
+
+**Concept:** Farm owners can receive advance payments before a batch is sold. At batch close, advances are automatically deducted from the calculated growing fee. Advances are cash out immediately (not a liability).
+
+**New Table (migration `008_growing_fee_advances.sql`):**
+- `growing_fee_advances`: id, farm_id, batch_id, amount, payment_date, payment_method, reference_number, account_id, notes, created_at
+
+**Updated Tables (migration 008):**
+- `growing_fee_ledger`: added `total_advances` (numeric, default 0), `overpaid_amount` (numeric, default 0)
+- `batches`: added `total_advances` (numeric, default 0) — running total updated on each advance
+
+**Business rules:**
+1. Advances can only be given for an active batch
+2. Advance immediately deducts from Cash & Bank (`transactions` insert: `category = 'growing_fee_advance'`, `type = 'out'`)
+3. At batch close: `total_advances = SUM(growing_fee_advances.amount WHERE batch_id)`
+4. `balance_due = total_fee - total_advances - amount_paid`
+5. If `total_advances > total_fee`: status = 'overpaid', store excess in `overpaid_amount`, `balance_due = 0`
+6. If `total_advances == total_fee`: status = 'paid'
+7. Advances do NOT create any liability entry
+8. `growing_fee_ledger.total_advances` is set at batch close time (snapshot)
+9. `batches.total_advances` is updated incrementally on each advance record
+
+**P&L treatment:**
+- Advances do NOT appear in P&L when given (prepayments)
+- At batch close: advance amount appears in P&L as "Growing Fees (advances settled)" under Operating Expenses
+- Post-close cash payments appear as "Growing Fees (post-close payments)"
+- Both lines add up to total growing fee cost in the period
+
+**Cash & Bank:**
+- Advances appear as `category = 'growing_fee_advance'` → label "Growing Fee Advance" (amber badge)
+- Added to `CATEGORY_LABELS` and `CATEGORY_STYLES` in AccountsPage.jsx
+
+**New GiveAdvanceModal component** (available in BatchDetail.jsx, FarmDetail.jsx, GrowingFees.jsx):
+- Farm name + owner info (pre-filled from context)
+- Batch selector (active batches only; shows error if none)
+- Account selector (defaults to cash account)
+- Amount, date, payment method, reference, notes
+- On save: inserts advance → updates batch.total_advances → inserts transaction
+
+**Updated Pages:**
+- `BatchDetail.jsx`: Active batch shows "Growing Fee Advance Tracking" section with advances list and "Give Advance" button. Sold batch growing fee section now shows: Gross Fee, Advances Paid (itemized), Post-close Paid, Balance Due (or Overpaid credit in green).
+- `FarmDetail.jsx`: Growing Fee summary card in Overview tab shows total active-batch advances + "Give Advance" button. Batches tab Growing Fee column shows "Adv: ₹X" for active batches with advances. "Give Advance" button on each active batch row.
+- `GrowingFees.jsx`: New "Active Batch Advances" table at top showing farms with active batches. "Give Advance" button in page header. `GiveAdvanceModal` added.
+- `PLReport.jsx`: Two separate growing fee lines: "Growing Fees (advances settled)" and "Growing Fees (post-close payments)". Both counted in Operating Expenses total.
+- `AccountsPage.jsx`: `growing_fee_advance` category added with amber badge.
+
+**Migration required:**
+Run `supabase/migrations/008_growing_fee_advances.sql` in Supabase SQL Editor.
+
+---
+
+### Session 20 — Growing Fee System
+
+**Concept:** Farm owners are paid per kg of chicken sold, based on the batch FCR. The rate is tiered and configurable. The calculated fee becomes a liability (pending payment) when a batch is marked as sold.
+
+**New Tables (migration `007_growing_fee.sql`):**
+- `farms`: added `owner_name`, `owner_phone`, `owner_address`, `owner_notes` columns
+- `growing_fee_config`: FCR tier → rate_per_kg mapping. Fields: fcr_from, fcr_to (nullable = last tier), rate_per_kg, description, is_active
+- `growing_fee_ledger`: one row per batch. Records owner_name snapshot, FCR, tier description, rate, total_sale_kg, total_fee, status (pending/partial/paid), amount_paid, balance_due
+- `growing_fee_payments`: payments recorded against ledger entries. FIFO distribution across pending entries per farm
+- `batches`: added `growing_fee_id` (FK→growing_fee_ledger), `growing_fee_per_kg`, `growing_fee_total`
+
+**Default seed tiers (configurable):**
+- FCR 0.0–1.0 → ₹18/kg (Exceptional)
+- FCR 1.0–1.5 → ₹16/kg (Excellent)
+- FCR 1.5–2.0 → ₹14/kg (Good)
+- FCR 2.0–2.5 → ₹12/kg (Average)
+- FCR 2.5–3.0 → ₹10/kg (Below average)
+- FCR 3.0+    → ₹8/kg  (Poor)
+
+**New Pages:**
+- `GrowingFeeSettings.jsx` at `/settings/growing-fee` — FCR tier CRUD with tier ladder visual
+- `GrowingFees.jsx` at `/growing-fees` — growing fee management, grouped by farm, Record Payment modal with FIFO distribution
+
+**Updated Pages:**
+- `FarmDetail.jsx` — FarmEditModal now includes Owner Name, Phone, Address, Notes fields; farm header shows "Managed by: [owner]"
+- `Farms.jsx` — Farm cards show owner name below farm name
+- `BatchDetail.jsx` — `handleMarkAsSold` now auto-calculates growing fee (Step 3 after FCR); Growing Fee section shown for sold/closed batches; batch query joins `growing_fee_ledger`
+- `Sidebar.jsx` — added "Growing Fees" (🌿) and "Fee Config" (🔧) nav items
+- `App.jsx` — added `/growing-fees` and `/settings/growing-fee` routes
+
+**Business rules:**
+1. Growing fee is calculated automatically when a batch is marked as sold (alongside FCR)
+2. Fee = rate_per_kg × total_sale_kg (from the matching FCR tier)
+3. Tier match: `fcr_from <= batch.fcr < fcr_to`; last tier has `fcr_to = null` (matches anything ≥ fcr_from)
+4. Pending growing fee = liability (not cash out yet)
+5. Paid growing fee = actual cash out (recorded via growing_fee_payments)
+6. Growing fee is calculated only once per batch (`batch.growing_fee_id` checked before creating ledger entry)
+7. Payment distribution: FIFO — oldest ledger entries paid first when recording a farm-level payment
+8. Only one growing_fee_ledger entry per batch
+
+**Migration required:**
+Run `supabase/migrations/007_growing_fee.sql` in Supabase SQL Editor.
+
 ### Session 19 — Supplier Management Module
 
 **Built:**

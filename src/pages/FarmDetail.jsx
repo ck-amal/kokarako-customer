@@ -74,10 +74,14 @@ function StackedBar({ segments, duration = 600 }) {
 
 function FarmEditModal({ farm, onClose, onSaved }) {
   const [form, setForm] = useState({
-    name:         farm.name         ?? '',
-    location:     farm.location     ?? '',
-    capacity:     farm.capacity     ?? '',
-    phone_number: farm.phone_number ?? '',
+    name:          farm.name          ?? '',
+    location:      farm.location      ?? '',
+    capacity:      farm.capacity      ?? '',
+    phone_number:  farm.phone_number  ?? '',
+    owner_name:    farm.owner_name    ?? '',
+    owner_phone:   farm.owner_phone   ?? '',
+    owner_address: farm.owner_address ?? '',
+    owner_notes:   farm.owner_notes   ?? '',
   })
   const [saving, setSaving] = useState(false)
   const [error,  setError]  = useState('')
@@ -88,10 +92,14 @@ function FarmEditModal({ farm, onClose, onSaved }) {
     e.preventDefault()
     setSaving(true)
     const { error } = await supabase.from('farms').update({
-      name:         form.name.trim(),
-      location:     form.location.trim() || null,
-      capacity:     Number(form.capacity),
-      phone_number: form.phone_number.trim() || null,
+      name:          form.name.trim(),
+      location:      form.location.trim() || null,
+      capacity:      Number(form.capacity),
+      phone_number:  form.phone_number.trim() || null,
+      owner_name:    form.owner_name.trim() || null,
+      owner_phone:   form.owner_phone.trim() || null,
+      owner_address: form.owner_address.trim() || null,
+      owner_notes:   form.owner_notes.trim() || null,
     }).eq('id', farm.id)
     setSaving(false)
     if (error) setError(error.message)
@@ -100,12 +108,13 @@ function FarmEditModal({ farm, onClose, onSaved }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
-      <div className="w-full max-w-md bg-white rounded-2xl shadow-xl p-6">
+      <div className="w-full max-w-md bg-white rounded-2xl shadow-xl p-6 overflow-y-auto max-h-[90vh]">
         <div className="flex items-center justify-between mb-5">
           <h2 className="text-lg font-semibold text-gray-800">Edit Farm</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
         </div>
         <form onSubmit={handleSubmit} className="space-y-4">
+          {/* Farm details */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Farm Name *</label>
             <input required value={form.name} onChange={set('name')}
@@ -126,6 +135,35 @@ function FarmEditModal({ farm, onClose, onSaved }) {
             <input value={form.phone_number} onChange={set('phone_number')} placeholder="e.g. 9876543210"
               className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400" />
           </div>
+
+          {/* Farm Owner section */}
+          <div className="pt-2 border-t border-gray-100">
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Farm Owner</p>
+            <div className="space-y-3">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Owner Name</label>
+                <input value={form.owner_name} onChange={set('owner_name')} placeholder="e.g. Rajesh Kumar"
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Owner Phone</label>
+                <input value={form.owner_phone} onChange={set('owner_phone')} placeholder="e.g. 9876543210"
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Owner Address</label>
+                <input value={form.owner_address} onChange={set('owner_address')} placeholder="Optional"
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
+                <textarea value={form.owner_notes} onChange={set('owner_notes')} rows={2}
+                  placeholder="Payment preferences, notes about the owner…"
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 resize-none" />
+              </div>
+            </div>
+          </div>
+
           {error && <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</p>}
           <div className="flex gap-3 pt-1">
             <button type="button" onClick={onClose}
@@ -147,7 +185,6 @@ function EditBatchModal({ batch, onClose, onSaved }) {
   const [form, setForm] = useState({
     chick_count:     String(batch.chick_count),
     start_date:      batch.start_date,
-    status:          batch.status,
     mortality_count: String(batch.mortality_count ?? 0),
   })
   const [saving, setSaving] = useState(false)
@@ -161,7 +198,6 @@ function EditBatchModal({ batch, onClose, onSaved }) {
     const { error } = await supabase.from('batches').update({
       chick_count:     Number(form.chick_count),
       start_date:      form.start_date,
-      status:          form.status,
       mortality_count: Number(form.mortality_count),
     }).eq('id', batch.id)
     setSaving(false)
@@ -191,15 +227,6 @@ function EditBatchModal({ batch, onClose, onSaved }) {
             <label className="block text-sm font-medium text-gray-700 mb-1">Mortality Count</label>
             <input type="number" min="0" value={form.mortality_count} onChange={set('mortality_count')}
               className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400" />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Status *</label>
-            <select value={form.status} onChange={set('status')}
-              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400">
-              <option value="active">Active</option>
-              <option value="sold">Sold</option>
-              <option value="closed">Closed</option>
-            </select>
           </div>
           {error && <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</p>}
           <div className="flex gap-3 pt-1">
@@ -692,13 +719,25 @@ function DistributionModal({ farmId, stock, onClose, onSaved }) {
 
 function SaleModal({ activeBatch, vendors, onClose, onSaved }) {
   const [form, setForm] = useState({
-    vendor_id:    vendors.length ? vendors[0].id : '',
-    kg_sold:      '',
-    price_per_kg: '',
-    date:         new Date().toISOString().slice(0, 10),
+    vendor_id:     vendors.length ? vendors[0].id : '',
+    chicken_count: '',
+    kg_sold:       '',
+    price_per_kg:  '',
+    date:          new Date().toISOString().slice(0, 10),
   })
-  const [saving, setSaving] = useState(false)
-  const [error,  setError]  = useState('')
+  const [saving,      setSaving]      = useState(false)
+  const [error,       setError]       = useState('')
+  const [alreadySold, setAlreadySold] = useState(0)
+
+  useEffect(() => {
+    if (!activeBatch?.id) return
+    supabase.from('sales').select('chicken_count').eq('batch_id', activeBatch.id)
+      .then(({ data }) => setAlreadySold((data || []).reduce((s, r) => s + Number(r.chicken_count || 0), 0)))
+  }, [activeBatch?.id])
+
+  const batchLive  = activeBatch ? Math.max(0, Number(activeBatch.chick_count || 0) - Number(activeBatch.mortality_count || 0)) : 0
+  const available  = Math.max(0, batchLive - alreadySold)
+  const entered    = parseInt(form.chicken_count) || 0
 
   function set(f) { return e => setForm(p => ({ ...p, [f]: e.target.value })) }
 
@@ -708,13 +747,21 @@ function SaleModal({ activeBatch, vendors, onClose, onSaved }) {
 
   async function handleSubmit(e) {
     e.preventDefault()
+    setError('')
+    const count = parseInt(form.chicken_count)
+    if (!count || count <= 0) { setError('Enter number of chickens'); return }
+    if (count > available) {
+      setError(`Only ${available.toLocaleString('en-IN')} birds available (${batchLive.toLocaleString('en-IN')} live − ${alreadySold.toLocaleString('en-IN')} already sold)`)
+      return
+    }
     setSaving(true)
     const { error } = await supabase.from('sales').insert({
-      batch_id:     activeBatch.id,
-      vendor_id:    form.vendor_id,
-      kg_sold:      parseFloat(form.kg_sold),
-      price_per_kg: parseFloat(form.price_per_kg),
-      date:         form.date,
+      batch_id:      activeBatch.id,
+      vendor_id:     form.vendor_id,
+      chicken_count: count,
+      kg_sold:       parseFloat(form.kg_sold),
+      price_per_kg:  parseFloat(form.price_per_kg),
+      date:          form.date,
     })
     setSaving(false)
     if (error) setError(error.message)
@@ -754,7 +801,16 @@ function SaleModal({ activeBatch, vendors, onClose, onSaved }) {
             </select>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-3 gap-3">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">No. of Chickens *</label>
+              <input required type="number" min="1" step="1" value={form.chicken_count} onChange={set('chicken_count')}
+                placeholder="e.g. 500"
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400" />
+              <p className={`text-xs mt-1 font-medium ${entered > available ? 'text-red-600' : 'text-gray-400'}`}>
+                {entered > available ? `⚠ Exceeds available (${available.toLocaleString('en-IN')})` : `Available: ${available.toLocaleString('en-IN')} birds`}
+              </p>
+            </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Kg Sold *</label>
               <input required type="number" min="0.01" step="0.01" value={form.kg_sold} onChange={set('kg_sold')}
@@ -857,6 +913,212 @@ function FarmStockAdjustModal({ item, onClose, onSaved }) {
   )
 }
 
+// ─── Give Advance Modal ───────────────────────────────────────────────────────
+
+function GiveAdvanceModal({ farm, batches, initialBatchId, onClose, onSaved }) {
+  const today = new Date().toISOString().slice(0, 10)
+  const activeBatches = batches.filter(b => b.status === 'active')
+
+  const [form, setForm] = useState({
+    batch_id:         initialBatchId ?? activeBatches[0]?.id ?? '',
+    account_id:       '',
+    amount:           '',
+    payment_date:     today,
+    payment_method:   'Cash',
+    reference_number: '',
+    notes:            '',
+  })
+  const [accounts, setAccounts] = useState([])
+  const [saving,   setSaving]   = useState(false)
+  const [error,    setError]    = useState('')
+
+  useEffect(() => {
+    supabase.from('accounts').select('id, name, type').eq('is_active', true).order('created_at')
+      .then(({ data }) => {
+        const accs = data || []
+        setAccounts(accs)
+        const cashAcc = accs.find(a => a.type === 'cash') ?? accs[0]
+        if (cashAcc) setForm(f => ({ ...f, account_id: cashAcc.id }))
+      })
+  }, [])
+
+  function set(field) { return e => setForm(f => ({ ...f, [field]: e.target.value })) }
+
+  const selectedBatch = activeBatches.find(b => b.id === form.batch_id)
+
+  async function handleSubmit(ev) {
+    ev.preventDefault()
+    setError('')
+    if (!form.batch_id) { setError('Select a batch'); return }
+    const amt = parseFloat(form.amount)
+    if (!amt || amt <= 0) { setError('Enter a valid amount'); return }
+    if (!form.account_id) { setError('Select an account'); return }
+
+    setSaving(true)
+
+    // Insert advance
+    const { data: adv, error: advErr } = await supabase.from('growing_fee_advances').insert({
+      farm_id:          farm.id,
+      batch_id:         form.batch_id,
+      amount:           amt,
+      payment_date:     form.payment_date,
+      payment_method:   form.payment_method || null,
+      reference_number: form.reference_number.trim() || null,
+      account_id:       form.account_id,
+      notes:            form.notes.trim() || null,
+    }).select('id').single()
+
+    if (advErr) { setError(advErr.message); setSaving(false); return }
+
+    // Update batch total_advances
+    const { data: currentBatch } = await supabase.from('batches').select('total_advances').eq('id', form.batch_id).single()
+    await supabase.from('batches').update({
+      total_advances: Number(currentBatch?.total_advances || 0) + amt,
+    }).eq('id', form.batch_id)
+
+    // Insert transaction (cash out)
+    const batchStartDate = selectedBatch?.start_date ? new Date(selectedBatch.start_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : ''
+    await supabase.from('transactions').insert({
+      account_id:       form.account_id,
+      transaction_type: 'out',
+      category:         'growing_fee_advance',
+      description:      `Growing fee advance — ${farm.owner_name || farm.name}${batchStartDate ? ', Batch ' + batchStartDate : ''}`,
+      amount:           amt,
+      transaction_date: form.payment_date,
+      reference_type:   'growing_fee_advance',
+      reference_id:     adv.id,
+    })
+
+    setSaving(false)
+    onSaved()
+  }
+
+  if (activeBatches.length === 0) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+        <div className="w-full max-w-sm bg-white rounded-2xl shadow-xl p-6">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-lg font-semibold text-gray-800">Growing Fee Advance</h2>
+            <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl">&times;</button>
+          </div>
+          <div className="rounded-xl bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-800">
+            No active batch for this farm. Advances can only be given during an active batch.
+          </div>
+          <button onClick={onClose} className="mt-4 w-full rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition">Close</button>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+      <div className="w-full max-w-lg bg-white rounded-2xl shadow-xl p-6 max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between mb-5">
+          <h2 className="text-lg font-semibold text-gray-800">Growing Fee Advance Payment</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
+        </div>
+
+        <div className="bg-gray-50 rounded-xl px-4 py-3 mb-4 text-sm">
+          <p className="font-semibold text-gray-800">{farm.name}</p>
+          {farm.owner_name && <p className="text-gray-500 text-xs mt-0.5">{farm.owner_name}</p>}
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          {/* Batch selector */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Batch *</label>
+            {activeBatches.length === 1 ? (
+              <div className="rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-800 font-medium">
+                Batch {new Date(activeBatches[0].start_date + 'T12:00:00').toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })} — Day {Math.floor((Date.now() - new Date(activeBatches[0].start_date + 'T00:00:00')) / 86400000)} — {Number(activeBatches[0].chick_count).toLocaleString('en-IN')} chicks
+              </div>
+            ) : (
+              <select required value={form.batch_id} onChange={set('batch_id')}
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-400">
+                {activeBatches.map(b => {
+                  const day = Math.floor((Date.now() - new Date(b.start_date + 'T00:00:00')) / 86400000)
+                  const sd = new Date(b.start_date + 'T12:00:00').toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
+                  return <option key={b.id} value={b.id}>Batch {sd} — Day {day} — {Number(b.chick_count).toLocaleString('en-IN')} chicks</option>
+                })}
+              </select>
+            )}
+          </div>
+
+          {/* Account selector */}
+          {accounts.length > 0 && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Pay From Account *</label>
+              <select required value={form.account_id} onChange={set('account_id')}
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-400">
+                <option value="">Select account…</option>
+                {accounts.map(a => (
+                  <option key={a.id} value={a.id}>
+                    {a.type === 'cash' ? '💵' : a.type === 'bank' ? '🏦' : '📱'} {a.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {/* Amount */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Amount (₹) *</label>
+            <div className="relative">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm font-medium">₹</span>
+              <input required type="number" min="0.01" step="0.01" value={form.amount} onChange={set('amount')}
+                placeholder="0.00"
+                className="w-full rounded-lg border border-gray-300 pl-7 pr-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+            </div>
+          </div>
+
+          {/* Date + Method */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Payment Date *</label>
+              <input required type="date" value={form.payment_date} onChange={set('payment_date')}
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Payment Method</label>
+              <select value={form.payment_method} onChange={set('payment_method')}
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-400">
+                <option>Cash</option>
+                <option>Bank Transfer</option>
+                <option>Cheque</option>
+                <option>Other</option>
+              </select>
+            </div>
+          </div>
+
+          {/* Reference */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Reference Number <span className="text-gray-400 font-normal">(optional)</span></label>
+            <input value={form.reference_number} onChange={set('reference_number')} placeholder="e.g. Cheque no. or UTR"
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+          </div>
+
+          {/* Notes */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Notes <span className="text-gray-400 font-normal">(optional)</span></label>
+            <textarea rows={2} value={form.notes} onChange={set('notes')}
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-400" />
+          </div>
+
+          {error && <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</p>}
+
+          <div className="flex gap-3 pt-1">
+            <button type="button" onClick={onClose}
+              className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition">Cancel</button>
+            <button type="submit" disabled={saving}
+              className="flex-1 rounded-lg bg-green-600 hover:bg-green-700 disabled:opacity-60 px-4 py-2 text-sm font-semibold text-white transition">
+              {saving ? 'Saving…' : 'Record Advance'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
 // ─── Tab labels ───────────────────────────────────────────────────────────────
 
 const TABS = ['Overview', 'Batches', 'Distributions', 'Sales', 'Farm Stock']
@@ -877,8 +1139,13 @@ export default function FarmDetail() {
   const [stock,                setStock]               = useState([])
   const [vendors,              setVendors]             = useState([])
   const [cashCollection,       setCashCollection]      = useState([])
+  const [growingFeeLedger,     setGrowingFeeLedger]    = useState([])
   const [farmStock,            setFarmStock]           = useState([])
+  const [farmAdvances,         setFarmAdvances]        = useState([])
   const [loading,              setLoading]             = useState(true)
+
+  const [advanceModal,         setAdvanceModal]         = useState(false)
+  const [advanceBatchId,       setAdvanceBatchId]       = useState(null)
 
   const [editModal,          setEditModal]          = useState(false)
   const [batchModal,         setBatchModal]         = useState(false)
@@ -899,7 +1166,7 @@ export default function FarmDetail() {
     const [{ data: farmData }, { data: batchData }] = await Promise.all([
       supabase.from('farms').select('*').eq('id', id).single(),
       supabase.from('batches')
-        .select('id, start_date, chick_count, status, mortality_count')
+        .select('*')
         .eq('farm_id', id)
         .order('start_date', { ascending: false }),
     ])
@@ -941,18 +1208,26 @@ export default function FarmDetail() {
     setFarmStock(farmStockData || [])
     setSales(salesResult.data || [])
 
-    // Phase 3: cash_collection (payments received) for this farm's sales
+    // Phase 3: cash_collection + growing fee ledger in parallel
     const saleIds = (salesResult.data || []).map(s => s.id)
-    if (saleIds.length) {
-      const { data: cashData } = await supabase
-        .from('cash_collection')
-        .select('id, amount_paid, date, vendors(name)')
-        .in('sale_id', saleIds)
-        .order('date', { ascending: false })
-      setCashCollection(cashData || [])
-    } else {
-      setCashCollection([])
-    }
+    const [cashResult, feeResult] = await Promise.all([
+      saleIds.length
+        ? supabase.from('cash_collection').select('id, amount_paid, date, vendors(name)').in('sale_id', saleIds).order('date', { ascending: false })
+        : Promise.resolve({ data: [] }),
+      batchIds.length
+        ? supabase.from('growing_fee_ledger').select('batch_id, total_fee, amount_paid, balance_due, status').in('batch_id', batchIds)
+        : Promise.resolve({ data: [] }),
+    ])
+    setCashCollection(cashResult.data || [])
+    setGrowingFeeLedger(feeResult.data || [])
+
+    // Fetch advances for active batches
+    const activeBatchIds = bList.filter(b => b.status === 'active').map(b => b.id)
+    const advResult = activeBatchIds.length
+      ? await supabase.from('growing_fee_advances').select('id, batch_id, amount, payment_date, payment_method').in('batch_id', activeBatchIds).order('payment_date')
+      : { data: [] }
+    setFarmAdvances(advResult.data || [])
+
     setLoading(false)
   }
 
@@ -1087,6 +1362,14 @@ export default function FarmDetail() {
                 <span>🐔 {Number(farm.capacity).toLocaleString('en-IN')} bird capacity</span>
                 {farm.phone_number && <span>📞 {farm.phone_number}</span>}
               </div>
+              {(farm.owner_name || farm.owner_phone) && (
+                <div className="mt-2 pt-2 border-t border-gray-100 flex flex-wrap gap-x-4 gap-y-0.5 text-sm" style={{ color: '#78716c' }}>
+                  <span className="font-medium" style={{ color: '#1c1917' }}>Managed by:</span>
+                  {farm.owner_name  && <span>{farm.owner_name}</span>}
+                  {farm.owner_phone && <a href={`tel:${farm.owner_phone}`} className="hover:text-amber-600 transition">📞 {farm.owner_phone}</a>}
+                  {farm.owner_address && <span>· {farm.owner_address}</span>}
+                </div>
+              )}
             </div>
           </div>
           <button
@@ -1167,6 +1450,19 @@ export default function FarmDetail() {
                 <p style={{ color: '#78716c' }} className="text-xs mt-1.5 font-medium">Total Mortality</p>
               </div>
               {(() => {
+                const fcrBatches = batches.filter(b => b.fcr != null)
+                const avgFCR = fcrBatches.length > 0 ? fcrBatches.reduce((s, b) => s + Number(b.fcr), 0) / fcrBatches.length : null
+                const bestFCR = fcrBatches.length > 0 ? Math.min(...fcrBatches.map(b => Number(b.fcr))) : null
+                const color = avgFCR == null ? '#78716c' : avgFCR <= 1.8 ? '#15803d' : avgFCR <= 2.1 ? '#2563eb' : avgFCR <= 2.5 ? '#d97706' : '#dc2626'
+                const bg    = avgFCR == null ? '#fafaf5' : avgFCR <= 1.8 ? '#f0fdf4' : avgFCR <= 2.1 ? '#eff6ff' : avgFCR <= 2.5 ? '#fffbeb' : '#fef2f2'
+                return (
+                  <div style={{ backgroundColor: bg }} className="text-center p-4 rounded-xl">
+                    <p style={{ color }} className="text-3xl font-extrabold">{avgFCR != null ? avgFCR.toFixed(2) : '—'}</p>
+                    <p style={{ color: '#78716c' }} className="text-xs mt-1.5 font-medium">Avg FCR{bestFCR != null ? ` · Best: ${bestFCR.toFixed(2)}` : ''}</p>
+                  </div>
+                )
+              })()}
+              {(() => {
                 const minDays = activeBatchesList.length > 0
                   ? Math.min(...activeBatchesList.map(b => 45 - daysElapsed(b.start_date)))
                   : null
@@ -1234,6 +1530,71 @@ export default function FarmDetail() {
               ))}
             </div>
           </div>
+
+          {/* ── Growing Fee Summary ────────────────────────────────────── */}
+          {(() => {
+            const hasActiveBatch = batches.some(b => b.status === 'active')
+            const totalFee   = growingFeeLedger.reduce((s, r) => s + Number(r.total_fee || 0), 0)
+            const totalPaid  = growingFeeLedger.reduce((s, r) => s + Number(r.amount_paid || 0), 0)
+            const outstanding= growingFeeLedger.reduce((s, r) => s + Number(r.balance_due || 0), 0)
+            const activeAdvTotal = farmAdvances.reduce((s, r) => s + Number(r.amount || 0), 0)
+
+            if (!hasActiveBatch && growingFeeLedger.length === 0) return null
+            return (
+              <div style={{ backgroundColor: '#fffffe', borderColor: outstanding > 0 ? '#fca5a5' : '#e7e5e0' }} className="rounded-xl border shadow-sm p-5">
+                <div className="flex items-center justify-between mb-3">
+                  <h3 style={{ color: '#1c1917' }} className="text-sm font-semibold">Growing Fee</h3>
+                  {outstanding > 0 && (
+                    <span className="text-xs font-semibold rounded-full px-2.5 py-0.5 bg-red-100 text-red-600">
+                      ₹{outstanding.toLocaleString('en-IN', { minimumFractionDigits: 2 })} outstanding
+                    </span>
+                  )}
+                  {outstanding === 0 && growingFeeLedger.length > 0 && (
+                    <span className="text-xs font-semibold rounded-full px-2.5 py-0.5 bg-green-100 text-green-700">Fully Paid ✓</span>
+                  )}
+                </div>
+                {growingFeeLedger.length > 0 && (
+                  <div className="space-y-2 text-sm mb-3">
+                    <div className="flex justify-between">
+                      <span style={{ color: '#78716c' }}>Total Fee Accrued</span>
+                      <span className="font-semibold" style={{ color: '#1c1917' }}>₹{totalFee.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span style={{ color: '#78716c' }}>Total Paid</span>
+                      <span className="font-semibold text-green-700">₹{totalPaid.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+                    </div>
+                    <div className="flex justify-between pt-1 border-t border-gray-100">
+                      <span style={{ color: '#78716c' }}>Balance Due</span>
+                      <span className="font-bold" style={{ color: outstanding > 0 ? '#dc2626' : '#15803d' }}>
+                        ₹{outstanding.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                      </span>
+                    </div>
+                  </div>
+                )}
+                {hasActiveBatch && activeAdvTotal > 0 && (
+                  <div className="text-sm mb-3 bg-amber-50 rounded-lg px-3 py-2 border border-amber-100">
+                    <span style={{ color: '#78716c' }}>Advances (active batches): </span>
+                    <span className="font-semibold text-amber-700">₹{activeAdvTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+                  </div>
+                )}
+                <div className="flex gap-2">
+                  {outstanding > 0 && (
+                    <a href="/growing-fees" className="flex-1 text-center rounded-lg bg-blue-600 hover:bg-blue-700 px-4 py-2 text-sm font-semibold text-white transition">
+                      Record Payment →
+                    </a>
+                  )}
+                  {hasActiveBatch && outstanding === 0 && (
+                    <button
+                      onClick={() => { setAdvanceBatchId(null); setAdvanceModal(true) }}
+                      className="flex-1 rounded-lg border border-green-600 text-green-700 hover:bg-green-50 px-4 py-2 text-sm font-semibold transition"
+                    >
+                      Give Advance
+                    </button>
+                  )}
+                </div>
+              </div>
+            )
+          })()}
 
           {/* ── 4. Recent Activity ─────────────────────────────────────── */}
           <div style={{ backgroundColor: '#fffffe', borderColor: '#e7e5e0' }} className="rounded-xl border shadow-sm p-5">
@@ -1389,6 +1750,8 @@ export default function FarmDetail() {
                     <th className="px-5 py-3 text-right">Expenses</th>
                     <th className="px-5 py-3 text-right">Revenue</th>
                     <th className="px-5 py-3 text-right">Profit</th>
+                    <th className="px-5 py-3 text-center">FCR</th>
+                    <th className="px-5 py-3 text-right">Growing Fee</th>
                     <th className="px-5 py-3"></th>
                   </tr>
                 </thead>
@@ -1439,13 +1802,43 @@ export default function FarmDetail() {
                           style={{ color: bRev > 0 ? (bProfit >= 0 ? '#15803d' : '#dc2626') : '#9ca3af' }}>
                           {bRev > 0 ? ((bProfit < 0 ? '−' : '') + fmt(Math.abs(bProfit))) : '—'}
                         </td>
+                        <td className="px-5 py-4 text-center">
+                          {b.fcr != null ? (() => {
+                            const fcr = Number(b.fcr)
+                            const color = fcr <= 1.8 ? '#15803d' : fcr <= 2.1 ? '#2563eb' : fcr <= 2.5 ? '#d97706' : '#dc2626'
+                            const bg    = fcr <= 1.8 ? '#f0fdf4' : fcr <= 2.1 ? '#eff6ff' : fcr <= 2.5 ? '#fffbeb' : '#fef2f2'
+                            return <span className="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-bold" style={{ backgroundColor: bg, color }}>{fcr.toFixed(2)}</span>
+                          })() : <span className="text-gray-300 text-xs">—</span>}
+                        </td>
+                        <td className="px-5 py-4 text-right">
+                          {(() => {
+                            const fee = growingFeeLedger.find(f => f.batch_id === b.id)
+                            if (!fee) {
+                              return <span className="text-gray-300 text-xs">—</span>
+                            }
+                            const statusColor = fee.status === 'paid' ? '#15803d' : fee.status === 'partial' ? '#d97706' : '#dc2626'
+                            const statusBg    = fee.status === 'paid' ? '#f0fdf4'  : fee.status === 'partial' ? '#fffbeb'  : '#fef2f2'
+                            return (
+                              <div className="text-right">
+                                <div className="text-xs font-semibold" style={{ color: '#1c1917' }}>
+                                  ₹{Number(fee.total_fee).toLocaleString('en-IN', { minimumFractionDigits: 0 })}
+                                </div>
+                                <span className="inline-flex mt-0.5 rounded-full px-1.5 py-0.5 text-xs font-semibold capitalize" style={{ backgroundColor: statusBg, color: statusColor }}>
+                                  {fee.status}
+                                </span>
+                              </div>
+                            )
+                          })()}
+                        </td>
                         <td className="px-5 py-4 text-right" onClick={e => e.stopPropagation()}>
-                          <button
-                            onClick={() => setEditingBatch(b)}
-                            className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 transition"
-                          >
-                            Edit
-                          </button>
+                          <div className="flex items-center gap-2 justify-end">
+                            <button
+                              onClick={() => setEditingBatch(b)}
+                              className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 transition"
+                            >
+                              Edit
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     )
@@ -1671,6 +2064,15 @@ export default function FarmDetail() {
           item={editingFarmStock}
           onClose={() => setEditingFarmStock(null)}
           onSaved={() => { setEditingFarmStock(null); refresh() }}
+        />
+      )}
+      {advanceModal && (
+        <GiveAdvanceModal
+          farm={farm}
+          batches={batches}
+          initialBatchId={advanceBatchId}
+          onClose={() => { setAdvanceModal(false); setAdvanceBatchId(null) }}
+          onSaved={() => { setAdvanceModal(false); setAdvanceBatchId(null); fetchAll() }}
         />
       )}
     </div>

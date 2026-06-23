@@ -115,6 +115,8 @@ export default function Dashboard() {
         { data: accounts },
         { data: transactions },
         { data: stockItems },
+        { data: soldFCRBatches },
+        { data: gfLedger },
       ] = await Promise.all([
         // Active batches (for count, chick total, table)
         supabase
@@ -180,6 +182,21 @@ export default function Dashboard() {
         supabase
           .from('stock')
           .select('quantity, avg_cost'),
+
+        // Batches sold this month with FCR
+        supabase
+          .from('batches')
+          .select('fcr, fcr_rating')
+          .eq('status', 'sold')
+          .not('fcr', 'is', null)
+          .gte('sold_at', start)
+          .lte('sold_at', end),
+
+        // Growing fee payables (pending/partial ledger entries)
+        supabase
+          .from('growing_fee_ledger')
+          .select('balance_due')
+          .in('status', ['pending', 'partial']),
       ])
 
       const monthRevenue  = (monthSales || []).reduce((s, r) => s + Number(r.total_amount || 0), 0)
@@ -204,7 +221,12 @@ export default function Dashboard() {
       }, 0)
       const stockValue = (stockItems || []).reduce((s, i) => s + Number(i.quantity || 0) * Number(i.avg_cost || 0), 0)
       const totalAssets = cashAndBank + totalOutstanding + stockValue
-      const netWorth = totalAssets - supplierDues
+      const growingFeePayable = (gfLedger || []).reduce((s, r) => s + Number(r.balance_due), 0)
+      const totalLiabilities = supplierDues + growingFeePayable
+      const netWorth = totalAssets - totalLiabilities
+
+      const fcrList = (soldFCRBatches || []).map(b => Number(b.fcr))
+      const avgFCR  = fcrList.length > 0 ? fcrList.reduce((s, f) => s + f, 0) / fcrList.length : null
 
       // Merge and sort recent transactions (sales + expenses) by date, take 5
       const txns = [
@@ -237,11 +259,15 @@ export default function Dashboard() {
         totalOutstanding,
         lowStockCount:  (lowStock || []).length,
         supplierDues,
+        growingFeePayable,
+        totalLiabilities,
         txns,
         cashAndBank,
         stockValue,
         totalAssets,
         netWorth,
+        avgFCR,
+        fcrCount: fcrList.length,
       })
       setLoading(false)
     }
@@ -315,6 +341,17 @@ export default function Dashboard() {
           to="/suppliers"
           loading={loading}
         />
+        <StatCard
+          label={`Avg FCR — ${new Date().toLocaleString('en-IN', { month: 'short' })}`}
+          value={loading ? '…' : (data.avgFCR != null ? data.avgFCR.toFixed(2) : '—')}
+          sub={loading ? '' : data.avgFCR != null
+            ? `${data.fcrCount} sold batch${data.fcrCount > 1 ? 'es' : ''} · ${data.avgFCR <= 1.8 ? 'Excellent' : data.avgFCR <= 2.1 ? 'Good' : data.avgFCR <= 2.5 ? 'Average' : 'Poor'}`
+            : 'No batches sold this month'}
+          icon="🌾"
+          accent={!loading && data.avgFCR != null ? (data.avgFCR <= 1.8 ? 'green' : data.avgFCR <= 2.1 ? 'blue' : data.avgFCR <= 2.5 ? 'amber' : 'red') : undefined}
+          to="/reports/fcr"
+          loading={loading}
+        />
       </div>
 
       {/* Business Health */}
@@ -355,9 +392,13 @@ export default function Dashboard() {
                 <span className="text-gray-500">Supplier Payables</span>
                 <span className="font-semibold text-gray-800">{loading ? '…' : formatCurrency(data.supplierDues)}</span>
               </div>
+              <div className="flex justify-between text-sm">
+                <span className="text-gray-500">Growing Fees Payable</span>
+                <span className="font-semibold text-gray-800">{loading ? '…' : formatCurrency(data.growingFeePayable)}</span>
+              </div>
               <div className="flex justify-between text-sm border-t border-gray-100 pt-2 mt-2">
                 <span className="font-semibold text-gray-700">Total Liabilities</span>
-                <span className="font-bold text-red-600">{loading ? '…' : formatCurrency(data.supplierDues)}</span>
+                <span className="font-bold text-red-600">{loading ? '…' : formatCurrency(data.totalLiabilities)}</span>
               </div>
             </div>
           </div>
@@ -380,9 +421,15 @@ export default function Dashboard() {
                   <p className="font-semibold text-gray-700">{formatCurrency(data.totalOutstanding)}</p>
                 </div>
                 <div>
-                  <p className="text-gray-500">Payables</p>
+                  <p className="text-gray-500">Supplier Dues</p>
                   <p className="font-semibold text-gray-700">{formatCurrency(data.supplierDues)}</p>
                 </div>
+                {data.growingFeePayable > 0 && (
+                  <div className="col-span-2">
+                    <p className="text-gray-500">Growing Fees Owed</p>
+                    <p className="font-semibold text-amber-700">{formatCurrency(data.growingFeePayable)}</p>
+                  </div>
+                )}
               </div>
             )}
           </div>

@@ -19,6 +19,9 @@ import Suppliers        from './pages/Suppliers'
 import SupplierDetail   from './pages/SupplierDetail'
 import AccountsPage     from './pages/AccountsPage'
 import PLReport         from './pages/PLReport'
+import FCRReport          from './pages/FCRReport'
+import GrowingFees         from './pages/GrowingFees'
+import GrowingFeeSettings  from './pages/GrowingFeeSettings'
 import './index.css'
 
 function AppLayout({ children }) {
@@ -225,6 +228,39 @@ export default function App() {
             <ProtectedRoute>
               <AppLayout>
                 <PLReport />
+              </AppLayout>
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/reports/fcr"
+          element={
+            <ProtectedRoute>
+              <AppLayout>
+                <FCRReport />
+              </AppLayout>
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/growing-fees"
+          element={
+            <ProtectedRoute>
+              <AppLayout>
+                <GrowingFees />
+              </AppLayout>
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/settings/growing-fee"
+          element={
+            <ProtectedRoute>
+              <AppLayout>
+                <GrowingFeeSettings />
               </AppLayout>
             </ProtectedRoute>
           }

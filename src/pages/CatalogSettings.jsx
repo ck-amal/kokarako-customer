@@ -68,7 +68,7 @@ export default function CatalogSettings() {
 
   // Add/edit item form: null = hidden, {} = add mode, {id,...} = edit mode
   const [itemForm, setItemForm] = useState(null)
-  const [itemFormData, setItemFormData] = useState({ name: '', unit: '', description: '', is_active: true })
+  const [itemFormData, setItemFormData] = useState({ name: '', unit: '', description: '', is_active: true, kg_per_unit: '' })
   const [itemFormError, setItemFormError] = useState('')
 
   // Confirm modal
@@ -117,7 +117,7 @@ export default function CatalogSettings() {
     setItemsLoading(true)
     const { data } = await supabase
       .from('items')
-      .select('id, item_type_id, name, unit, description, is_active, created_at')
+      .select('id, item_type_id, name, unit, description, is_active, kg_per_unit, created_at')
       .eq('item_type_id', typeId)
       .order('name')
     // Sort: active first, then inactive
@@ -225,7 +225,7 @@ export default function CatalogSettings() {
 
   function openAddItem() {
     setItemForm({ mode: 'add' })
-    setItemFormData({ name: '', unit: '', description: '', is_active: true })
+    setItemFormData({ name: '', unit: '', description: '', is_active: true, kg_per_unit: '' })
     setItemFormError('')
     setDeactivateMsg('')
   }
@@ -238,6 +238,7 @@ export default function CatalogSettings() {
       unit: item.unit,
       description: item.description || '',
       is_active: item.is_active,
+      kg_per_unit: item.kg_per_unit != null ? String(item.kg_per_unit) : '',
     })
     setItemFormError('')
     setDeactivateMsg('')
@@ -259,12 +260,18 @@ export default function CatalogSettings() {
       setItemFormError('Unit is required.')
       return
     }
+    const isFeed = selectedType?.name?.toLowerCase().includes('feed')
+    if (isFeed && !itemFormData.kg_per_unit) {
+      setItemFormError('KG per unit is required for feed items.')
+      return
+    }
     setSaving(true)
     const payload = {
       name: itemFormData.name.trim(),
       unit: itemFormData.unit.trim(),
       description: itemFormData.description.trim() || null,
       is_active: itemFormData.is_active,
+      kg_per_unit: isFeed && itemFormData.kg_per_unit ? parseFloat(itemFormData.kg_per_unit) : null,
     }
     let error
     if (itemForm.mode === 'edit') {
@@ -525,6 +532,7 @@ export default function CatalogSettings() {
                         onSave={handleSaveItem}
                         onCancel={cancelItemForm}
                         isEdit={false}
+                        isFeedType={selectedType?.name?.toLowerCase().includes('feed') ?? false}
                       />
                     </div>
                   )}
@@ -556,6 +564,7 @@ export default function CatalogSettings() {
                           onToggleActive={handleToggleItemActive}
                           onSave={handleSaveItem}
                           onCancel={cancelItemForm}
+                          isFeedType={selectedType?.name?.toLowerCase().includes('feed') ?? false}
                         />
                       ))}
                       {/* Inactive items */}
@@ -580,6 +589,7 @@ export default function CatalogSettings() {
                               onToggleActive={handleToggleItemActive}
                               onSave={handleSaveItem}
                               onCancel={cancelItemForm}
+                              isFeedType={selectedType?.name?.toLowerCase().includes('feed') ?? false}
                             />
                           ))}
                         </>
@@ -667,6 +677,7 @@ function ItemRow({
   onToggleActive,
   onSave,
   onCancel,
+  isFeedType,
 }) {
   const isEditing = itemForm?.mode === 'edit' && itemForm.id === item.id
 
@@ -681,6 +692,7 @@ function ItemRow({
           onSave={onSave}
           onCancel={onCancel}
           isEdit={true}
+          isFeedType={isFeedType}
         />
       </div>
     )
@@ -702,6 +714,22 @@ function ItemRow({
           >
             {item.unit}
           </span>
+          {isFeedType && item.kg_per_unit != null && (
+            <span
+              className="rounded-full px-2 py-0.5 text-xs font-medium"
+              style={{ backgroundColor: '#ecfdf5', color: '#059669' }}
+            >
+              {item.kg_per_unit} kg/{item.unit}
+            </span>
+          )}
+          {isFeedType && item.kg_per_unit == null && (
+            <span
+              className="rounded-full px-2 py-0.5 text-xs font-medium"
+              style={{ backgroundColor: '#fef3c7', color: '#d97706' }}
+            >
+              kg/unit not set
+            </span>
+          )}
           {!item.is_active && (
             <span
               className="rounded-full px-2 py-0.5 text-xs font-medium"
@@ -747,7 +775,7 @@ function ItemRow({
 
 const UNIT_SUGGESTIONS = ['Bags', 'Vials', 'Bottles', 'Chicks', 'KG', 'Litres', 'Tablets']
 
-function ItemForm({ formData, setFormData, error, saving, onSave, onCancel, isEdit }) {
+function ItemForm({ formData, setFormData, error, saving, onSave, onCancel, isEdit, isFeedType }) {
   return (
     <form onSubmit={onSave} className="space-y-2">
       <div className="grid grid-cols-2 gap-2">
@@ -781,6 +809,21 @@ function ItemForm({ formData, setFormData, error, saving, onSave, onCancel, isEd
           onChange={e => setFormData(prev => ({ ...prev, description: e.target.value }))}
           className="col-span-2 sm:col-span-1 w-full rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400"
         />
+        {isFeedType && (
+          <div className="col-span-2">
+            <input
+              required
+              type="number"
+              step="0.01"
+              min="0.01"
+              placeholder="KG per unit * (e.g. 50 for a 50 kg bag)"
+              value={formData.kg_per_unit}
+              onChange={e => setFormData(prev => ({ ...prev, kg_per_unit: e.target.value }))}
+              className="w-full rounded-lg border border-emerald-400 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400"
+            />
+            <p className="text-xs text-gray-500 mt-0.5">How many KG does one {formData.unit || 'unit'} weigh? Used to calculate FCR.</p>
+          </div>
+        )}
       </div>
 
       {/* Active toggle */}
