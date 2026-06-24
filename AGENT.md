@@ -55,7 +55,7 @@ All tables have `id UUID PRIMARY KEY DEFAULT gen_random_uuid()` and `created_at 
 | `farms`            | name, location, capacity, phone_number (text, nullable) | Base entity — phone_number added in migration 002 |
 | `batches`          | farm_id, start_date, chick_count, status (active/sold/closed), sold_at (date), closed_at (date) | 45-day grow-out cycle; sold_at/closed_at set when status changes |
 | `vendors`          | name, phone, address | Buyers / traders |
-| `item_types`       | name (unique), description | **Catalog** — e.g. Chicks, Feed, Medicine. Added Session 18 |
+| `item_types`       | name (unique), description, **is_distributable** (bool, default true) | **Catalog** — e.g. Chicks, Feed, Medicine. Added Session 18; `is_distributable` added migration 010 — Chicks = false |
 | `items`            | item_type_id (FK→item_types), name, unit, description, is_active | **Catalog** — e.g. Starter Feed / Bags. Added Session 18 |
 | `suppliers`        | name, business_name, phone, address, notes, is_active | **Accounts Payable** — Added Session 19 |
 | `supplier_payments`| supplier_id (FK), procurement_id (nullable FK), amount, payment_date, payment_method, reference_number, notes | Payments to suppliers. Added Session 19 |
@@ -104,12 +104,35 @@ Schema file: `supabase/schema.sql`
 5. **Cash collection** — Tracks per-sale partial payments. Outstanding = total sale value − sum of payments recorded.
 6. **Delete protection** — FK constraints block deleting a farm with batches, a vendor with sales, etc.
 7. **No free-text item entry** — All items in procurement and distributions must come from the `items` catalog table. Free-text `item_name` input is removed from all forms (Session 18).
-8. **Item catalog** — `item_types` (Chicks, Feed, Medicine) → `items` (Starter Feed/Bags, etc.). Managed at `/settings/catalog` (web). Mobile: view-only via CatalogScreen.
+8. **Item catalog** — `item_types` (Feed, Medicine, etc.) → `items` (Starter Feed/Bags, etc.). Managed at `/settings/catalog` (web). Mobile: view-only via CatalogScreen. **Chicks are NOT in the catalog** — chick counts are recorded at batch creation only (migration 011 removed Chicks from item_types).
 9. **Sold/Closed dates** — `batches.sold_at` and `batches.closed_at` are set automatically when status is changed. Shown in Batches list when filtering by Sold or Closed tab.
 10. **Sales validation** — A batch cannot be marked as Sold or Closed unless at least one sale record exists for it.
 11. **Supplier accounts payable** — `suppliers` tracks who we owe money to. Outstanding = SUM(procurement.cost WHERE supplier_id) − SUM(supplier_payments.amount WHERE supplier_id). FIFO payment status: oldest procurements considered paid first.
 12. **Supplier payment overpay warning** — warn (but allow) if payment amount exceeds outstanding balance.
 13. **No free-text supplier in procurement** — supplier field is a FK dropdown, not text (Session 19).
+14. **Distribution form item filter** — Type dropdown comes from `item_types WHERE is_distributable = true`. Item dropdown comes from `items WHERE item_type_id = selectedTypeId AND is_active = true`. Chicks (`is_distributable = false`) are never shown in the Type dropdown. Item selection resets when Type changes.
+15. **Currency formatting** — ALL currency values must use `formatCurrency()` from `src/utils/format.js`. All intermediate calculated values must use `roundCurrency()` before display or storage. FCR always uses `formatFCR()`. Never use raw `toLocaleString()` or `toFixed()` directly for currency.
+16. **Stock quantity in distribution form** — item quantity shown by matching `item_name` (case-insensitive) against the `stock` table. If no stock entry exists, the item is still selectable but shows "not in stock". The `stock_id` in the distributions insert is nullable.
+17. **Advances source of truth** — `growing_fee_advances` table is the ONLY source of truth for all advances ever paid (active and closed batches). `growing_fee_ledger.total_advances` is a snapshot made at batch close — do NOT use it for total advance summaries. Always query `growing_fee_advances` directly.
+18. **Active batch advances are NOT liabilities** — advances are cash already paid out. They are not outstanding liabilities. Only `growing_fee_ledger.balance_due` WHERE status IN ('pending', 'partial') represents liabilities (closed batches only).
+19. **Growing Fees page summary layout** — 4 cards + 1 info row: (1) Total Gross Fees (from ledger.total_fee), (2) Total Advances (SUM growing_fee_advances.amount — all time), (3) Post-close Paid (SUM ledger.amount_paid), (4) Outstanding (SUM ledger.balance_due WHERE status != paid). Info row shows active-batch advances separately with explanatory text.
+20. **Growing fee is an ACCRUAL expense** — recognized at batch close (sold_at date), NOT at payment date. P&L queries `growing_fee_ledger.total_fee` filtered by `batches.sold_at` in the period. Even if fee is unpaid/pending, it appears in P&L for the period the batch closed.
+21. **P&L vs Balance Sheet distinction**: P&L shows `total_fee` (full accrual cost). Balance sheet liabilities show `balance_due` (what is still owed after advances + payments). These are different numbers and both correct.
+22. **P&L growing fee query** — two-step: (1) fetch `batches.id WHERE status='sold' AND sold_at IN period`, (2) fetch `growing_fee_ledger WHERE batch_id IN those IDs`, sum `total_fee`. Do NOT query `transactions` table for growing fee costs in P&L.
+23. **Farm P&L includes growing fees** — `totalCost` in FarmDetail overview = chickCost + feedCost + medicineCost + growingFeeCost (from `growingFeeLedger.reduce(total_fee)`). Financial bar includes purple segment for growing fees.
+24. **BatchDetail growing fee** — already included via `batch.growing_fee_total` in expense totals. Active batches show "Pending — calculated at batch close" messaging.
+25. **Weighted-average cost must be rounded at division** — `getAverageCostPerUnit()` (and inline equivalents) must return `roundCurrency(totalCost / totalQty)`, not raw division. Irrational numbers compound on multiplication.
+26. **Total cost must be rounded at multiplication** — `total_cost` stored in `farm_expenses` must always be `roundCurrency(qty * avgCpu)` — never `qty * avgCpu` raw. Same for `cost_per_unit`. DB must never store floating-point artifacts.
+27. **DB cleanup migration** — `supabase/migrations/012_round_farm_expenses.sql` backfills existing rows with unrounded values. Run once in Supabase SQL Editor if farm_expenses rows exist from before this fix.
+28. **Procurement cost MUST be batch-scoped** — `getAverageCostPerUnit(itemName, { batchId, startDate })` scopes procurement lookup to: (1) `batch_id = batchId` first, (2) `date >= startDate` (batch start_date) second, (3) global last resort. NEVER call it without `startDate` from a distribution context. Cross-batch averages produce wrong P&L numbers.
+29. **Chick cost is a direct sum, not proportional** — query `procurement WHERE type='chicks' AND batch_id IN (farmBatchIds)`. Never compute `(farmChicks / allFarmsChicks) * allFarmsCost`. That proportional formula breaks completely when farms pay different prices for chicks.
+30. **Batch before procurement (insert order)** — in NewBatchModal and any future batch creation logic: always insert the `batches` record first to obtain the `id`, then insert `procurement` with `batch_id = batch.id`. Inserting procurement before batch leaves `batch_id = NULL` on the procurement record forever.
+31. **Feed procurement lacks batch_id** — Procurement.jsx currently has no batch selector. Feed/medicine procurement records have `batch_id = NULL`. The date-range fallback in `getAverageCostPerUnit` handles this. If Procurement.jsx ever adds batch selection, batch_id-scoped lookup will activate automatically.
+32. **Every division that produces currency must be rounded** — `cost / qty`, `rate * kg`, `price * count` — all must be `roundCurrency(...)` before being stored to DB or used in further multiplication. Applies to: Procurement.jsx cpu, ProcurementScreen.js costPerUnit, BatchDetail.jsx growing fee totalFee.
+33. **Growing fee ledger fields must all be rounded** — `total_fee`, `total_advances`, `balance_due`, `amount_paid`, `overpaid_amount` in `growing_fee_ledger` must be `roundCurrency()` before insert/update. FIFO payment distribution loops must round `applied`, `remaining`, `newAmountPaid`, `newBalanceDue` at each step.
+34. **Mobile `formatCurrency` must always have `maximumFractionDigits: 2`** — every local `formatCurrency`/`fmt` function in mobile screens must include both `minimumFractionDigits: 2` AND `maximumFractionDigits: 2`. Missing `maximumFractionDigits` causes 3+ decimal places to display when stored values have floating point artifacts.
+35. **Dashboard computed values must be rounded** — `cashAndBank`, `stockValue`, `totalAssets`, `totalLiabilities`, `netWorth` in Dashboard.jsx are computed on the fly and must be wrapped in `roundCurrency()` to prevent display of accumulated floating point errors.
+36. **`procurement.type` is TEXT, not ENUM** — migration 015 dropped the `procurement_type` enum. The column is now plain TEXT. Any `item_type.name.toLowerCase()` value is valid. Never add a DB enum for item types — `item_types` table is the sole source of truth.
 
 ---
 
@@ -126,6 +149,8 @@ src/
 ├── lib/
 │   ├── supabaseClient.js   — Supabase singleton (reads VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY)
 │   └── stockHelpers.js     — addToStock(), subtractFromStock() utilities
+├── utils/
+│   └── format.js           — formatCurrency(), formatCurrencyRound(), roundCurrency(), formatFCR() — ALL currency display must use these
 └── pages/
     ├── Login.jsx
     ├── Dashboard.jsx       — (placeholder — needs summary stats)
@@ -160,6 +185,121 @@ src/
 ---
 
 ## Sessions Log
+
+### Session 23 — Weighted Average Cost Scoping + Floating Point Storage
+
+**Completed:**
+
+1. **Weighted average cost scoped to batch** — `getAverageCostPerUnit()` rewrtten with `{ batchId, startDate }` params; 3-tier lookup: batch_id → date ≥ start_date → global fallback. All call sites updated to pass startDate.
+
+2. **Chick cost calculation fixed** — no longer proportional across all farms. Now: `procurement WHERE type='chicks' AND batch_id IN (farmBatchIds)`, direct sum. `allBatchesChickTotal` state removed from FarmDetail.jsx and FarmDetailScreen.js.
+
+3. **Batch-before-procurement order fixed** — FarmDetail.jsx NewBatchModal and BatchesScreen.js now insert batch first, then procurement with `batch_id = batch.id`. Migration 013 backfills existing chick procurement by matching date.
+
+4. **Procurement.jsx** — `cost_per_unit` computed by division now `roundCurrency(cost / qty)`. Auto-filled `cost` field now uses `String(roundCurrency(qty * cpu))` instead of `.toFixed(2)`.
+
+5. **ProcurementScreen.js (mobile)** — `costPerUnit = cost / qty` now `roundCurrency(cost / qty)`.
+
+6. **FarmDetail.jsx** — `totalCost = chickCount * pricePerChick` now `roundCurrency(...)`.
+
+7. **BatchesScreen.js (mobile)** — `totalCost = chickCount * price` now `roundCurrency(...)`.
+
+8. **BatchDetail.jsx** — growing fee ledger fields now all rounded: `totalFee = roundCurrency(rate * kg)`, `rawBalance`, `balanceDue`, `overpaid` all wrapped.
+
+9. **GrowingFees.jsx** — FIFO payment distribution now rounds: `applied`, `remaining`, `newAmountPaid`, `newBalanceDue` all use `roundCurrency()`. Threshold changed from `<= 0.001` to `<= 0` for paid status.
+
+10. **Dashboard.jsx** — `cashAndBank`, `stockValue`, `totalAssets`, `totalLiabilities`, `netWorth` all wrapped with `roundCurrency()`.
+
+11. **Mobile `formatCurrency` display functions fixed** — added `maximumFractionDigits: 2` to: BatchDetailScreen.js, FarmDetailScreen.js, SalesScreen.js, PaymentsScreen.js, ProcurementScreen.js, ExpensesScreen.js, VendorsScreen.js, RecordPaymentScreen.js. Fixed two inline `toLocaleString` in SalesScreen.js and BatchesScreen.js.
+
+12. **Migration `014_round_currency_fields.sql`** CREATED — rounds `procurement.cost_per_unit`, `procurement.cost`, all `growing_fee_ledger` currency fields, and `farm_expenses` fields (belt-and-suspenders over migration 012).
+
+**Migrations required:**
+- Run `supabase/migrations/013_link_chick_procurement_to_batch.sql`
+- Run `supabase/migrations/014_round_currency_fields.sql`
+
+**Next session task:**
+- Run migrations 010/011/012/013/014 in Supabase SQL Editor, then verify all numbers display correctly.
+
+---
+
+### Session 22 — Floating Point Fix + Distribution Form Item Filter
+
+**Completed:**
+
+1. **Global currency formatting utilities** — Created `src/utils/format.js`:
+   - `formatCurrency(value)` — ₹ + en-IN locale, always 2 decimal places (both min and max)
+   - `formatCurrencyRound(value)` — ₹ + en-IN locale, no decimal places (for badges/pills)
+   - `roundCurrency(value)` — round to 2dp using EPSILON trick (for intermediate calculations)
+   - `formatFCR(value)` — `.toFixed(2)` (for FCR display)
+   - All local per-page `fmt()` / `formatCurrency()` functions removed from every page
+   - All pages updated: Dashboard, BatchDetail, GrowingFees, FarmDetail, Expenses, AccountsPage, CashCollection, Suppliers, SupplierDetail, Batches, Sales, Procurement, PLReport
+
+2. **Floating point root cause fixed** — was missing `maximumFractionDigits: 2` in `toLocaleString()`. Now format.js enforces both `minimumFractionDigits: 2` and `maximumFractionDigits: 2`.
+
+3. **Chick cost proportional calculation** — wrapped in `roundCurrency()` in FarmDetail.jsx and BatchDetail.jsx to prevent floating point drift.
+
+4. **`is_distributable` column on `item_types`** — Migration `010_item_types_distributable.sql`:
+   - `ALTER TABLE item_types ADD COLUMN is_distributable boolean NOT NULL DEFAULT true`
+   - `UPDATE item_types SET is_distributable = false WHERE LOWER(name) LIKE '%chick%'`
+
+5. **Distribution form item filter fixed** (web + mobile):
+   - **`FarmDetail.jsx` DistributionModal**: Type dropdown fetches `item_types WHERE is_distributable = true`; Item dropdown fetches `items WHERE item_type_id = selectedTypeId AND is_active = true`; item selection resets when type changes; stock quantity shown by name-matching against stock prop
+   - **`FarmDetailScreen.js`**: `openAddDist()` fetches item_types and first type's items; `handleDistTypeChange()` reloads items on type switch; modal uses `distItemTypes` chips and `distCatalogItems` chips instead of hardcoded types and stockItems
+   - **`DistributeFeedScreen.js`**: Fetches `item_types WHERE is_distributable = true` on load; `catalogItems` filtered by `distributableTypeIds` set; type filter chips are dynamic from itemTypes (not hardcoded 'All'/'Feed'/'Medicine'); `typeFilter` is now a type UUID or '' (all)
+
+6. **Floating point artifacts in feed cost calculations fixed** — `farm_expenses.cost_per_unit` and `total_cost` were storing irrational numbers (e.g., 202500/13 = 15576.923076...) due to missing `roundCurrency()` calls at calculation time:
+   - **`src/lib/stockLedger.js`** `getAverageCostPerUnit()`: returns `roundCurrency(totalCost / totalQty)` (not raw division)
+   - **`src/pages/FarmDetail.jsx`** DistributionModal: `total_cost: roundCurrency(qty * avgCpu)` before insert
+   - **`src/screens/FarmDetailScreen.js`** `handleAddDist()`: `avgCpu = roundCurrency(totalProcCost / totalProcQty)` and `total_cost: roundCurrency(qty * avgCpu)`
+   - **`src/screens/DistributeFeedScreen.js`**: same rounding applied at avgCpu division and total_cost multiplication
+   - **`poultry-manager-mobile/src/utils/format.js`** CREATED with `roundCurrency()` function
+   - **`supabase/migrations/012_round_farm_expenses.sql`** CREATED — cleans up existing unrounded rows in DB
+
+7. **GrowingFees page improvements**: 6-card summary bar (Gross Fee, Advances Given, Post-close Paid, Total Paid, Balance Due, Farms count); 9-column farm group table including Advances column.
+
+7. **Dashboard liabilities**: Added Growing Fees Payable to liabilities section; `totalLiabilities = supplierDues + growingFeePayable`; Net Worth breakdown shows Growing Fees Owed.
+
+8. **BatchDetail cost breakdown**: Purple segment (`#c4b5fd`) for growing fee in stacked bar; growing fee row in breakdown table when > 0.
+
+9. **FarmDetail UI cleanup**: Removed "Adv: ₹X active" badge from batch row growing fee cell; removed "Give Advance" button from batch row actions; Give Advance button in overview card hidden when `balance_due > 0`.
+
+10. **P&L `sold_at` fix**: Growing fee ledger now filtered by batch `sold_at` (not `created_at`). Two-step query: fetch batch IDs with sold_at in period → query ledger by those batch IDs.
+
+11. **vercel.json** added for SPA routing (committed locally; GitHub push pending — remote URL needs fixing).
+
+12. **Weighted average cost scoping fixed** (Session 23):
+    - `getAverageCostPerUnit()` now accepts `{ batchId, startDate }` — scopes to batch first, date range second, global last
+    - `FarmDetail.jsx` DistributionModal passes `batchId` + `resolvedBatch.start_date`
+    - `FarmDetailScreen.js` + `DistributeFeedScreen.js` inline cost calculation scoped to `date >= batchStartDate`
+
+13. **Chick cost calculation fixed** (Session 23):
+    - Was: `(farmChicks / allFarmsChicks) * allFarmsChickCost` — proportional across ALL farms, completely wrong multi-farm
+    - Now: `procurement WHERE type='chicks' AND batch_id IN (farmBatchIds)` — direct sum of this farm's chick procurement
+    - `allBatchesChickTotal` state removed from both FarmDetail.jsx and FarmDetailScreen.js
+
+14. **NewBatchModal order fixed** (Session 23):
+    - Was: insert procurement first (no batch_id), then insert batch — chick procurement could never be linked
+    - Now: insert batch first → insert procurement with `batch_id = batch.id` → ledger entries
+    - **`supabase/migrations/013_link_chick_procurement_to_batch.sql`** CREATED — backfills batch_id on existing chick procurement by matching `procurement.date = batches.start_date`
+
+**Migrations required (run in this order):**
+- `009_backfill_advance_transactions.sql` — if not already run
+- `010_item_types_distributable.sql` — adds `is_distributable` column
+- `011_remove_chicks_from_catalog.sql` — removes Chicks from item_types/items
+- `012_round_farm_expenses.sql` — rounds farm_expenses fields
+- `013_link_chick_procurement_to_batch.sql` — links chick procurement to batches
+- `014_round_currency_fields.sql` — rounds procurement.cost_per_unit, growing_fee_ledger fields
+- `015_procurement_type_text.sql` — changes procurement.type from ENUM to TEXT (fixes Vaccine enum error)
+
+**Current blockers:**
+- GitHub remote URL may need fixing (`chicken-45` repo not found at previous URL)
+- Migrations 010–015 must be run in Supabase SQL Editor
+
+**Next session task:**
+- Run all pending migrations in Supabase, verify numbers display correctly and Vaccine procurement saves, then push to GitHub
+
+---
 
 ### Session 21 — Advance Growing Fee Payments
 

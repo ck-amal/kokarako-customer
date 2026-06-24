@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { supabase } from '../lib/supabaseClient'
+import { formatCurrency, roundCurrency } from '../utils/format'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -12,10 +13,6 @@ function daysRemaining(startDate) {
   today.setHours(0, 0, 0, 0)
   start.setHours(0, 0, 0, 0)
   return GROW_OUT_DAYS - Math.floor((today - start) / (1000 * 60 * 60 * 24))
-}
-
-function formatCurrency(n) {
-  return '₹' + Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })
 }
 
 function formatDate(d) {
@@ -215,15 +212,15 @@ export default function Dashboard() {
         if (tx.transaction_type === 'in')  txByAccount[tx.account_id].in  += Number(tx.amount)
         else                                txByAccount[tx.account_id].out += Number(tx.amount)
       }
-      const cashAndBank = (accounts || []).reduce((s, a) => {
+      const cashAndBank = roundCurrency((accounts || []).reduce((s, a) => {
         const t = txByAccount[a.id] || { in: 0, out: 0 }
         return s + Number(a.opening_balance) + t.in - t.out
-      }, 0)
-      const stockValue = (stockItems || []).reduce((s, i) => s + Number(i.quantity || 0) * Number(i.avg_cost || 0), 0)
-      const totalAssets = cashAndBank + totalOutstanding + stockValue
-      const growingFeePayable = (gfLedger || []).reduce((s, r) => s + Number(r.balance_due), 0)
-      const totalLiabilities = supplierDues + growingFeePayable
-      const netWorth = totalAssets - totalLiabilities
+      }, 0))
+      const stockValue = roundCurrency((stockItems || []).reduce((s, i) => s + roundCurrency(Number(i.quantity || 0) * Number(i.avg_cost || 0)), 0))
+      const totalAssets = roundCurrency(cashAndBank + totalOutstanding + stockValue)
+      const growingFeePayable = roundCurrency((gfLedger || []).reduce((s, r) => s + Number(r.balance_due), 0))
+      const totalLiabilities = roundCurrency(supplierDues + growingFeePayable)
+      const netWorth = roundCurrency(totalAssets - totalLiabilities)
 
       const fcrList = (soldFCRBatches || []).map(b => Number(b.fcr))
       const avgFCR  = fcrList.length > 0 ? fcrList.reduce((s, f) => s + f, 0) / fcrList.length : null

@@ -1,11 +1,8 @@
 import { useEffect, useState, useMemo } from 'react'
 import { supabase } from '../lib/supabaseClient'
+import { formatCurrency } from '../utils/format'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function fmt(n) {
-  return '₹' + Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })
-}
 
 function fmtDate(d) {
   return new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
@@ -56,7 +53,7 @@ function PLRow({ label, amount, indent = false, bold = false, muted = false, det
           </span>
         </div>
         <span className={`text-sm ${bold ? 'font-bold text-gray-900' : muted ? 'text-gray-400' : 'text-gray-700'} tabular-nums`}>
-          {fmt(amount)}
+          {formatCurrency(amount)}
         </span>
       </div>
       {expanded && detail && detail.length > 0 && (
@@ -64,7 +61,7 @@ function PLRow({ label, amount, indent = false, bold = false, muted = false, det
           {detail.map((d, i) => (
             <div key={i} className="flex items-center justify-between py-1 text-xs text-gray-500">
               <span className="truncate max-w-[280px]">{d.label}</span>
-              <span className="tabular-nums ml-4">{fmt(d.amount)}</span>
+              <span className="tabular-nums ml-4">{formatCurrency(d.amount)}</span>
             </div>
           ))}
         </div>
@@ -114,7 +111,7 @@ function BarChart({ revenue, cogs, opex, net }) {
             <div className="flex-1 bg-gray-100 rounded-full h-4 overflow-hidden">
               <div className={`h-full rounded-full ${b.color} transition-all duration-500`} style={{ width: `${Math.min(100, (b.value / max) * 100)}%` }} />
             </div>
-            <span className="text-xs font-semibold text-gray-700 tabular-nums w-28 text-right">{fmt(b.value)}</span>
+            <span className="text-xs font-semibold text-gray-700 tabular-nums w-28 text-right">{formatCurrency(b.value)}</span>
           </div>
         ))}
       </div>
@@ -134,13 +131,12 @@ export default function PLReport() {
   const [batchFilter, setBatchFilter] = useState('')
 
   // Raw data
-  const [sales,            setSales]            = useState([])
-  const [procurement,      setProcurement]      = useState([])
-  const [farmExp,          setFarmExp]          = useState([])
-  const [expenses,         setExpenses]         = useState([])
-  const [fcrBatches,       setFcrBatches]       = useState([])
-  const [growingFeesPaid,  setGrowingFeesPaid]  = useState([])
-  const [advancesSettled,  setAdvancesSettled]  = useState([])
+  const [sales,           setSales]           = useState([])
+  const [procurement,     setProcurement]     = useState([])
+  const [farmExp,         setFarmExp]         = useState([])
+  const [expenses,        setExpenses]        = useState([])
+  const [fcrBatches,      setFcrBatches]      = useState([])
+  const [growingFeeLedger,setGrowingFeeLedger]= useState([]) // full accrual — total_fee per closed batch
 
   // Expanded rows
   const [expanded,    setExpanded]    = useState({})
@@ -181,7 +177,7 @@ export default function PLReport() {
       batchIds = (fb || []).map(b => b.id)
     }
 
-    const [{ data: s }, { data: p }, { data: fe }, { data: ex }, { data: gf }, { data: soldBatchesInPeriod }] = await Promise.all([
+    const [{ data: s }, { data: p }, { data: fe }, { data: ex }, { data: soldBatchesInPeriod }] = await Promise.all([
       // Sales
       (() => {
         let q = supabase.from('sales').select('id, total_amount, date, batch_id, vendors(name)').gte('date', start).lte('date', end)
@@ -206,13 +202,7 @@ export default function PLReport() {
         if (batchIds) q = q.in('batch_id', batchIds)
         return q
       })(),
-      // Growing fee payments (post-close, from transactions ledger)
-      supabase.from('transactions')
-        .select('id, amount, transaction_date, description')
-        .eq('category', 'growing_fee_payment')
-        .gte('transaction_date', start)
-        .lte('transaction_date', end),
-      // Batches sold in this period (to correctly filter growing_fee_ledger by sold_at)
+      // Batches closed (sold) in this period — filter by sold_at for correct accrual period
       (() => {
         let q = supabase.from('batches').select('id').eq('status', 'sold').gte('sold_at', start).lte('sold_at', end)
         if (batchIds) q = q.in('id', batchIds)
@@ -220,16 +210,15 @@ export default function PLReport() {
       })(),
     ])
 
-    // Fetch growing fee ledger for batches actually sold in this period (uses sold_at, not created_at)
+    // Fetch growing_fee_ledger for batches closed in this period (accrual: cost belongs to close date)
     const soldBatchIdsInPeriod = (soldBatchesInPeriod || []).map(b => b.id)
-    let advSettled = []
+    let gfLedger = []
     if (soldBatchIdsInPeriod.length > 0) {
       const { data } = await supabase
         .from('growing_fee_ledger')
-        .select('batch_id, total_advances, total_fee, created_at')
-        .gt('total_advances', 0)
+        .select('id, batch_id, farm_id, total_fee, total_advances, amount_paid, balance_due, fcr, fcr_tier_description, farms(name), batches(start_date)')
         .in('batch_id', soldBatchIdsInPeriod)
-      advSettled = data || []
+      gfLedger = data || []
     }
 
     // Fetch FCR data for batches in scope that have FCR computed
@@ -244,8 +233,7 @@ export default function PLReport() {
     setProcurement(p || [])
     setFarmExp(fe || [])
     setExpenses(ex || [])
-    setGrowingFeesPaid(gf || [])
-    setAdvancesSettled(advSettled)
+    setGrowingFeeLedger(gfLedger)
     setFcrBatches(fcrData || [])
     setLoading(false)
   }
@@ -269,10 +257,13 @@ export default function PLReport() {
     }
     return map
   }, [expenses])
-  const totalGrowingFeesPaid  = useMemo(() => growingFeesPaid.reduce((s, r) => s + Number(r.amount), 0), [growingFeesPaid])
-  const totalAdvancesSettled  = useMemo(() => advancesSettled.reduce((s, r) => s + Number(r.total_advances), 0), [advancesSettled])
-  const totalGrowingFeeCost   = totalGrowingFeesPaid + totalAdvancesSettled
-  const totalOpEx   = Object.values(opExpByCategory).reduce((s, v) => s + v, 0) + totalGrowingFeeCost
+  // Growing fee — accrual basis: full fee earned at batch close, regardless of payment status
+  const totalGrowingFee        = useMemo(() => growingFeeLedger.reduce((s, r) => s + Number(r.total_fee      || 0), 0), [growingFeeLedger])
+  const totalGrowingAdvances   = useMemo(() => growingFeeLedger.reduce((s, r) => s + Number(r.total_advances || 0), 0), [growingFeeLedger])
+  const totalGrowingPostClose  = useMemo(() => growingFeeLedger.reduce((s, r) => s + Number(r.amount_paid    || 0), 0), [growingFeeLedger])
+  const totalGrowingOutstanding= useMemo(() => growingFeeLedger.reduce((s, r) => s + Number(r.balance_due    || 0), 0), [growingFeeLedger])
+
+  const totalOpEx = Object.values(opExpByCategory).reduce((s, v) => s + v, 0) + totalGrowingFee
   const netProfit   = grossProfit - totalOpEx
 
   function toggleExpanded(key) {
@@ -391,7 +382,7 @@ export default function PLReport() {
           {/* GROSS PROFIT */}
           <div className={`rounded-2xl border-2 px-5 py-5 text-center ${grossProfit >= 0 ? 'border-green-300 bg-green-50' : 'border-red-300 bg-red-50'}`}>
             <p className="text-xs font-bold uppercase tracking-widest text-gray-500 mb-1">Gross Profit</p>
-            <p className={`text-3xl font-bold ${grossProfit >= 0 ? 'text-green-700' : 'text-red-600'}`}>{fmt(Math.abs(grossProfit))}</p>
+            <p className={`text-3xl font-bold ${grossProfit >= 0 ? 'text-green-700' : 'text-red-600'}`}>{formatCurrency(Math.abs(grossProfit))}</p>
             <p className={`text-sm mt-1 font-medium ${grossProfit >= 0 ? 'text-green-600' : 'text-red-500'}`}>
               {grossProfit >= 0 ? 'Gross Margin: ' : 'Gross Loss — Margin: '}{pct(Math.abs(grossProfit), revenue)}
             </p>
@@ -399,7 +390,7 @@ export default function PLReport() {
 
           {/* OPERATING EXPENSES */}
           <SectionCard title="Operating Expenses">
-            {Object.entries(opExpByCategory).length === 0 && totalGrowingFeeCost === 0 ? (
+            {Object.entries(opExpByCategory).length === 0 && totalGrowingFee === 0 ? (
               <p className="text-sm text-gray-400 py-2">No operating expenses in this period</p>
             ) : (
               <>
@@ -409,19 +400,25 @@ export default function PLReport() {
                       .map(e => ({ label: `${fmtDate(e.date)} — ${e.description || cat}`, amount: e.amount }))}
                     onExpand={() => toggleExpanded(`opex_${cat}`)} expanded={expanded[`opex_${cat}`]} />
                 ))}
-                {totalGrowingFeeCost > 0 && (
-                  <>
-                    {totalAdvancesSettled > 0 && (
-                      <PLRow label="Growing Fees (advances settled)" amount={totalAdvancesSettled} indent
-                        detail={advancesSettled.map(r => ({ label: `Batch settled — ₹${Number(r.total_fee).toLocaleString('en-IN', { minimumFractionDigits: 0 })} fee`, amount: r.total_advances }))}
-                        onExpand={() => toggleExpanded('growing_adv')} expanded={expanded.growing_adv} />
-                    )}
-                    {totalGrowingFeesPaid > 0 && (
-                      <PLRow label="Growing Fees (post-close payments)" amount={totalGrowingFeesPaid} indent
-                        detail={growingFeesPaid.map(r => ({ label: `${fmtDate(r.transaction_date)} — ${r.description || 'Growing fee payment'}`, amount: r.amount }))}
-                        onExpand={() => toggleExpanded('growing_fees')} expanded={expanded.growing_fees} />
-                    )}
-                  </>
+                {totalGrowingFee > 0 && (
+                  <PLRow
+                    label="Growing Fees"
+                    amount={totalGrowingFee}
+                    indent
+                    detail={[
+                      // Per-batch breakdown
+                      ...growingFeeLedger.map(r => ({
+                        label: `${r.farms?.name ?? '—'} · Batch ${r.batches?.start_date ? fmtDate(r.batches.start_date + 'T12:00:00') : '—'} · FCR ${Number(r.fcr || 0).toFixed(2)}`,
+                        amount: r.total_fee,
+                      })),
+                      // Payment status summary
+                      ...(totalGrowingAdvances > 0 ? [{ label: '↳ Advances settled at close', amount: totalGrowingAdvances }] : []),
+                      ...(totalGrowingPostClose > 0 ? [{ label: '↳ Post-close cash payments', amount: totalGrowingPostClose }] : []),
+                      ...(totalGrowingOutstanding > 0 ? [{ label: '↳ Outstanding (still owed)', amount: totalGrowingOutstanding }] : []),
+                    ]}
+                    onExpand={() => toggleExpanded('growing_fees')}
+                    expanded={expanded.growing_fees}
+                  />
                 )}
               </>
             )}
@@ -434,7 +431,7 @@ export default function PLReport() {
             <p className="text-xs font-bold uppercase tracking-widest text-gray-500 mb-1">
               {netProfit >= 0 ? 'Net Profit' : 'Net Loss'}
             </p>
-            <p className={`text-4xl font-bold ${netProfit >= 0 ? 'text-green-700' : 'text-red-600'}`}>{fmt(Math.abs(netProfit))}</p>
+            <p className={`text-4xl font-bold ${netProfit >= 0 ? 'text-green-700' : 'text-red-600'}`}>{formatCurrency(Math.abs(netProfit))}</p>
             <p className={`text-sm mt-1 font-medium ${netProfit >= 0 ? 'text-green-600' : 'text-red-500'}`}>
               Net Margin: {pct(Math.abs(netProfit), revenue)}
             </p>

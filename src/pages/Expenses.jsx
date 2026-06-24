@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
+import { formatCurrency } from '../utils/format'
 
 const CATEGORIES = ['labour', 'transport', 'utilities', 'veterinary', 'maintenance', 'misc']
 
@@ -10,10 +11,6 @@ const CATEGORY_STYLES = {
   veterinary:  'bg-teal-100   text-teal-700',
   maintenance: 'bg-orange-100 text-orange-700',
   misc:        'bg-gray-100   text-gray-600',
-}
-
-function formatCurrency(n) {
-  return '₹' + Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })
 }
 
 function formatDate(d) {

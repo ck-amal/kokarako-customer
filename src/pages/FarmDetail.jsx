@@ -2,12 +2,9 @@ import { useEffect, useState, useRef } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabaseClient'
 import { ledgerIn, ledgerOut, getChickBalance, getAverageCostPerUnit } from '../lib/stockLedger'
+import { formatCurrency, roundCurrency } from '../utils/format'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function fmt(n) {
-  return '₹' + Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })
-}
 
 function fmtDate(d) {
   return new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
@@ -289,7 +286,7 @@ function NewBatchModal({ farmId, onClose, onSaved }) {
   const remaining     = capacity != null ? Math.max(0, capacity - liveChicks) : null
   const chickCount    = Number(form.chick_count) || 0
   const needsPurchase = chickBalance !== null && chickCount > 0 && chickBalance < chickCount
-  const totalCost     = needsPurchase ? chickCount * (parseFloat(pricePerChick) || 0) : 0
+  const totalCost     = needsPurchase ? roundCurrency(chickCount * (parseFloat(pricePerChick) || 0)) : 0
 
   function set(f) { return e => setForm(p => ({ ...p, [f]: e.target.value })) }
 
@@ -308,11 +305,22 @@ function NewBatchModal({ farmId, onClose, onSaved }) {
     }
     setSaving(true)
 
+    // Create batch first so we can link the chick procurement to it via batch_id
+    const { data: inserted, error: batchErr } = await supabase.from('batches').insert({
+      farm_id:     farmId,
+      chick_count: chickCount,
+      start_date:  form.start_date,
+      status:      'active',
+    }).select('id').single()
+
+    if (batchErr) { setError(batchErr.message); setSaving(false); return }
+
     if (needsPurchase) {
       const price = parseFloat(pricePerChick)
       const { data: proc, error: procErr } = await supabase.from('procurement').insert({
         type:          'chicks',
         item_name:     'Chicks',
+        batch_id:      inserted.id,
         quantity:      chickCount,
         unit:          'birds',
         cost:          totalCost,
@@ -347,15 +355,6 @@ function NewBatchModal({ farmId, onClose, onSaved }) {
         })
       }
     }
-
-    const { data: inserted, error: batchErr } = await supabase.from('batches').insert({
-      farm_id:     farmId,
-      chick_count: chickCount,
-      start_date:  form.start_date,
-      status:      'active',
-    }).select('id').single()
-
-    if (batchErr) { setError(batchErr.message); setSaving(false); return }
 
     await ledgerOut({
       itemName:      'Chicks',
@@ -427,7 +426,7 @@ function NewBatchModal({ farmId, onClose, onSaved }) {
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Total Cost</label>
                   <div className="flex items-center h-[38px] rounded-lg bg-white border border-gray-200 px-3 text-sm font-semibold text-amber-700">
-                    {totalCost > 0 ? '₹' + totalCost.toLocaleString('en-IN', { minimumFractionDigits: 2 }) : '—'}
+                    {totalCost > 0 ? formatCurrency(totalCost) : '—'}
                   </div>
                 </div>
               </div>
@@ -493,9 +492,11 @@ function DistributionModal({ farmId, stock, onClose, onSaved }) {
   const [activeBatches,   setActiveBatches]   = useState([])
   const [batchId,         setBatchId]         = useState('')
   const [batchesLoading,  setBatchesLoading]  = useState(true)
+  const [itemTypes,       setItemTypes]       = useState([])
+  const [typeId,          setTypeId]          = useState('')
+  const [catalogItems,    setCatalogItems]    = useState([])
   const [form, setForm] = useState({
-    type:     'feed',
-    stock_id: stock.length ? stock[0].id : '',
+    item_id:  '',
     quantity: '',
     date:     new Date().toISOString().slice(0, 10),
     notes:    '',
@@ -503,6 +504,7 @@ function DistributionModal({ farmId, stock, onClose, onSaved }) {
   const [saving, setSaving] = useState(false)
   const [error,  setError]  = useState('')
 
+  // Load batches + distributable item types on mount
   useEffect(() => {
     supabase.from('batches')
       .select('id, start_date, chick_count')
@@ -515,18 +517,47 @@ function DistributionModal({ farmId, stock, onClose, onSaved }) {
         if (list.length === 1) setBatchId(list[0].id)
         setBatchesLoading(false)
       })
+
+    supabase.from('item_types')
+      .select('id, name')
+      .eq('is_distributable', true)
+      .order('name')
+      .then(({ data }) => {
+        const types = data || []
+        setItemTypes(types)
+        if (types.length) setTypeId(types[0].id)
+      })
   }, [farmId])
+
+  // Load catalog items whenever type changes, reset item selection
+  useEffect(() => {
+    if (!typeId) { setCatalogItems([]); return }
+    supabase.from('items')
+      .select('id, name, unit')
+      .eq('item_type_id', typeId)
+      .eq('is_active', true)
+      .order('name')
+      .then(({ data }) => {
+        const items = data || []
+        setCatalogItems(items)
+        setForm(p => ({ ...p, item_id: items.length ? items[0].id : '' }))
+      })
+  }, [typeId])
 
   function set(f) { return e => setForm(p => ({ ...p, [f]: e.target.value })) }
 
-  const selectedStock  = stock.find(s => s.id === form.stock_id)
+  const selectedItem   = catalogItems.find(i => i.id === form.item_id)
+  const selectedStock  = selectedItem
+    ? stock.find(s => s.item_name.toLowerCase() === selectedItem.name.toLowerCase())
+    : null
+  const typeName       = itemTypes.find(t => t.id === typeId)?.name?.toLowerCase() || ''
   const hasNoBatches   = !batchesLoading && activeBatches.length === 0
   const formDisabled   = hasNoBatches
 
   async function handleSubmit(e) {
     e.preventDefault()
     if (!batchId && activeBatches.length > 0) { setError('Select a batch'); return }
-    if (!form.stock_id) { setError('Select a stock item'); return }
+    if (!form.item_id || !selectedItem) { setError('Select a stock item'); return }
     const qty = parseFloat(form.quantity)
     if (!qty || qty <= 0) { setError('Enter a valid quantity'); return }
     if (selectedStock && qty > Number(selectedStock.quantity)) {
@@ -539,11 +570,11 @@ function DistributionModal({ farmId, stock, onClose, onSaved }) {
     const { data: distInserted, error: distErr } = await supabase.from('distributions').insert({
       farm_id:   farmId,
       batch_id:  batchId || null,
-      stock_id:  form.stock_id,
-      item_name: selectedStock.item_name,
-      type:      form.type,
+      stock_id:  selectedStock?.id || null,
+      item_name: selectedItem.name,
+      type:      typeName,
       quantity:  qty,
-      unit:      selectedStock.unit,
+      unit:      selectedItem.unit,
       date:      form.date,
       notes:     form.notes.trim() || null,
     }).select('id').single()
@@ -552,32 +583,38 @@ function DistributionModal({ farmId, stock, onClose, onSaved }) {
 
     // 1. Write ledger OUT entry
     await ledgerOut({
-      itemName:      selectedStock.item_name,
-      itemType:      form.type,
+      itemName:      selectedItem.name,
+      itemType:      typeName,
       quantity:      qty,
-      unit:          selectedStock.unit,
+      unit:          selectedItem.unit,
       referenceType: 'distribution',
       referenceId:   distInserted.id,
       date:          form.date,
     })
 
     // 2. Deduct from stock table (backward compat for dashboard/alerts)
-    await supabase.from('stock')
-      .update({ quantity: Math.max(0, Number(selectedStock.quantity) - qty) })
-      .eq('id', form.stock_id)
+    if (selectedStock) {
+      await supabase.from('stock')
+        .update({ quantity: Math.max(0, Number(selectedStock.quantity) - qty) })
+        .eq('id', selectedStock.id)
+    }
 
-    // 3. Calculate weighted-average cost and insert farm_expense
-    const avgCpu = await getAverageCostPerUnit(selectedStock.item_name)
+    // 3. Calculate weighted-average cost scoped to this batch's procurement
+    const resolvedBatch = activeBatches.find(b => b.id === batchId)
+    const avgCpu = await getAverageCostPerUnit(selectedItem.name, {
+      batchId:   batchId || undefined,
+      startDate: resolvedBatch?.start_date,
+    })
     await supabase.from('farm_expenses').insert({
       farm_id:         farmId,
       batch_id:        batchId || null,
       distribution_id: distInserted.id,
-      item_name:       selectedStock.item_name,
-      item_type:       form.type,
+      item_name:       selectedItem.name,
+      item_type:       typeName,
       quantity:        qty,
-      unit:            selectedStock.unit,
+      unit:            selectedItem.unit,
       cost_per_unit:   avgCpu,
-      total_cost:      qty * avgCpu,
+      total_cost:      roundCurrency(qty * avgCpu),
       date:            form.date,
     })
 
@@ -585,7 +622,7 @@ function DistributionModal({ farmId, stock, onClose, onSaved }) {
     const { data: fsCurrent } = await supabase.from('farm_stock')
       .select('id, quantity_on_hand')
       .eq('farm_id', farmId)
-      .eq('item_name', selectedStock.item_name)
+      .eq('item_name', selectedItem.name)
       .maybeSingle()
     if (fsCurrent) {
       await supabase.from('farm_stock').update({
@@ -595,26 +632,13 @@ function DistributionModal({ farmId, stock, onClose, onSaved }) {
     } else {
       await supabase.from('farm_stock').insert({
         farm_id:          farmId,
-        item_name:        selectedStock.item_name,
-        unit:             selectedStock.unit,
+        item_name:        selectedItem.name,
+        unit:             selectedItem.unit,
         quantity_on_hand: qty,
       })
     }
 
     onSaved()
-  }
-
-  if (stock.length === 0) {
-    return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
-        <div className="w-full max-w-sm bg-white rounded-2xl shadow-xl p-6 text-center">
-          <p className="text-3xl mb-3">📦</p>
-          <p className="font-semibold text-gray-800 mb-2">No stock available</p>
-          <p className="text-sm text-gray-500 mb-5">Add items to stock from the Procurement page first.</p>
-          <button onClick={onClose} className="rounded-lg border border-gray-300 px-6 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">Close</button>
-        </div>
-      </div>
-    )
   }
 
   return (
@@ -656,24 +680,32 @@ function DistributionModal({ farmId, stock, onClose, onSaved }) {
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Type *</label>
-                <select value={form.type} onChange={set('type')}
+                <select value={typeId} onChange={e => setTypeId(e.target.value)}
                   className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400">
-                  <option value="feed">Feed</option>
-                  <option value="medicine">Medicine</option>
-                  <option value="other">Other</option>
+                  {itemTypes.map(t => (
+                    <option key={t.id} value={t.id}>{t.name}</option>
+                  ))}
                 </select>
               </div>
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Stock Item *</label>
-                <select value={form.stock_id} onChange={set('stock_id')}
-                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400">
-                  {stock.map(s => (
-                    <option key={s.id} value={s.id}>
-                      {s.item_name} — {Number(s.quantity).toLocaleString('en-IN')} {s.unit} available
-                    </option>
-                  ))}
-                </select>
+                {catalogItems.length === 0 ? (
+                  <p className="text-sm text-gray-400 py-1">No items for this type.</p>
+                ) : (
+                  <select value={form.item_id} onChange={set('item_id')}
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400">
+                    {catalogItems.map(item => {
+                      const s = stock.find(st => st.item_name.toLowerCase() === item.name.toLowerCase())
+                      const qty = s ? Number(s.quantity).toLocaleString('en-IN') + ' ' + s.unit + ' available' : 'not in stock'
+                      return (
+                        <option key={item.id} value={item.id}>
+                          {item.name} — {qty}
+                        </option>
+                      )
+                    })}
+                  </select>
+                )}
               </div>
 
               <div>
@@ -1135,7 +1167,6 @@ export default function FarmDetail() {
   const [sales,                setSales]               = useState([])
   const [farmExpenses,         setFarmExpenses]        = useState([])
   const [allChickProcurement,  setAllChickProcurement] = useState([])
-  const [allBatchesChickTotal, setAllBatchesChickTotal]= useState(0)
   const [stock,                setStock]               = useState([])
   const [vendors,              setVendors]             = useState([])
   const [cashCollection,       setCashCollection]      = useState([])
@@ -1182,7 +1213,6 @@ export default function FarmDetail() {
       { data: stockData },
       { data: vendorData },
       { data: chickProcData },
-      { data: allBatchData },
       { data: farmExpData },
       { data: farmStockData },
       salesResult,
@@ -1190,8 +1220,9 @@ export default function FarmDetail() {
       supabase.from('distributions').select('*, batches(start_date)').eq('farm_id', id).order('date', { ascending: false }),
       supabase.from('stock').select('id, item_name, quantity, unit').gt('quantity', 0).order('item_name'),
       supabase.from('vendors').select('id, name').order('name'),
-      supabase.from('procurement').select('cost, quantity').eq('type', 'chicks'),
-      supabase.from('batches').select('chick_count'),
+      batchIds.length
+        ? supabase.from('procurement').select('cost').eq('type', 'chicks').in('batch_id', batchIds)
+        : Promise.resolve({ data: [] }),
       supabase.from('farm_expenses').select('*').eq('farm_id', id),
       supabase.from('farm_stock').select('*').eq('farm_id', id).order('item_name'),
       batchIds.length
@@ -1203,7 +1234,6 @@ export default function FarmDetail() {
     setStock(stockData || [])
     setVendors(vendorData || [])
     setAllChickProcurement(chickProcData || [])
-    setAllBatchesChickTotal((allBatchData || []).reduce((s, b) => s + Number(b.chick_count || 0), 0))
     setFarmExpenses(farmExpData || [])
     setFarmStock(farmStockData || [])
     setSales(salesResult.data || [])
@@ -1287,14 +1317,11 @@ export default function FarmDetail() {
   const feedCost     = farmExpenses.filter(e => e.item_type === 'feed').reduce((s, e) => s + Number(e.total_cost || 0), 0)
   const medicineCost = farmExpenses.filter(e => e.item_type === 'medicine').reduce((s, e) => s + Number(e.total_cost || 0), 0)
 
-  // Chick cost — proportional share of all chick procurement
-  const totalChickCost  = allChickProcurement.reduce((s, p) => s + Number(p.cost || 0), 0)
-  const farmTotalChicks = batches.reduce((s, b) => s + Number(b.chick_count || 0), 0)
-  const chickCost       = allBatchesChickTotal > 0
-    ? (farmTotalChicks / allBatchesChickTotal) * totalChickCost
-    : 0
+  // Chick cost — direct sum of procurement records linked to this farm's batches (via batch_id)
+  const chickCost = allChickProcurement.reduce((s, p) => s + Number(p.cost || 0), 0)
 
-  const totalCost   = chickCost + feedCost + medicineCost
+  const growingFeeCost = growingFeeLedger.reduce((s, r) => s + Number(r.total_fee || 0), 0)
+  const totalCost   = chickCost + feedCost + medicineCost + growingFeeCost
   const grossProfit = revenue - totalCost
   const margin      = revenue > 0 ? (grossProfit / revenue) * 100 : 0
 
@@ -1332,8 +1359,8 @@ export default function FarmDetail() {
   const events = [
     ...batches.map(b => ({ date: b.start_date, type: 'batch', label: `Batch started — ${Number(b.chick_count).toLocaleString('en-IN')} chicks` })),
     ...distributions.map(d => ({ date: d.date, type: 'dist', label: `${d.type.charAt(0).toUpperCase() + d.type.slice(1)} — ${Number(d.quantity).toLocaleString('en-IN')} ${d.unit} of ${d.item_name}` })),
-    ...sales.map(s => ({ date: s.date, type: 'sale', label: `Sale to ${s.vendors?.name ?? '—'} — ${fmt(s.total_amount)}` })),
-    ...cashCollection.map(c => ({ date: c.date, type: 'payment', label: `Payment from ${c.vendors?.name ?? '—'} — ${fmt(c.amount_paid)}` })),
+    ...sales.map(s => ({ date: s.date, type: 'sale', label: `Sale to ${s.vendors?.name ?? '—'} — ${formatCurrency(s.total_amount)}` })),
+    ...cashCollection.map(c => ({ date: c.date, type: 'payment', label: `Payment from ${c.vendors?.name ?? '—'} — ${formatCurrency(c.amount_paid)}` })),
   ].sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, 8)
 
   // ─── Render ───────────────────────────────────────────────────────────────
@@ -1486,9 +1513,10 @@ export default function FarmDetail() {
             <div style={{ height: 20, backgroundColor: '#f0f0f0', borderRadius: 8, overflow: 'hidden', marginBottom: 10 }}>
               {revenue > 0 ? (
                 <StackedBar duration={600} segments={[
-                  { pct: Math.min((chickCost   / revenue) * 100, 100), color: '#fca5a5' },
-                  { pct: Math.min((feedCost    / revenue) * 100, 100), color: '#fdba74' },
-                  { pct: Math.min((medicineCost/ revenue) * 100, 100), color: '#fde047' },
+                  { pct: Math.min((chickCost    / revenue) * 100, 100), color: '#fca5a5' },
+                  { pct: Math.min((feedCost     / revenue) * 100, 100), color: '#fdba74' },
+                  { pct: Math.min((medicineCost / revenue) * 100, 100), color: '#fde047' },
+                  ...(growingFeeCost > 0 ? [{ pct: Math.min((growingFeeCost / revenue) * 100, 100), color: '#c4b5fd' }] : []),
                   ...(grossProfit > 0 ? [{ pct: Math.min((grossProfit / revenue) * 100, 100), color: '#15803d' }] : []),
                 ]} />
               ) : null}
@@ -1500,6 +1528,7 @@ export default function FarmDetail() {
                 { color: '#fca5a5', label: 'Chick Cost' },
                 { color: '#fdba74', label: 'Feed Cost' },
                 { color: '#fde047', label: 'Medicine' },
+                ...(growingFeeCost > 0 ? [{ color: '#c4b5fd', label: 'Growing Fee' }] : []),
                 ...(grossProfit > 0 ? [{ color: '#15803d', label: 'Profit' }] : []),
               ].map(l => (
                 <span key={l.label} className="flex items-center gap-1.5">
@@ -1511,23 +1540,27 @@ export default function FarmDetail() {
 
             {/* Breakdown rows */}
             <div>
-              {[
-                { label: 'Total Revenue',  value: fmt(revenue),      color: '#15803d', bold: false },
-                { label: 'Chick Cost',     value: fmt(chickCost),    color: '#dc2626', bold: false },
-                { label: 'Feed Cost',      value: fmt(feedCost),     color: '#dc2626', bold: false },
-                { label: 'Medicine Cost',  value: fmt(medicineCost), color: '#dc2626', bold: false },
-                { label: 'Total Expenses', value: fmt(totalCost),    color: '#dc2626', bold: true  },
-                { label: 'Gross Profit',   value: (grossProfit < 0 ? '−' : '') + fmt(Math.abs(grossProfit)), color: grossProfit >= 0 ? '#15803d' : '#dc2626', bold: true },
-                { label: 'Profit Margin',  value: `${margin.toFixed(1)}%`, color: margin >= 0 ? '#15803d' : '#dc2626', bold: false },
-              ].map((row, i) => (
-                <div key={row.label}
-                  className="flex justify-between items-center py-2"
-                  style={{ borderBottom: i < 6 ? '1px solid #f5f5f4' : 'none' }}
-                >
-                  <span style={{ color: '#78716c', fontWeight: row.bold ? 600 : 400 }} className="text-sm">{row.label}</span>
-                  <span style={{ color: row.color, fontWeight: row.bold ? 800 : 600 }} className="text-sm">{row.value}</span>
-                </div>
-              ))}
+              {(() => {
+                const rows = [
+                  { label: 'Total Revenue',  value: formatCurrency(revenue),         color: '#15803d', bold: false },
+                  { label: 'Chick Cost',     value: formatCurrency(chickCost),       color: '#dc2626', bold: false },
+                  { label: 'Feed Cost',      value: formatCurrency(feedCost),        color: '#dc2626', bold: false },
+                  { label: 'Medicine Cost',  value: formatCurrency(medicineCost),    color: '#dc2626', bold: false },
+                  ...(growingFeeCost > 0 ? [{ label: 'Growing Fee', value: formatCurrency(growingFeeCost), color: '#7c3aed', bold: false }] : []),
+                  { label: 'Total Expenses', value: formatCurrency(totalCost),       color: '#dc2626', bold: true  },
+                  { label: 'Gross Profit',   value: (grossProfit < 0 ? '−' : '') + formatCurrency(Math.abs(grossProfit)), color: grossProfit >= 0 ? '#15803d' : '#dc2626', bold: true },
+                  { label: 'Profit Margin',  value: `${margin.toFixed(1)}%`,         color: margin >= 0 ? '#15803d' : '#dc2626', bold: false },
+                ]
+                return rows.map((row, i) => (
+                  <div key={row.label}
+                    className="flex justify-between items-center py-2"
+                    style={{ borderBottom: i < rows.length - 1 ? '1px solid #f5f5f4' : 'none' }}
+                  >
+                    <span style={{ color: '#78716c', fontWeight: row.bold ? 600 : 400 }} className="text-sm">{row.label}</span>
+                    <span style={{ color: row.color, fontWeight: row.bold ? 800 : 600 }} className="text-sm">{row.value}</span>
+                  </div>
+                ))
+              })()}
             </div>
           </div>
 
@@ -1546,7 +1579,7 @@ export default function FarmDetail() {
                   <h3 style={{ color: '#1c1917' }} className="text-sm font-semibold">Growing Fee</h3>
                   {outstanding > 0 && (
                     <span className="text-xs font-semibold rounded-full px-2.5 py-0.5 bg-red-100 text-red-600">
-                      ₹{outstanding.toLocaleString('en-IN', { minimumFractionDigits: 2 })} outstanding
+                      {formatCurrency(outstanding)} outstanding
                     </span>
                   )}
                   {outstanding === 0 && growingFeeLedger.length > 0 && (
@@ -1557,16 +1590,16 @@ export default function FarmDetail() {
                   <div className="space-y-2 text-sm mb-3">
                     <div className="flex justify-between">
                       <span style={{ color: '#78716c' }}>Total Fee Accrued</span>
-                      <span className="font-semibold" style={{ color: '#1c1917' }}>₹{totalFee.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+                      <span className="font-semibold" style={{ color: '#1c1917' }}>{formatCurrency(totalFee)}</span>
                     </div>
                     <div className="flex justify-between">
                       <span style={{ color: '#78716c' }}>Total Paid</span>
-                      <span className="font-semibold text-green-700">₹{totalPaid.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+                      <span className="font-semibold text-green-700">{formatCurrency(totalPaid)}</span>
                     </div>
                     <div className="flex justify-between pt-1 border-t border-gray-100">
                       <span style={{ color: '#78716c' }}>Balance Due</span>
                       <span className="font-bold" style={{ color: outstanding > 0 ? '#dc2626' : '#15803d' }}>
-                        ₹{outstanding.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                        {formatCurrency(outstanding)}
                       </span>
                     </div>
                   </div>
@@ -1574,7 +1607,7 @@ export default function FarmDetail() {
                 {hasActiveBatch && activeAdvTotal > 0 && (
                   <div className="text-sm mb-3 bg-amber-50 rounded-lg px-3 py-2 border border-amber-100">
                     <span style={{ color: '#78716c' }}>Advances (active batches): </span>
-                    <span className="font-semibold text-amber-700">₹{activeAdvTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+                    <span className="font-semibold text-amber-700">{formatCurrency(activeAdvTotal)}</span>
                   </div>
                 )}
                 <div className="flex gap-2">
@@ -1793,14 +1826,14 @@ export default function FarmDetail() {
                           </span>
                         </td>
                         <td className="px-5 py-4 text-right font-medium text-red-600">
-                          {bExp > 0 ? fmt(bExp) : '—'}
+                          {bExp > 0 ? formatCurrency(bExp) : '—'}
                         </td>
                         <td className="px-5 py-4 text-right font-semibold text-green-700">
-                          {bRev > 0 ? fmt(bRev) : '—'}
+                          {bRev > 0 ? formatCurrency(bRev) : '—'}
                         </td>
                         <td className="px-5 py-4 text-right font-bold"
                           style={{ color: bRev > 0 ? (bProfit >= 0 ? '#15803d' : '#dc2626') : '#9ca3af' }}>
-                          {bRev > 0 ? ((bProfit < 0 ? '−' : '') + fmt(Math.abs(bProfit))) : '—'}
+                          {bRev > 0 ? ((bProfit < 0 ? '−' : '') + formatCurrency(Math.abs(bProfit))) : '—'}
                         </td>
                         <td className="px-5 py-4 text-center">
                           {b.fcr != null ? (() => {
@@ -1914,7 +1947,7 @@ export default function FarmDetail() {
                         {Number(d.quantity).toLocaleString('en-IN')} {d.unit}
                       </td>
                       <td className="px-5 py-3 text-right text-gray-700">
-                        {fmt(distCostMap[d.id] || 0)}
+                        {formatCurrency(distCostMap[d.id] || 0)}
                       </td>
                       <td className="px-5 py-3 text-gray-400 italic text-xs">{d.notes || '—'}</td>
                     </tr>
@@ -1923,7 +1956,7 @@ export default function FarmDetail() {
                 <tfoot>
                   <tr className="border-t-2 border-gray-200 bg-gray-50">
                     <td colSpan={5} className="px-5 py-3 text-sm font-semibold text-gray-700 text-right">Total Cost</td>
-                    <td className="px-5 py-3 text-right font-bold text-red-600">{fmt(feedCost + medicineCost)}</td>
+                    <td className="px-5 py-3 text-right font-bold text-red-600">{formatCurrency(feedCost + medicineCost)}</td>
                     <td></td>
                   </tr>
                 </tfoot>
@@ -1969,15 +2002,15 @@ export default function FarmDetail() {
                       <td className="px-5 py-3 text-gray-600">{fmtDate(s.date)}</td>
                       <td className="px-5 py-3 font-medium text-gray-800">{s.vendors?.name ?? '—'}</td>
                       <td className="px-5 py-3 text-right text-gray-700">{Number(s.kg_sold).toLocaleString('en-IN')}</td>
-                      <td className="px-5 py-3 text-right text-gray-600">{fmt(s.price_per_kg)}</td>
-                      <td className="px-5 py-3 text-right font-semibold text-green-700">{fmt(s.total_amount)}</td>
+                      <td className="px-5 py-3 text-right text-gray-600">{formatCurrency(s.price_per_kg)}</td>
+                      <td className="px-5 py-3 text-right font-semibold text-green-700">{formatCurrency(s.total_amount)}</td>
                     </tr>
                   ))}
                 </tbody>
                 <tfoot>
                   <tr className="border-t-2 border-gray-200 bg-gray-50">
                     <td colSpan={4} className="px-5 py-3 text-sm font-semibold text-gray-700 text-right">Total Revenue</td>
-                    <td className="px-5 py-3 text-right font-bold text-green-700">{fmt(revenue)}</td>
+                    <td className="px-5 py-3 text-right font-bold text-green-700">{formatCurrency(revenue)}</td>
                   </tr>
                 </tfoot>
               </table>

@@ -1,11 +1,8 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
+import { formatCurrency, roundCurrency } from '../utils/format'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function formatCurrency(n) {
-  return '₹' + Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })
-}
 
 function formatDate(d) {
   if (!d) return '—'
@@ -333,13 +330,13 @@ function RecordPaymentModal({ initialFarmId, farmGroups, onClose, onSaved }) {
     for (const entry of pendingEntries) {
       if (remaining <= 0) break
 
-      const entryBalance = Number(entry.balance_due)
-      const applied = Math.min(remaining, entryBalance)
-      remaining -= applied
+      const entryBalance   = Number(entry.balance_due)
+      const applied        = roundCurrency(Math.min(remaining, entryBalance))
+      remaining            = roundCurrency(remaining - applied)
 
-      const newAmountPaid  = Number(entry.amount_paid) + applied
-      const newBalanceDue  = entryBalance - applied
-      const newStatus      = newBalanceDue <= 0.001 ? 'paid' : 'partial'
+      const newAmountPaid  = roundCurrency(Number(entry.amount_paid) + applied)
+      const newBalanceDue  = roundCurrency(entryBalance - applied)
+      const newStatus      = newBalanceDue <= 0 ? 'paid' : 'partial'
 
       const { error: updateErr } = await supabase
         .from('growing_fee_ledger')
@@ -653,6 +650,9 @@ export default function GrowingFees() {
   const [payFarmId, setPayFarmId]         = useState(null)
   const [advModal, setAdvModal]           = useState(false)
   const [paidThisMonth, setPaidThisMonth] = useState(0)
+  const [totalAllAdvances,    setTotalAllAdvances]    = useState(0)
+  const [activeAdvancesTotal, setActiveAdvancesTotal] = useState(0)
+  const [advByFarm,           setAdvByFarm]           = useState({})
 
   async function fetchData() {
     setLoading(true)
@@ -665,6 +665,7 @@ export default function GrowingFees() {
       { data: batchRows,  error: batchErr  },
       { data: monthPays,  error: monthErr  },
       { data: activeBatches },
+      { data: advRows },
     ] = await Promise.all([
       supabase
         .from('growing_fee_ledger')
@@ -683,8 +684,11 @@ export default function GrowingFees() {
         .lte('payment_date', end),
       supabase
         .from('batches')
-        .select('id, farm_id, start_date, chick_count, total_advances')
+        .select('id, farm_id, start_date, chick_count')
         .eq('status', 'active'),
+      supabase
+        .from('growing_fee_advances')
+        .select('amount, batch_id, farm_id'),
     ])
 
     if (ledgerErr || farmErr || batchErr || monthErr) {
@@ -724,21 +728,36 @@ export default function GrowingFees() {
     }
     setActiveBatchFarms(Object.values(activeFarmMap))
 
+    // Compute advance totals from growing_fee_advances (single source of truth)
+    const activeBatchIds = new Set((activeBatches || []).map(b => b.id))
+    const allAdvances    = advRows || []
+    const allAdvTotal    = allAdvances.reduce((s, r) => s + Number(r.amount || 0), 0)
+    const activeAdvTotal = allAdvances
+      .filter(r => activeBatchIds.has(r.batch_id))
+      .reduce((s, r) => s + Number(r.amount || 0), 0)
+    const byFarm = {}
+    for (const r of allAdvances) {
+      if (activeBatchIds.has(r.batch_id)) {
+        byFarm[r.farm_id] = (byFarm[r.farm_id] || 0) + Number(r.amount || 0)
+      }
+    }
+
     setLedger(enriched)
     setFarms(farmRows || [])
     setPaidThisMonth((monthPays || []).reduce((s, r) => s + Number(r.amount), 0))
+    setTotalAllAdvances(allAdvTotal)
+    setActiveAdvancesTotal(activeAdvTotal)
+    setAdvByFarm(byFarm)
     setLoading(false)
   }
 
   useEffect(() => { fetchData() }, [])
 
   // ── Summary stats ──
-  const pendingRows       = ledger.filter(r => r.status !== 'paid')
-  const totalPending      = pendingRows.reduce((s, r) => s + Number(r.balance_due), 0)
-  const farmsWithPending  = new Set(pendingRows.map(r => r.farm_id)).size
-  const totalGrossFees    = ledger.reduce((s, r) => s + Number(r.total_fee || 0), 0)
-  const totalAdvancesGiven= ledger.reduce((s, r) => s + Number(r.total_advances || 0), 0)
-  const totalPostClosePaid= ledger.reduce((s, r) => s + Number(r.amount_paid || 0), 0)
+  const pendingRows      = ledger.filter(r => r.status !== 'paid')
+  const totalPending     = pendingRows.reduce((s, r) => s + Number(r.balance_due), 0)
+  const totalGrossFees   = ledger.reduce((s, r) => s + Number(r.total_fee || 0), 0)
+  const totalPostClosePaid = ledger.reduce((s, r) => s + Number(r.amount_paid || 0), 0)
 
   // ── Filter ledger ──
   const filtered = ledger.filter(row => {
@@ -825,51 +844,46 @@ export default function GrowingFees() {
 
       {/* ── Summary bar ── */}
       {!loading && (
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 mb-6">
-          {/* Total Gross Fees */}
-          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm px-5 py-4">
-            <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Total Gross Fees</p>
-            <p className="text-2xl font-bold text-gray-800 mt-1">{formatCurrency(totalGrossFees)}</p>
-            <p className="text-xs text-gray-400 mt-0.5">{ledger.length} batch{ledger.length !== 1 ? 'es' : ''}</p>
+        <div className="mb-6">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-3">
+            {/* Card 1: Total Gross Fees */}
+            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm px-5 py-4">
+              <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Total Gross Fees</p>
+              <p className="text-2xl font-bold text-gray-800 mt-1">{formatCurrency(totalGrossFees)}</p>
+              <p className="text-xs text-gray-400 mt-0.5">from closed batches</p>
+            </div>
+
+            {/* Card 2: Total Advances (source of truth: growing_fee_advances table) */}
+            <div className="bg-white rounded-2xl border border-amber-200 shadow-sm px-5 py-4">
+              <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Total Advances</p>
+              <p className="text-2xl font-bold text-amber-600 mt-1">{formatCurrency(totalAllAdvances)}</p>
+              <p className="text-xs text-gray-400 mt-0.5">all time (active + closed)</p>
+            </div>
+
+            {/* Card 3: Post-close Paid */}
+            <div className="bg-white rounded-2xl border border-green-200 shadow-sm px-5 py-4">
+              <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Post-close Paid</p>
+              <p className="text-2xl font-bold text-green-600 mt-1">{formatCurrency(totalPostClosePaid)}</p>
+              <p className="text-xs text-gray-400 mt-0.5">payments after batch close</p>
+            </div>
+
+            {/* Card 4: Outstanding */}
+            <div className={`bg-white rounded-2xl border shadow-sm px-5 py-4 ${totalPending > 0 ? 'border-red-200' : 'border-gray-100'}`}>
+              <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Outstanding</p>
+              <p className={`text-2xl font-bold mt-1 ${totalPending > 0 ? 'text-red-600' : 'text-green-600'}`}>
+                {formatCurrency(totalPending)}
+              </p>
+              <p className="text-xs text-gray-400 mt-0.5">balance due on closed batches</p>
+            </div>
           </div>
 
-          {/* Total Advances Given */}
-          <div className="bg-white rounded-2xl border border-amber-200 shadow-sm px-5 py-4">
-            <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Advances Given</p>
-            <p className="text-2xl font-bold text-amber-600 mt-1">{formatCurrency(totalAdvancesGiven)}</p>
-            <p className="text-xs text-gray-400 mt-0.5">settled at batch close</p>
-          </div>
-
-          {/* Post-close Paid */}
-          <div className="bg-white rounded-2xl border border-green-200 shadow-sm px-5 py-4">
-            <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Post-close Paid</p>
-            <p className="text-2xl font-bold text-green-600 mt-1">{formatCurrency(totalPostClosePaid)}</p>
-            <p className="text-xs text-gray-400 mt-0.5">payments after batch close</p>
-          </div>
-
-          {/* Total Pending */}
-          <div className={`bg-white rounded-2xl border shadow-sm px-5 py-4 ${totalPending > 0 ? 'border-red-200' : 'border-gray-100'}`}>
-            <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Balance Pending</p>
-            <p className={`text-2xl font-bold mt-1 ${totalPending > 0 ? 'text-red-600' : 'text-green-600'}`}>
-              {formatCurrency(totalPending)}
-            </p>
-            {totalPending === 0 && <p className="text-xs text-gray-400 mt-0.5">All cleared</p>}
-          </div>
-
-          {/* Paid This Month */}
-          <div className="bg-white rounded-2xl border border-blue-100 shadow-sm px-5 py-4">
-            <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Paid This Month</p>
-            <p className="text-2xl font-bold text-blue-600 mt-1">{formatCurrency(paidThisMonth)}</p>
-          </div>
-
-          {/* Farms with Pending */}
-          <div className={`bg-white rounded-2xl border shadow-sm px-5 py-4 ${farmsWithPending > 0 ? 'border-amber-200' : 'border-gray-100'}`}>
-            <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Farms with Pending</p>
-            <p className={`text-2xl font-bold mt-1 ${farmsWithPending > 0 ? 'text-amber-600' : 'text-gray-800'}`}>
-              {farmsWithPending}
-            </p>
-            {farmsWithPending === 0 && <p className="text-xs text-gray-400 mt-0.5">No outstanding fees</p>}
-          </div>
+          {/* Info row: active batch advances */}
+          {activeAdvancesTotal > 0 && (
+            <div className="flex flex-wrap items-center gap-1.5 px-4 py-3 bg-amber-50 border border-amber-200 rounded-xl text-sm">
+              <span className="font-semibold text-amber-800">Active batch advances: {formatCurrency(activeAdvancesTotal)}</span>
+              <span className="text-amber-600">— cash already paid out, will offset the growing fee when the batch closes</span>
+            </div>
+          )}
         </div>
       )}
 
@@ -895,7 +909,7 @@ export default function GrowingFees() {
               </thead>
               <tbody className="divide-y divide-gray-50">
                 {activeBatchFarms.map(af => {
-                  const totalAdv = af.batches.reduce((s, b) => s + Number(b.total_advances || 0), 0)
+                  const totalAdv = advByFarm[af.farm_id] || 0
                   const newestBatch = af.batches.sort((a, b) => new Date(b.start_date) - new Date(a.start_date))[0]
                   const day = newestBatch ? Math.floor((Date.now() - new Date(newestBatch.start_date + 'T00:00:00')) / 86400000) : 0
                   return (

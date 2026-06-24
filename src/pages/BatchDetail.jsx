@@ -1,12 +1,9 @@
 import { useEffect, useState } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabaseClient'
+import { formatCurrency, roundCurrency } from '../utils/format'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function fmt(n) {
-  return '₹' + Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })
-}
 function fmtDate(d) {
   return new Date(d + 'T12:00:00').toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
 }
@@ -427,7 +424,7 @@ export default function BatchDetail() {
       )
 
       if (tier) {
-        const totalFee = +(Number(tier.rate_per_kg) * totalSaleKg).toFixed(2)
+        const totalFee = roundCurrency(Number(tier.rate_per_kg) * totalSaleKg)
         const tierDesc = `${tier.description || ''} (FCR ${Number(tier.fcr_from).toFixed(1)}–${tier.fcr_to != null ? Number(tier.fcr_to).toFixed(1) : '+'})`
 
         // Fetch farm owner name snapshot
@@ -444,9 +441,9 @@ export default function BatchDetail() {
           .eq('batch_id', batchId)
         const totalAdvances = (advRows || []).reduce((s, r) => s + Number(r.amount), 0)
 
-        const rawBalance  = totalFee - totalAdvances
-        const balanceDue  = Math.max(0, rawBalance)
-        const overpaid    = rawBalance < 0 ? Math.abs(rawBalance) : 0
+        const rawBalance  = roundCurrency(totalFee - totalAdvances)
+        const balanceDue  = roundCurrency(Math.max(0, rawBalance))
+        const overpaid    = rawBalance < 0 ? roundCurrency(Math.abs(rawBalance)) : 0
         const ledgerStatus = balanceDue <= 0 ? (overpaid > 0 ? 'overpaid' : 'paid') : 'pending'
 
         const { data: ledgerRow } = await supabase
@@ -559,7 +556,7 @@ export default function BatchDetail() {
 
   const totalChickCostAll = chickProc.reduce((s, p) => s + Number(p.cost || 0), 0)
   const chickCost = allBatchTotal > 0
-    ? (Number(batch.chick_count) / allBatchTotal) * totalChickCostAll
+    ? roundCurrency((Number(batch.chick_count) / allBatchTotal) * totalChickCostAll)
     : 0
 
   const growingFee    = (!isActive && batch.growing_fee_total != null) ? Number(batch.growing_fee_total) : 0
@@ -584,7 +581,7 @@ export default function BatchDetail() {
     ...sales.map(s => ({
       date:   s.date,
       icon:   '💰',
-      label:  `Sale to ${s.vendors?.name ?? '—'} — ${fmt(s.total_amount)}`,
+      label:  `Sale to ${s.vendors?.name ?? '—'} — ${formatCurrency(s.total_amount)}`,
       color:  '#dcfce7',
       border: '#86efac',
     })),
@@ -746,13 +743,13 @@ export default function BatchDetail() {
 
         {(() => {
           const rows = [
-            { label: 'Revenue',        value: fmt(revenue),                                      color: '#15803d', bold: false },
-            { label: 'Chick Cost',     value: fmt(chickCost),                                   color: '#dc2626', bold: false },
-            { label: 'Feed Cost',      value: fmt(feedCost),                                    color: '#dc2626', bold: false },
-            { label: 'Medicine Cost',  value: fmt(medCost),                                     color: '#dc2626', bold: false },
-            ...(growingFee > 0 ? [{ label: 'Growing Fee', value: fmt(growingFee), color: '#7c3aed', bold: false }] : []),
-            { label: 'Total Expenses', value: fmt(totalExpenses),                               color: '#dc2626', bold: true },
-            { label: 'Gross Profit',   value: (profit < 0 ? '−' : '') + fmt(Math.abs(profit)),  color: profit >= 0 ? '#15803d' : '#dc2626', bold: true },
+            { label: 'Revenue',        value: formatCurrency(revenue),                                      color: '#15803d', bold: false },
+            { label: 'Chick Cost',     value: formatCurrency(chickCost),                                   color: '#dc2626', bold: false },
+            { label: 'Feed Cost',      value: formatCurrency(feedCost),                                    color: '#dc2626', bold: false },
+            { label: 'Medicine Cost',  value: formatCurrency(medCost),                                     color: '#dc2626', bold: false },
+            ...(growingFee > 0 ? [{ label: 'Growing Fee', value: formatCurrency(growingFee), color: '#7c3aed', bold: false }] : []),
+            { label: 'Total Expenses', value: formatCurrency(totalExpenses),                               color: '#dc2626', bold: true },
+            { label: 'Gross Profit',   value: (profit < 0 ? '−' : '') + formatCurrency(Math.abs(profit)),  color: profit >= 0 ? '#15803d' : '#dc2626', bold: true },
             { label: 'Profit Margin',  value: `${margin.toFixed(1)}%`,                          color: margin >= 0 ? '#15803d' : '#dc2626', bold: false },
           ]
           return (
@@ -856,14 +853,14 @@ export default function BatchDetail() {
                     <td className="px-5 py-3 font-medium" style={{ color: '#1c1917' }}>{s.vendors?.name ?? '—'}</td>
                     <td className="px-5 py-3 text-right" style={{ color: '#78716c' }}>{Number(s.kg_sold).toLocaleString('en-IN')}</td>
                     <td className="px-5 py-3 text-right" style={{ color: '#78716c' }}>₹{Number(s.price_per_kg).toLocaleString('en-IN')}</td>
-                    <td className="px-5 py-3 text-right font-bold" style={{ color: '#15803d' }}>{fmt(s.total_amount)}</td>
+                    <td className="px-5 py-3 text-right font-bold" style={{ color: '#15803d' }}>{formatCurrency(s.total_amount)}</td>
                   </tr>
                 ))}
               </tbody>
               <tfoot>
                 <tr style={{ borderTop: '2px solid #e7e5e0', backgroundColor: '#fafaf5' }}>
                   <td colSpan={4} className="px-5 py-3 text-sm font-semibold text-right" style={{ color: '#78716c' }}>Total Revenue</td>
-                  <td className="px-5 py-3 text-right font-extrabold" style={{ color: '#15803d' }}>{fmt(revenue)}</td>
+                  <td className="px-5 py-3 text-right font-extrabold" style={{ color: '#15803d' }}>{formatCurrency(revenue)}</td>
                 </tr>
               </tfoot>
             </table>
@@ -887,12 +884,12 @@ export default function BatchDetail() {
                     <span style={{ color: '#1c1917' }} className="font-medium">{fmtDate(adv.payment_date)}</span>
                     {adv.payment_method && <span style={{ color: '#78716c' }} className="text-xs ml-2">· {adv.payment_method}</span>}
                   </div>
-                  <span className="font-semibold text-amber-700">{fmt(adv.amount)}</span>
+                  <span className="font-semibold text-amber-700">{formatCurrency(adv.amount)}</span>
                 </div>
               ))}
               <div className="pt-2 border-t border-gray-100 flex items-center justify-between">
                 <span style={{ color: '#78716c' }} className="text-sm font-semibold">Total Advances</span>
-                <span className="font-bold text-amber-700">{fmt(advances.reduce((s, a) => s + Number(a.amount), 0))}</span>
+                <span className="font-bold text-amber-700">{formatCurrency(advances.reduce((s, a) => s + Number(a.amount), 0))}</span>
               </div>
             </div>
           ) : (
@@ -992,20 +989,20 @@ export default function BatchDetail() {
               <div className="pt-2 border-t border-gray-100 space-y-1.5">
                 <div className="flex justify-between">
                   <span style={{ color: '#78716c' }}>Gross Growing Fee</span>
-                  <span className="font-bold text-base" style={{ color: '#1c1917' }}>{fmt(grossFee)}</span>
+                  <span className="font-bold text-base" style={{ color: '#1c1917' }}>{formatCurrency(grossFee)}</span>
                 </div>
                 {totalAdv > 0 && (
                   <>
                     <div className="flex justify-between">
                       <span style={{ color: '#78716c' }}>Advances Paid</span>
-                      <span className="font-medium text-amber-700">− {fmt(totalAdv)}</span>
+                      <span className="font-medium text-amber-700">− {formatCurrency(totalAdv)}</span>
                     </div>
                     {advances.length > 0 && (
                       <div className="ml-3 space-y-1">
                         {advances.map(adv => (
                           <div key={adv.id} className="flex justify-between text-xs" style={{ color: '#9ca3af' }}>
                             <span>{fmtDate(adv.payment_date)} · {adv.payment_method || 'Cash'}</span>
-                            <span>{fmt(adv.amount)}</span>
+                            <span>{formatCurrency(adv.amount)}</span>
                           </div>
                         ))}
                       </div>
@@ -1015,19 +1012,19 @@ export default function BatchDetail() {
                 {postClosePaid > 0 && (
                   <div className="flex justify-between">
                     <span style={{ color: '#78716c' }}>Post-close Paid</span>
-                    <span className="font-medium text-green-700">− {fmt(postClosePaid)}</span>
+                    <span className="font-medium text-green-700">− {formatCurrency(postClosePaid)}</span>
                   </div>
                 )}
                 <div className="pt-1 border-t border-gray-100">
                   {overpaid > 0 ? (
                     <div className="flex justify-between">
                       <span className="font-semibold text-green-700">Overpaid (credit)</span>
-                      <span className="font-bold text-green-700">+ {fmt(overpaid)}</span>
+                      <span className="font-bold text-green-700">+ {formatCurrency(overpaid)}</span>
                     </div>
                   ) : (
                     <div className="flex justify-between">
                       <span style={{ color: '#78716c' }}>Balance Due</span>
-                      <span className="font-bold text-lg" style={{ color: balance > 0 ? '#dc2626' : '#15803d' }}>{fmt(balance)}</span>
+                      <span className="font-bold text-lg" style={{ color: balance > 0 ? '#dc2626' : '#15803d' }}>{formatCurrency(balance)}</span>
                     </div>
                   )}
                 </div>
@@ -1035,7 +1032,7 @@ export default function BatchDetail() {
             </div>
             {overpaid > 0 && (
               <div className="mt-3 rounded-lg bg-green-50 border border-green-200 px-4 py-2.5 text-sm text-green-700">
-                Advance exceeds growing fee. ₹{overpaid.toLocaleString('en-IN', { minimumFractionDigits: 2 })} credit for farm owner.
+                Advance exceeds growing fee. {formatCurrency(overpaid)} credit for farm owner.
               </div>
             )}
             {balance > 0 && (
@@ -1248,7 +1245,7 @@ export default function BatchDetail() {
               <div className="bg-green-50 border border-green-200 rounded-lg px-4 py-2.5 flex justify-between items-center">
                 <span className="text-xs font-medium text-green-700">Total</span>
                 <span className="text-base font-bold text-green-700">
-                  ₹{(parseFloat(saleForm.kg_sold) * parseFloat(saleForm.price_per_kg)).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                  {formatCurrency(parseFloat(saleForm.kg_sold) * parseFloat(saleForm.price_per_kg))}
                 </span>
               </div>
             )}

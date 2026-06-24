@@ -1,9 +1,6 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
-
-function formatCurrency(n) {
-  return '₹' + Number(n || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })
-}
+import { formatCurrency } from '../utils/format'
 
 function formatDate(dateStr) {
   return new Date(dateStr).toLocaleDateString('en-IN', {

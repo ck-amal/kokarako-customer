@@ -1,11 +1,8 @@
 import { useEffect, useState, useMemo } from 'react'
 import { supabase } from '../lib/supabaseClient'
+import { formatCurrency } from '../utils/format'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function fmt(n) {
-  return '₹' + Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })
-}
 
 function fmtDate(d) {
   return new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
@@ -328,12 +325,12 @@ function AccountCard({ account, txns, selected, onClick, onEdit }) {
           <p className="text-xs text-gray-400 capitalize">{account.type}</p>
         </div>
       </div>
-      <p className={`text-2xl font-bold leading-none ${balance >= 0 ? 'text-green-600' : 'text-red-600'}`}>{fmt(balance)}</p>
-      <p className="text-xs text-gray-400 mt-1">Opening: {fmt(account.opening_balance)}</p>
+      <p className={`text-2xl font-bold leading-none ${balance >= 0 ? 'text-green-600' : 'text-red-600'}`}>{formatCurrency(balance)}</p>
+      <p className="text-xs text-gray-400 mt-1">Opening: {formatCurrency(account.opening_balance)}</p>
       <div className="flex items-center justify-between mt-2">
         <div className="flex gap-3">
-          <span className="text-xs text-green-600 font-medium">▲ {fmt(monthIn)}</span>
-          <span className="text-xs text-red-500 font-medium">▼ {fmt(monthOut)}</span>
+          <span className="text-xs text-green-600 font-medium">▲ {formatCurrency(monthIn)}</span>
+          <span className="text-xs text-red-500 font-medium">▼ {formatCurrency(monthOut)}</span>
         </div>
         <button
           onClick={e => { e.stopPropagation(); onEdit() }}
@@ -443,7 +440,7 @@ export default function AccountsPage() {
           >
             <p className="text-sm font-semibold text-gray-700 mb-1">All Accounts</p>
             <p className="text-xl font-bold text-gray-800">
-              {fmt(accounts.reduce((sum, a) => {
+              {formatCurrency(accounts.reduce((sum, a) => {
                 const txns = transactions.filter(t => t.account_id === a.id)
                 const i = txns.filter(t => t.transaction_type === 'in').reduce((s, t) => s + Number(t.amount), 0)
                 const o = txns.filter(t => t.transaction_type === 'out').reduce((s, t) => s + Number(t.amount), 0)
@@ -503,15 +500,15 @@ export default function AccountsPage() {
       <div className="grid grid-cols-3 gap-3">
         <div className="bg-green-50 rounded-xl border border-green-100 px-4 py-3">
           <p className="text-xs font-medium text-green-700 uppercase tracking-wide">Total In</p>
-          <p className="text-xl font-bold text-green-700 mt-0.5">{fmt(totalIn)}</p>
+          <p className="text-xl font-bold text-green-700 mt-0.5">{formatCurrency(totalIn)}</p>
         </div>
         <div className="bg-red-50 rounded-xl border border-red-100 px-4 py-3">
           <p className="text-xs font-medium text-red-600 uppercase tracking-wide">Total Out</p>
-          <p className="text-xl font-bold text-red-600 mt-0.5">{fmt(totalOut)}</p>
+          <p className="text-xl font-bold text-red-600 mt-0.5">{formatCurrency(totalOut)}</p>
         </div>
         <div className={`rounded-xl border px-4 py-3 ${net >= 0 ? 'bg-green-50 border-green-100' : 'bg-red-50 border-red-100'}`}>
           <p className={`text-xs font-medium uppercase tracking-wide ${net >= 0 ? 'text-green-700' : 'text-red-600'}`}>Net</p>
-          <p className={`text-xl font-bold mt-0.5 ${net >= 0 ? 'text-green-700' : 'text-red-600'}`}>{fmt(Math.abs(net))}</p>
+          <p className={`text-xl font-bold mt-0.5 ${net >= 0 ? 'text-green-700' : 'text-red-600'}`}>{formatCurrency(Math.abs(net))}</p>
         </div>
       </div>
 
@@ -555,7 +552,7 @@ export default function AccountsPage() {
                       </td>
                     )}
                     <td className={`px-5 py-3.5 text-right font-semibold ${t.transaction_type === 'in' ? 'text-green-600' : 'text-red-500'}`}>
-                      {t.transaction_type === 'in' ? '▲ ' : '▼ '}{fmt(t.amount)}
+                      {t.transaction_type === 'in' ? '▲ ' : '▼ '}{formatCurrency(t.amount)}
                     </td>
                   </tr>
                 ))}

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabaseClient'
 import { ledgerIn, ledgerOut, getChickBalance } from '../lib/stockLedger'
+import { formatCurrency } from '../utils/format'
 
 const GROW_OUT_DAYS = 45
 
@@ -286,7 +287,7 @@ function NewBatchModal({ farms, onClose, onSaved }) {
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Total Cost</label>
                   <div className="flex items-center h-[38px] rounded-lg bg-white border border-gray-200 px-3 text-sm font-semibold text-amber-700">
-                    {totalCost > 0 ? '₹' + totalCost.toLocaleString('en-IN', { minimumFractionDigits: 2 }) : '—'}
+                    {totalCost > 0 ? formatCurrency(totalCost) : '—'}
                   </div>
                 </div>
               </div>

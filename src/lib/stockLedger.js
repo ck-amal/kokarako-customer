@@ -1,4 +1,5 @@
 import { supabase } from './supabaseClient'
+import { roundCurrency } from '../utils/format'
 
 /**
  * Record a stock-IN movement (procurement received).
@@ -47,16 +48,52 @@ export async function getChickBalance() {
 }
 
 /**
- * Calculate weighted-average cost per unit for an item
- * from all procurement records (total cost / total quantity).
+ * Calculate weighted-average cost per unit for an item.
+ *
+ * Scope priority (most accurate → least):
+ *  1. batch_id match  — requires procurement records to have batch_id set
+ *  2. date >= startDate — works for existing data where batch_id is missing
+ *  3. global average  — last resort only; produces wrong numbers when prices vary between batches
+ *
+ * Always pass at least startDate (the batch's start_date) when calling from a distribution context.
  */
-export async function getAverageCostPerUnit(itemName) {
+export async function getAverageCostPerUnit(itemName, { batchId, startDate } = {}) {
+  // 1. Batch-scoped (most accurate — future data)
+  if (batchId) {
+    const { data } = await supabase
+      .from('procurement')
+      .select('quantity, cost')
+      .ilike('item_name', itemName)
+      .eq('batch_id', batchId)
+    const rows = data || []
+    if (rows.length > 0) {
+      const totalQty  = rows.reduce((s, r) => s + Number(r.quantity || 0), 0)
+      const totalCost = rows.reduce((s, r) => s + Number(r.cost || 0), 0)
+      if (totalQty > 0) return roundCurrency(totalCost / totalQty)
+    }
+  }
+
+  // 2. Date-scoped (works for existing data without batch_id on procurement)
+  if (startDate) {
+    const { data } = await supabase
+      .from('procurement')
+      .select('quantity, cost')
+      .ilike('item_name', itemName)
+      .gte('date', startDate)
+    const rows = data || []
+    if (rows.length > 0) {
+      const totalQty  = rows.reduce((s, r) => s + Number(r.quantity || 0), 0)
+      const totalCost = rows.reduce((s, r) => s + Number(r.cost || 0), 0)
+      if (totalQty > 0) return roundCurrency(totalCost / totalQty)
+    }
+  }
+
+  // 3. Global fallback — should rarely be reached; cross-batch average is inaccurate
   const { data } = await supabase
     .from('procurement')
     .select('quantity, cost')
     .ilike('item_name', itemName)
-
   const totalQty  = (data || []).reduce((s, r) => s + Number(r.quantity || 0), 0)
   const totalCost = (data || []).reduce((s, r) => s + Number(r.cost || 0), 0)
-  return totalQty > 0 ? totalCost / totalQty : 0
+  return totalQty > 0 ? roundCurrency(totalCost / totalQty) : 0
 }

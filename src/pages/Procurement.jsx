@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { addToStock } from '../lib/stockHelpers'
 import { ledgerIn } from '../lib/stockLedger'
+import { formatCurrency, roundCurrency } from '../utils/format'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -19,10 +20,6 @@ function formatDate(d) {
   return new Date(d).toLocaleDateString('en-IN', {
     day: '2-digit', month: 'short', year: 'numeric',
   })
-}
-
-function formatCurrency(n) {
-  return '₹' + Number(n).toLocaleString('en-IN', { minimumFractionDigits: 2 })
 }
 
 function currentMonthRange() {
@@ -182,7 +179,7 @@ function ProcurementModal({ onClose, onSaved }) {
         if (field === 'quantity' || field === 'cost_per_unit') {
           const qty = parseFloat(field === 'quantity' ? value : prev.quantity) || 0
           const cpu = parseFloat(field === 'cost_per_unit' ? value : prev.cost_per_unit) || 0
-          next.cost = qty && cpu ? (qty * cpu).toFixed(2) : prev.cost
+          next.cost = qty && cpu ? String(roundCurrency(qty * cpu)) : prev.cost
         }
         return next
       })
@@ -198,10 +195,10 @@ function ProcurementModal({ onClose, onSaved }) {
     setSaving(true)
 
     const qty = Number(form.quantity)
-    const cpu = parseFloat(form.cost_per_unit) || (Number(form.cost) / qty) || 0
+    const cpu = parseFloat(form.cost_per_unit) || (qty > 0 ? roundCurrency(Number(form.cost) / qty) : 0)
 
     const { data: inserted, error: insertErr } = await supabase.from('procurement').insert({
-      type:          selectedItem.unit === 'Chicks' ? 'chicks' : itemTypes.find(t => t.id === form.item_type_id)?.name?.toLowerCase() ?? 'other',
+      type:          itemTypes.find(t => t.id === form.item_type_id)?.name?.toLowerCase() ?? 'other',
       item_name:     selectedItem.name,
       item_id:       form.item_id,
       quantity:      qty,
@@ -240,11 +237,7 @@ function ProcurementModal({ onClose, onSaved }) {
       date:          form.date,
     })
 
-    // Update stock table (not for chicks type)
-    const typeName = itemTypes.find(t => t.id === form.item_type_id)?.name?.toLowerCase()
-    if (typeName !== 'chicks') {
-      await addToStock(selectedItem.name, qty, selectedItem.unit, cpu)
-    }
+    await addToStock(selectedItem.name, qty, selectedItem.unit, cpu)
 
     onSaved()
   }
