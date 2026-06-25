@@ -17,9 +17,11 @@
 |--------------------|-------|
 | **Project Name**   | Poultry Manager |
 | **Purpose**        | Web app to manage a poultry farming business — flocks, procurement, sales, cash collection, expenses, and stock |
-| **Hosting**        | Vercel (web app) |
+| **Hosting**        | Vercel (web app) + separate Vercel project for admin panel |
 | **Supabase URL**   | https://meebbwdaxszoyarssutm.supabase.co |
-| **Repo root**      | `/poultry-manager/` inside the working directory |
+| **Supabase Project Ref** | `meebbwdaxszoyarssutm` (region: ap-south-1 Mumbai) |
+| **Repo root**      | `/poultry-manager/` — main app; `/admin-panel/` — super admin panel (sibling folder) |
+| **Supabase MCP**   | Connected as `supabase-poultry` in Claude Code — direct DB access via psql |
 
 ---
 
@@ -36,13 +38,27 @@
 
 ---
 
-## Authentication
+## Authentication & Multi-Org
 
 - Provider: Supabase email + password (`signInWithPassword`)
-- Session managed via `useAuth` hook (`src/hooks/useAuth.js`)
-- `ProtectedRoute` component redirects unauthenticated users to `/login`
-- RLS is **disabled** for now — enable after auth is fully established and policies are defined
+- Session + org context managed via `AuthContext` (`src/contexts/AuthContext.jsx`) — replaces old `src/hooks/useAuth.js`
+- `AuthProvider` wraps the entire app in `main.jsx`
+- `useAuth()` returns: `user`, `organization`, `userRole`, `loading`, role booleans (`isOwner`, `isManager`, etc.), permission booleans, `signOut`, `selectOrganization`, `refreshOrg`
+- `ProtectedRoute` guards protected routes: no user → `/login`, no org → `/setup`, role check optional
+- **Multi-org flow:** 0 orgs → `/setup`; 1 org → auto-select; 2+ orgs → `/select-org` (sessionStorage tracks choice)
+- RLS is **enabled** via migration `017_multi_org.sql` — policies enforce org-level data isolation at DB level
+- App code also adds `.eq('organization_id', organization?.id)` to every query (defense in depth)
 - Credentials stored in `.env.local` (gitignored via `*.local`)
+
+### Roles & Permissions
+
+| Role | canEdit | canDelete | canViewFinancials | canRecordOperations | canManageUsers |
+|------|---------|-----------|-------------------|--------------------|----|
+| `owner` | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `manager` | ✅ | ❌ | ✅ | ✅ | ❌ |
+| `farm_supervisor` | ❌ | ❌ | ❌ | ✅ | ❌ |
+| `accountant` | ❌ | ❌ | ✅ | ❌ | ❌ |
+| `viewer` | ❌ | ❌ | ❌ | ❌ | ❌ |
 
 ---
 
@@ -67,6 +83,40 @@ All tables have `id UUID PRIMARY KEY DEFAULT gen_random_uuid()` and `created_at 
 | `sales`            | batch_id, vendor_id, kg_sold, price_per_kg, total_amount (generated), date | total_amount is a generated column |
 | `expenses`         | batch_id (optional), category, amount, description, date | Optional batch link for P&L |
 | `cash_collection`  | vendor_id, sale_id, amount_paid, date, balance_due, notes | Per-sale partial payment tracking |
+| `stock_returns`    | farm_id, batch_id, distribution_id, item_name, item_type, quantity, unit, return_to_stock (bool), date, reason, notes | Return events for feed/medicine taken back from farms. Added migration 016 |
+| `farm_expense_returns` | stock_return_id, distribution_id, farm_id, batch_id, item_name, item_type, quantity, unit, cost_per_unit, total_cost, date | Cost credit offsetting `farm_expenses`. Net cost = SUM(farm_expenses) − SUM(farm_expense_returns). Added migration 016 |
+| `organizations`    | name, business_name, phone, address, subscription_plan, is_active, plan, service_status, service_status_reason, max_farms, max_users, notes, plan_changed_at, plan_changed_by | Top-level tenant. Added migration 017; plan/service columns added migration 022 |
+| `organization_users` | organization_id (FK), user_id (FK auth.users), role (TEXT CHECK), is_active (bool) | Junction table — one row per user per org. `role` ∈ owner/manager/farm_supervisor/accountant/viewer. Added migration 017 |
+| `invitations`      | organization_id (FK), email, role, token (unique hex), message, invited_by (FK auth.users), expires_at, accepted_at | Pending invite tokens. 7-day expiry. Accepted when `accepted_at` IS NOT NULL. Added migration 017 |
+| `super_admins`     | user_id (FK auth.users), name, email, is_active | App-owner admin accounts. No signup — inserted manually. RLS: user can only read own row. |
+| `plan_limits`      | plan (PK), max_farms, max_users, max_batches_per_month, features (jsonb) | free/basic/pro/enterprise limits config |
+| `admin_activity_log` | admin_user_id, action, organization_id, details (jsonb) | Audit trail of all super admin actions |
+
+> **All 23 existing tables** also have `organization_id UUID NOT NULL REFERENCES organizations(id)` added in migration 017. Row Level Security is enabled on all tables with policies that enforce org-level isolation.
+
+### Plans
+
+| Plan | Max Farms | Max Users | Reports | API |
+|------|-----------|-----------|---------|-----|
+| free | 2 | 3 | ❌ | ❌ |
+| basic | 5 | 5 | ✅ | ❌ |
+| pro | 20 | 15 | ✅ | ✅ |
+| enterprise | unlimited | unlimited | ✅ | ✅ |
+
+### Service Status
+- `active` — normal access
+- `suspended` — all org users blocked at login with message screen
+- `cancelled` — permanent; data retained 30 days
+
+### Admin SECURITY DEFINER Functions
+| Function | Purpose |
+|----------|---------|
+| `admin_get_organizations()` | Returns all orgs with user/farm/batch/chick stats — bypasses RLS |
+| `admin_get_org_users(p_org_id)` | Returns users + auth.users metadata for an org |
+| `admin_update_plan(p_org_id, p_plan, p_reason)` | Updates plan + logs to admin_activity_log |
+| `admin_update_service_status(p_org_id, p_status, p_reason)` | Updates service status + logs |
+| `admin_update_notes(p_org_id, p_notes)` | Updates admin notes on org |
+| `create_organization(p_name, p_user_id, ...)` | Bootstrap function — creates org + owner row, bypasses RLS |
 
 ### Views
 
@@ -133,6 +183,25 @@ Schema file: `supabase/schema.sql`
 34. **Mobile `formatCurrency` must always have `maximumFractionDigits: 2`** — every local `formatCurrency`/`fmt` function in mobile screens must include both `minimumFractionDigits: 2` AND `maximumFractionDigits: 2`. Missing `maximumFractionDigits` causes 3+ decimal places to display when stored values have floating point artifacts.
 35. **Dashboard computed values must be rounded** — `cashAndBank`, `stockValue`, `totalAssets`, `totalLiabilities`, `netWorth` in Dashboard.jsx are computed on the fly and must be wrapped in `roundCurrency()` to prevent display of accumulated floating point errors.
 36. **`procurement.type` is TEXT, not ENUM** — migration 015 dropped the `procurement_type` enum. The column is now plain TEXT. Any `item_type.name.toLowerCase()` value is valid. Never add a DB enum for item types — `item_types` table is the sole source of truth.
+37. **Stock Return tables** — `stock_returns` logs each return event; `farm_expense_returns` is the cost-credit table that offsets `farm_expenses`. `distributions.returned_quantity` is a denormalised sum updated at each return save.
+38. **Net feed/medicine cost** — `feedCost` and `medCost` throughout the app must deduct `farm_expense_returns` credits. Net = SUM(farm_expenses WHERE item_type=feed) − SUM(farm_expense_returns WHERE item_type=feed). Always compute net before display or P&L.
+39. **`StockReturnModal` is a shared component** — located at `src/components/StockReturnModal.jsx`. Never duplicate it. Used in FarmDetail.jsx and BatchDetail.jsx.
+40. **Return-to-stock vs waste** — `return_to_stock = true` (condition=usable) inserts a `stock_ledger IN` entry and updates the `stock` table. `return_to_stock = false` (waste) only removes cost via `farm_expense_returns`; no stock is added back.
+41. **Post-close return prompt** — `handleMarkAsSold` in BatchDetail.jsx sets `postCloseModal = true` after batch is closed. Dialog gives user option to go to farm page to record returns via the Return buttons in the distributions list.
+42. **Multi-tenancy via organization_id** — Every DB table has `organization_id UUID NOT NULL FK → organizations`. ALL Supabase queries must include `.eq('organization_id', organization?.id)`. RLS enforces isolation at DB level; app-level filter is defense in depth. Never skip either.
+43. **useAuth() is AuthContext, not the old hook** — Always import `useAuth` from `'../contexts/AuthContext'` (or `'../../contexts/AuthContext'`). The old `src/hooks/useAuth.js` returns only `{ session, loading }` and is superseded. New code must never import from the old hook.
+44. **Permission gates pattern** — Use `const { canEdit, canDelete, canRecordOperations, canViewFinancials } = useAuth()`. Wrap buttons: `{canEdit && <button>...}`. Financial sections: `{canViewFinancials && <div>...}`. Page-level redirects for restricted pages: `if (!canViewFinancials) return <Navigate to="/dashboard" replace />` (placed after all hooks).
+45. **Invitation flow** — Invitations are created in the `invitations` table (token = 16-char hex, 7-day expiry). The invite link is `/invite/:token`. `accepted_at` is set when accepted. Accepting inserts a new `organization_users` row and calls `refreshOrg()` from AuthContext.
+46. **Owner guard on destructive org actions** — Before deactivating a member or changing their role to non-owner, TeamSettings.jsx checks that at least one other active owner exists. Prevents org lockout.
+47. **lib utility functions take organizationId as parameter** — `addToStock`, `subtractFromStock`, `ledgerIn`, `ledgerOut`, `getChickBalance`, `getAverageCostPerUnit` all accept `organizationId` (positional or in options object). Callers pass `organization?.id` from `useAuth()`. Never use `useAuth()` inside lib files.
+48. **Sidebar nav is role-filtered** — `ALL_NAV` in Sidebar.jsx has `roles` field (null = all roles, array = allowed roles). `useFilteredNav(userRole)` removes items the user can't see. This is UX convenience only — page-level guards are the real security.
+49. **Supplier is required on all purchases** — Procurement modal and NewBatchModal both validate that a supplier is selected before saving. No "No supplier / unknown" option. Without a supplier, the cost cannot be tracked as a liability in Supplier Dues.
+50. **Audit trail on all entry tables** — `created_by_id`, `created_by_name`, `updated_by_id`, `updated_by_name`, `updated_at` columns added to: procurement, sales, expenses, cash_collection, transactions, distributions, batches, supplier_payments, growing_fee_advances, accounts, farm_expenses, stock_returns. Shown in tables as a clock icon (hover tooltip) via `AuditInfo` component at `src/components/AuditInfo.jsx`.
+51. **Service status check on login** — `AuthContext` checks `organization.service_status` after loading org. If `suspended` or `cancelled`, signs out the user and sets `serviceBlocked` state. `ProtectedRoute` shows a full-screen blocking message instead of the app.
+52. **Super admin panel is a separate app** — Located at `/admin-panel/` (sibling to `/poultry-manager/`). Uses the same Supabase project. Access controlled by `super_admins` table. No signup page — admin rows inserted manually via DB. Every admin action logged to `admin_activity_log`.
+53. **super_admins RLS** — Policy `super_admin_self_select`: `USING (user_id = auth.uid())` — users can only read their own row. Avoids the circular self-referential policy problem.
+54. **Item catalog data migration** — All existing items/item_types and all other table data must be assigned to the correct `organization_id`. The abc org ID is `e955f09e-eab3-4e6a-be9e-46a3c48e1360`. Run UPDATE on all tables if data appears missing.
+55. **Untracked purchases warning** — Procurement page shows an amber banner listing all procurement records with no `supplier_id`, showing total untracked amount. These are not tracked as liabilities anywhere.
 
 ---
 
@@ -141,30 +210,49 @@ Schema file: `supabase/schema.sql`
 ```
 src/
 ├── components/
-│   ├── Navbar.jsx          — top nav with active link highlighting + logout
-│   └── ProtectedRoute.jsx  — redirects unauthenticated users to /login
+│   ├── Sidebar.jsx         — DesktopSidebar + MobileHeader; role-filtered nav via useFilteredNav()
+│   ├── ProtectedRoute.jsx  — guards: no user → /login, no org → /setup
+│   └── StockReturnModal.jsx — shared stock return modal (FarmDetail + BatchDetail)
+├── contexts/
+│   └── AuthContext.jsx     — AuthProvider + useAuth(); provides user/organization/userRole/permissions
 ├── hooks/
-│   ├── useAuth.js          — Supabase session listener, returns { session, loading }
-│   └── useSupabase.js      — re-exports supabase client
+│   ├── useAuth.js          — LEGACY (superseded by AuthContext.jsx — do not use for new code)
+│   └── usePermissions.js   — wraps useAuth() with a can(action) helper function
 ├── lib/
 │   ├── supabaseClient.js   — Supabase singleton (reads VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY)
-│   └── stockHelpers.js     — addToStock(), subtractFromStock() utilities
+│   ├── stockHelpers.js     — addToStock(name, qty, unit, orgId), subtractFromStock(name, qty, orgId)
+│   └── stockLedger.js      — ledgerIn({...orgId}), ledgerOut({...orgId}), getChickBalance(orgId), getAverageCostPerUnit(name, {batchId, startDate, orgId})
 ├── utils/
 │   └── format.js           — formatCurrency(), formatCurrencyRound(), roundCurrency(), formatFCR() — ALL currency display must use these
 └── pages/
     ├── Login.jsx
-    ├── Dashboard.jsx       — (placeholder — needs summary stats)
+    ├── Signup.jsx          — NEW: email+password signup → creates org → owner role
+    ├── OrgSetup.jsx        — NEW: shown when user has no org; create org OR join with token
+    ├── OrgSelector.jsx     — NEW: shown when user belongs to multiple orgs
+    ├── InviteAccept.jsx    — NEW: /invite/:token — accept invite (login or signup first)
+    ├── Dashboard.jsx
     ├── Farms.jsx
+    ├── FarmDetail.jsx
     ├── Batches.jsx
-    ├── Procurement.jsx     — uses item catalog (item_types → items cascade dropdowns) + supplier dropdown
-    ├── Suppliers.jsx       — /suppliers — accounts payable list + modals
-    ├── SupplierDetail.jsx  — /suppliers/:id — 3-tab detail (Purchases/Payments/Ledger)
-    ├── CatalogSettings.jsx — /settings/catalog — full CRUD for item_types + items
+    ├── BatchDetail.jsx
+    ├── Procurement.jsx
     ├── Stock.jsx
     ├── Vendors.jsx
     ├── Sales.jsx
     ├── CashCollection.jsx
-    └── Expenses.jsx
+    ├── Expenses.jsx
+    ├── Suppliers.jsx
+    ├── SupplierDetail.jsx
+    ├── AccountsPage.jsx
+    ├── PLReport.jsx
+    ├── FCRReport.jsx
+    ├── GrowingFees.jsx
+    ├── BatchReport.jsx
+    ├── CatalogSettings.jsx — /settings/catalog (owner/manager only)
+    ├── GrowingFeeSettings.jsx — /settings/growing-fee (owner only)
+    ├── TeamSettings.jsx    — NEW: /settings/team (owner only) — invite + manage members
+    ├── OrgSettings.jsx     — NEW: /settings/organization (owner only)
+    └── Profile.jsx         — NEW: /settings/profile (all roles)
 ```
 
 ---
@@ -185,6 +273,295 @@ src/
 ---
 
 ## Sessions Log
+
+### Session 26 — Super Admin Panel + Audit Trail + Supplier Validation
+
+**Completed:**
+
+1. **RLS bootstrap fixes:**
+   - `018_fix_rls_bootstrap.sql` — Added `org_insert` policy + fixed `ou_insert` to self-insert only
+   - `019_create_org_function.sql` — `create_organization(p_name, p_user_id, ...)` SECURITY DEFINER function; both OrgSetup.jsx and Signup.jsx now use `supabase.rpc('create_organization', {...})` instead of two separate inserts
+   - `020_fix_helper_functions.sql` — Fixed `get_user_organization_id()` and `get_user_role()` to use `current_setting('request.jwt.claims')` instead of `auth.uid()` (which returned NULL in SECURITY DEFINER context)
+   - `super_admins` RLS fixed: `user_id = auth.uid()` self-select only (was circular)
+   - After org creation: `window.location.href = '/dashboard'` (hard reload) instead of `refreshOrg()` to avoid stale session issues
+
+2. **Audit trail (`021_audit_fields.sql`):**
+   - Added `created_by_id`, `created_by_name`, `updated_by_id`, `updated_by_name`, `updated_at` to 12 tables
+   - `src/components/AuditInfo.jsx` — clock icon tooltip showing created/updated by + timestamp; pops left to avoid table overflow
+   - All inserts in: Procurement, Sales, Expenses, CashCollection, AccountsPage, Suppliers, SupplierDetail, FarmDetail, BatchDetail now include audit fields
+   - All updates in: AccountsPage (accounts), BatchDetail (batches), FarmDetail (batches) include `updated_by_*`
+
+3. **Supplier required validation:**
+   - Procurement modal: validation error if no supplier selected
+   - FarmDetail NewBatchModal: validation error if no supplier when purchase fields filled
+   - Changed blank option from "No supplier / unknown" to "— select supplier —"
+   - Procurement page: amber banner listing all purchases with no supplier_id
+
+4. **Item catalog — data migration:**
+   - Added 17 new items (Feed × 6, Medicine × 6, Vaccine × 5)
+   - Fixed typos: Grover→Grower, Antibiotoc→Antibiotic, Vitamine→Vitamin, Vccine NDV→Vaccine NDV
+   - Migrated all data to abc org (`e955f09e-eab3-4e6a-be9e-46a3c48e1360`)
+
+5. **Super Admin Panel (`/admin-panel/`):**
+   - Separate React + Vite + Tailwind app, dark theme
+   - DB: `super_admins`, `plan_limits`, `admin_activity_log` tables + plan/service columns on `organizations`
+   - 5 SECURITY DEFINER functions for admin operations
+   - Pages: Login (access-denied guard), Dashboard (6 cards, plan distribution, activity feed), Organizations (filterable table, pagination), OrgDetail (full detail, change plan modal, suspend/cancel/reactivate modals, admin notes, users/farms/batches tables), ActivityLog (CSV export)
+   - Both emails inserted as super admins: amalrajp7034@gmail.com, amalraj150@gmail.com
+   - Supabase MCP connected as `supabase-poultry` for direct DB access
+
+6. **Main app service status check:**
+   - `AuthContext` checks `organization.service_status` on load
+   - Suspended/cancelled → signs out + sets `serviceBlocked` state
+   - `ProtectedRoute` shows blocking screen with support email
+
+**Supabase MCP:** Connected via psql at `db.meebbwdaxszoyarssutm.supabase.co:5432`. Password in `.env.local`.
+
+**Current blockers:**
+- Admin panel not yet deployed to Vercel (run locally with `npm run dev` in `/admin-panel/`)
+- Migrations 018–021 must be run in Supabase SQL Editor if not already done
+
+**Next session task:**
+- Deploy admin-panel to Vercel as a separate project, then test full flow: create org → login → admin panel shows it → change plan → suspend → verify main app blocks suspended users.
+
+---
+
+### Session 27 — i18n Multi-Language Support (English + Malayalam) — IN PROGRESS
+
+**Objective:** Add Malayalam + English multi-language support to both web app and mobile app using i18next.
+
+---
+
+#### ✅ COMPLETED
+
+**Infrastructure (both apps):**
+- `npm install i18next react-i18next i18next-browser-languagedetector` — web
+- `npm install i18next react-i18next` — mobile (AsyncStorage already present)
+- `src/i18n/locales/en.json` — full English translation file (all keys)
+- `src/i18n/locales/ml.json` — full Malayalam translation file (all keys)
+- `src/i18n/index.js` — i18n config (web): uses LanguageDetector, localStorage key `poultry_language`, fallback `en`
+- `src/utils/dateFormat.js` — `formatDate(date, language)` and `formatDateShort(date, language)` with Malayalam month names
+- `src/components/LanguageSwitcher.jsx` — compact toggle (EN/മല) + full two-button version (🇬🇧 English / 🇮🇳 മലയാളം)
+- `src/main.jsx` — `import './i18n/index.js'` added before App renders
+- `index.html` — Noto Sans Malayalam + Inter fonts added, title updated
+- `src/index.css` — `[lang="ml"]` CSS rule for Malayalam font + line-height
+- Mobile: `src/i18n/index.js` — AsyncStorage-based language detector, same en/ml resources
+- Mobile: `src/i18n/locales/en.json` + `ml.json` — copied from web
+- Mobile: `index.js` — `import './src/i18n/index.js'` added
+
+**Web pages with t() applied:**
+- `src/pages/Login.jsx` ✅ — LanguageSwitcher compact top-right
+- `src/pages/Signup.jsx` ✅
+- `src/pages/OrgSetup.jsx` ✅
+- `src/pages/OrgSelector.jsx` ✅
+- `src/pages/InviteAccept.jsx` ✅
+- `src/pages/Dashboard.jsx` ✅
+- `src/components/Sidebar.jsx` ✅ — LanguageSwitcher compact in footer, uses labelKey pattern
+- `src/pages/Profile.jsx` ✅ — full LanguageSwitcher embedded
+- `src/pages/OrgSettings.jsx` ✅
+- `src/pages/TeamSettings.jsx` ✅
+- `src/pages/CatalogSettings.jsx` ✅
+- `src/components/AuditInfo.jsx` ✅
+
+**Translation key additions made during session (en.json + ml.json both updated):**
+- `org.*` expanded: orgSettings, manageBusinessDetails, businessDetails, organisationName, tradingName, farmAddress, saveChanges, saving, savedSuccessfully, subscription, billingComingSoon, plan_label, dangerZone, deactivateOrg, deactivateWarning, typeToConfirm, orgNamePlaceholder, deactivating, deactivateButton, orgNameRequired, orgNameMismatch
+- `profile.*` expanded: yourProfile, manageAccount, personalDetails, fullName, emailCannotChange, saveName, saving, nameUpdated, passwordChanged, organisation, yourRole, memberSince, language
+- `audit.*` added: createdBy, updatedBy, unknown
+
+---
+
+#### ❌ NOT YET DONE — MUST COMPLETE NEXT SESSION
+
+**Web pages still needing t() replacement:**
+- `src/pages/Farms.jsx`
+- `src/pages/FarmDetail.jsx` (large ~116KB)
+- `src/pages/Batches.jsx`
+- `src/pages/BatchDetail.jsx` (large ~77KB)
+- `src/pages/Procurement.jsx`
+- `src/pages/Stock.jsx`
+- `src/pages/Sales.jsx`
+- `src/pages/Vendors.jsx`
+- `src/pages/CashCollection.jsx`
+- `src/pages/Expenses.jsx`
+- `src/components/StockReturnModal.jsx`
+- `src/pages/Suppliers.jsx`
+- `src/pages/SupplierDetail.jsx`
+- `src/pages/GrowingFees.jsx` (large ~48KB)
+- `src/pages/GrowingFeeSettings.jsx`
+- `src/pages/AccountsPage.jsx` (large ~31KB)
+- `src/pages/PLReport.jsx`
+- `src/pages/FCRReport.jsx`
+- `src/pages/BatchReport.jsx`
+
+**Mobile screens still needing t() replacement (ALL 21 + 1 component):**
+- `src/screens/LoginScreen.js`
+- `src/screens/HomeScreen.js`
+- `src/screens/MoreScreen.js`
+- `src/screens/FarmsScreen.js`
+- `src/screens/FarmDetailScreen.js`
+- `src/screens/BatchesScreen.js`
+- `src/screens/BatchDetailScreen.js`
+- `src/screens/StockScreen.js`
+- `src/screens/ProcurementScreen.js`
+- `src/screens/CatalogScreen.js`
+- `src/screens/SalesScreen.js`
+- `src/screens/VendorsScreen.js`
+- `src/screens/PaymentsScreen.js`
+- `src/screens/RecordSaleScreen.js`
+- `src/screens/RecordPaymentScreen.js`
+- `src/screens/DistributeFeedScreen.js`
+- `src/screens/ExpensesScreen.js`
+- `src/screens/SuppliersScreen.js`
+- `src/screens/SupplierDetailScreen.js`
+- `src/screens/AccountsScreen.js`
+- `src/screens/PLReportScreen.js`
+- `src/components/DatePicker.js`
+- Mobile `LanguageSwitcher.js` component — needs to be CREATED at `src/components/LanguageSwitcher.js`
+- `MoreScreen.js` — add LanguageSwitcher in settings section
+
+**Also still TODO:**
+- `user_preferences` Supabase table (for cross-device language sync — optional, do last)
+
+---
+
+#### RULES FOR NEXT SESSION
+
+**⚠️ TOKEN SAFETY — DO NOT LAUNCH MORE THAN 3-4 AGENTS IN PARALLEL**
+- Last time 8 agents in parallel exhausted token quota
+- Launch max 3 agents at a time, wait for completion, then next batch
+
+**Pattern for every file:**
+```jsx
+import { useTranslation } from 'react-i18next';
+import { formatDate } from '../utils/dateFormat'; // web only
+const { t, i18n } = useTranslation();
+// Replace all hardcoded text with t('key')
+// Replace date formatting with formatDate(x, i18n.language)
+```
+
+**Mobile pattern:**
+```js
+import { useTranslation } from 'react-i18next';
+const { t } = useTranslation();
+// Replace Text content, Alert.alert() args, placeholders, navigation titles
+```
+
+**Next session start command:**
+> "Continue Session 27 i18n — start with Batch B: Farms, Batches, Procurement, Stock (max 3 agents)"
+
+---
+
+### Session 25 — Multi-Organization Support & Role-Based Access Control
+
+**Completed:**
+
+1. **`supabase/migrations/017_multi_org.sql`** CREATED:
+   - `organizations` table (name, business_name, phone, address, subscription_plan, is_active)
+   - `organization_users` junction table (organization_id, user_id, role, is_active)
+   - `invitations` table (organization_id, email, role, token, expires_at, accepted_at)
+   - `ADD COLUMN organization_id` to all 23 existing tables
+   - `get_user_organization_id()` and `get_user_role()` SECURITY DEFINER Postgres functions
+   - `ENABLE ROW LEVEL SECURITY` + full RLS policies on every table
+   - Comments for manual data migration steps (fill org_id on existing rows, then set NOT NULL)
+
+2. **`src/contexts/AuthContext.jsx`** CREATED — replaces old `useAuth.js`:
+   - Loads `organization_users` + `organizations` join on auth state change
+   - Handles 0/1/many org cases (redirect to /setup, auto-select, sessionStorage choice)
+   - Derives all permission booleans: canEdit, canDelete, canViewFinancials, canRecordOperations, canManageUsers
+   - Exports `useAuth()`, `signOut()`, `selectOrganization(orgId)`, `refreshOrg()`
+
+3. **`src/hooks/usePermissions.js`** CREATED — `can(action)` helper wrapping useAuth()
+
+4. **New pages CREATED:**
+   - `Signup.jsx` — signup form → create org → set owner role
+   - `OrgSetup.jsx` — create new org OR join with invite token
+   - `OrgSelector.jsx` — pick org when user belongs to multiple
+   - `InviteAccept.jsx` — `/invite/:token` — validates token, accepts invite (existing or new user)
+   - `TeamSettings.jsx` — `/settings/team` — member table, role changes, deactivate/reactivate, invite modal
+   - `OrgSettings.jsx` — `/settings/organization` — edit org name/details, danger zone (deactivate org)
+   - `Profile.jsx` — `/settings/profile` — edit full name, change password, view role/org
+
+5. **`src/main.jsx`** UPDATED — wrapped app in `<AuthProvider>`
+
+6. **`src/components/ProtectedRoute.jsx`** UPDATED — uses AuthContext; redirects to /setup when no org
+
+7. **`src/components/Sidebar.jsx`** UPDATED — role-filtered nav (ALL_NAV with roles field), RoleBanner, org name in header
+
+8. **`src/pages/Login.jsx`** UPDATED — added "Sign up" link to /signup
+
+9. **`src/App.jsx`** UPDATED — new public routes (/signup, /setup, /select-org, /invite/:token), new settings routes (/settings/team, /settings/organization, /settings/profile)
+
+10. **organization_id added to all page queries** (defense in depth on top of RLS):
+    - Farms, Batches, Procurement, Stock, Vendors, Sales (Part 1 agent)
+    - CashCollection, Expenses, Suppliers, SupplierDetail, AccountsPage, GrowingFees (Part 2 agent)
+    - FarmDetail, BatchDetail (Part 3 agent — 5 sub-components updated)
+    - Dashboard, PLReport, FCRReport, GrowingFeeSettings, CatalogSettings, BatchReport (Part 4 agent)
+    - `stockHelpers.js`: addToStock + subtractFromStock now take `organizationId` parameter
+    - `stockLedger.js`: ledgerIn, ledgerOut, getChickBalance, getAverageCostPerUnit now take `organizationId`
+    - All call sites updated: Procurement.jsx, Batches.jsx, FarmDetail.jsx, StockReturnModal.jsx
+
+11. **Permission gates added to all pages:**
+    - Financial pages (AccountsPage, Expenses, CashCollection, GrowingFees, Suppliers, SupplierDetail): `canViewFinancials` guard + `canEdit` on action buttons
+    - Settings pages: GrowingFeeSettings (owner only), CatalogSettings (canEdit only)
+    - Operational pages (Farms, Batches, Stock, Vendors, Sales, Procurement): `canEdit`/`canDelete`/`canRecordOperations` gates on action buttons
+    - FarmDetail: financial summary section gated by `canViewFinancials`; all action buttons role-gated
+    - BatchDetail: financial P&L gated by `canViewFinancials`; distribution/sale/advance buttons role-gated
+
+**Migration required:**
+- Run `supabase/migrations/017_multi_org.sql` in Supabase SQL Editor
+- Follow the commented steps to fill organization_id on existing rows before setting NOT NULL
+
+**Current blockers:**
+- Migrations 010–017 must be run in Supabase SQL Editor (in order)
+- migration 017 requires manual data migration steps (commented in the SQL file)
+
+**Next session task:**
+- Run migration 017 in Supabase, complete the data migration steps, test multi-org signup/invite flow end-to-end, then push to GitHub and redeploy Vercel.
+
+---
+
+### Session 24 — Stock Return Feature
+
+**Completed:**
+
+1. **Migration `016_stock_returns.sql`** CREATED — new tables `stock_returns` and `farm_expense_returns`; added `returned_quantity NUMERIC DEFAULT 0` to `distributions`.
+
+2. **`src/components/StockReturnModal.jsx`** CREATED — shared modal component used by both FarmDetail.jsx and BatchDetail.jsx:
+   - Reads `farm_expenses` for this distribution to get `cost_per_unit`
+   - Reads existing `stock_returns` to calculate `alreadyReturned` and validate max returnable
+   - Condition toggle: Usable (return_to_stock=true) / Waste (return_to_stock=false)
+   - On save: inserts `stock_returns` → conditionally inserts `stock_ledger IN` + updates `stock` table → inserts `farm_expense_returns` → updates `distributions.returned_quantity` → updates `farm_stock`
+   - Summary card shows: returning qty, cost credit, net remaining at farm, stock impact
+
+3. **`FarmDetail.jsx`** UPDATED:
+   - Added `farmExpenseReturns` state; fetched from `farm_expense_returns WHERE farm_id = id`
+   - `feedCost` and `medicineCost` are now net: gross farm_expenses − farm_expense_returns credit
+   - `distCostMap`, `returnCostMap`, `netDistCostMap` computed for per-row display
+   - Distributions tab: added Distributed, Returned (orange), Net Cost columns; Return button per row (hidden once fully returned)
+   - `returnModal` state; StockReturnModal mounted at bottom of render
+
+4. **`BatchDetail.jsx`** UPDATED:
+   - Added `expenseReturns` state; fetched in `load()` and `refresh()` from `farm_expense_returns WHERE batch_id = batchId`
+   - `feedCost` and `medCost` are now net of returns
+   - `returnCostByDist` map for per-row net cost display
+   - Distributions table: added Distributed, Returned, Net Cost, Return button columns
+   - Post-close prompt: after `handleMarkAsSold` shows dialog "Any leftover stock to return?" with "No leftover stock" and "Go to Farm Page" buttons
+
+5. **`PLReport.jsx`** UPDATED:
+   - Added `farmExpReturns` state; fetched in `fetchReport()` alongside `farm_expenses`
+   - `feedCost` and `medCost` useMemo now deduct `farm_expense_returns` credits for the period
+
+**Migration required:**
+- Run `supabase/migrations/016_stock_returns.sql` in Supabase SQL Editor
+
+**Current blockers:**
+- Migrations 010–016 must be run in Supabase SQL Editor (in order)
+- GitHub remote URL may need fixing
+
+**Next session task:**
+- Run migration 016, test Stock Return flow (distribute → return → verify stock restored + cost credited in P&L), then push to GitHub.
+
+---
 
 ### Session 23 — Weighted Average Cost Scoping + Floating Point Storage
 

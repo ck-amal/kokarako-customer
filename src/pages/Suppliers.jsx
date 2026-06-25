@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, Navigate } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import { supabase } from '../lib/supabaseClient'
 import { formatCurrency } from '../utils/format'
+import { useAuth } from '../contexts/AuthContext'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -16,6 +18,8 @@ function currentMonthRange() {
 // ─── Add/Edit Supplier Modal ──────────────────────────────────────────────────
 
 function SupplierModal({ supplier, onClose, onSaved }) {
+  const { organization } = useAuth()
+  const { t } = useTranslation()
   const [form, setForm] = useState({
     name:          supplier?.name          ?? '',
     business_name: supplier?.business_name ?? '',
@@ -35,7 +39,7 @@ function SupplierModal({ supplier, onClose, onSaved }) {
   async function handleSubmit(e) {
     e.preventDefault()
     setError('')
-    if (!form.name.trim()) { setError('Name is required'); return }
+    if (!form.name.trim()) { setError(t('errors.required')); return }
     setSaving(true)
 
     const payload = {
@@ -47,8 +51,8 @@ function SupplierModal({ supplier, onClose, onSaved }) {
     }
 
     const { error: err } = isEdit
-      ? await supabase.from('suppliers').update(payload).eq('id', supplier.id)
-      : await supabase.from('suppliers').insert(payload)
+      ? await supabase.from('suppliers').update(payload).eq('organization_id', organization.id).eq('id', supplier.id)
+      : await supabase.from('suppliers').insert({ ...payload, organization_id: organization.id })
 
     if (err) { setError(err.message); setSaving(false); return }
     onSaved()
@@ -58,13 +62,15 @@ function SupplierModal({ supplier, onClose, onSaved }) {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
       <div className="w-full max-w-md bg-white rounded-2xl shadow-xl p-6">
         <div className="flex items-center justify-between mb-5">
-          <h2 className="text-lg font-semibold text-gray-800">{isEdit ? 'Edit Supplier' : 'Add Supplier'}</h2>
+          <h2 className="text-lg font-semibold text-gray-800">
+            {isEdit ? t('suppliers.editSupplier') : t('suppliers.addSupplier')}
+          </h2>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Name *</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">{t('common.name')} *</label>
             <input
               required value={form.name} onChange={set('name')}
               placeholder="e.g. Rajan Feed Suppliers"
@@ -72,7 +78,7 @@ function SupplierModal({ supplier, onClose, onSaved }) {
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Business Name</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">{t('suppliers.businessName')}</label>
             <input
               value={form.business_name} onChange={set('business_name')}
               placeholder="e.g. Rajan & Co."
@@ -80,7 +86,7 @@ function SupplierModal({ supplier, onClose, onSaved }) {
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Phone</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">{t('common.phone')}</label>
             <input
               value={form.phone} onChange={set('phone')}
               placeholder="e.g. 9876543210"
@@ -88,7 +94,7 @@ function SupplierModal({ supplier, onClose, onSaved }) {
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Address</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">{t('common.address')}</label>
             <textarea
               rows={2} value={form.address} onChange={set('address')}
               placeholder="Street, City…"
@@ -96,7 +102,7 @@ function SupplierModal({ supplier, onClose, onSaved }) {
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">{t('common.notes')}</label>
             <textarea
               rows={2} value={form.notes} onChange={set('notes')}
               placeholder="Any notes…"
@@ -113,13 +119,13 @@ function SupplierModal({ supplier, onClose, onSaved }) {
               type="button" onClick={onClose}
               className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition"
             >
-              Cancel
+              {t('common.cancel')}
             </button>
             <button
               type="submit" disabled={saving}
               className="flex-1 rounded-lg bg-amber-500 hover:bg-amber-600 disabled:opacity-60 px-4 py-2 text-sm font-semibold text-white transition"
             >
-              {saving ? 'Saving…' : isEdit ? 'Save Changes' : 'Add Supplier'}
+              {saving ? t('common.loading') : isEdit ? t('common.save') : t('suppliers.addSupplier')}
             </button>
           </div>
         </form>
@@ -131,6 +137,8 @@ function SupplierModal({ supplier, onClose, onSaved }) {
 // ─── Record Payment Modal ─────────────────────────────────────────────────────
 
 function RecordPaymentModal({ suppliers, initialSupplierId, onClose, onSaved }) {
+  const { organization, user } = useAuth()
+  const { t } = useTranslation()
   const [form, setForm] = useState({
     supplier_id:      initialSupplierId ?? '',
     amount:           '',
@@ -146,7 +154,7 @@ function RecordPaymentModal({ suppliers, initialSupplierId, onClose, onSaved }) 
   const [error, setError]             = useState('')
 
   useEffect(() => {
-    supabase.from('accounts').select('id, name, type').eq('is_active', true).order('name')
+    supabase.from('accounts').select('id, name, type').eq('organization_id', organization.id).eq('is_active', true).order('name')
       .then(({ data }) => {
         const list = data || []
         setAccounts(list)
@@ -160,8 +168,8 @@ function RecordPaymentModal({ suppliers, initialSupplierId, onClose, onSaved }) 
     if (!form.supplier_id) { setOutstanding(null); return }
     async function load() {
       const [{ data: procs }, { data: pays }] = await Promise.all([
-        supabase.from('procurement').select('cost').eq('supplier_id', form.supplier_id),
-        supabase.from('supplier_payments').select('amount').eq('supplier_id', form.supplier_id),
+        supabase.from('procurement').select('cost').eq('organization_id', organization.id).eq('supplier_id', form.supplier_id),
+        supabase.from('supplier_payments').select('amount').eq('organization_id', organization.id).eq('supplier_id', form.supplier_id),
       ])
       const totalCost = (procs || []).reduce((s, r) => s + Number(r.cost), 0)
       const totalPaid = (pays  || []).reduce((s, r) => s + Number(r.amount), 0)
@@ -185,14 +193,18 @@ function RecordPaymentModal({ suppliers, initialSupplierId, onClose, onSaved }) 
       // Allow submit anyway — just a warning shown in error area
     }
     setSaving(true)
+    const userName = user?.user_metadata?.full_name || user?.email || 'Unknown'
 
     const { data: inserted, error: err } = await supabase.from('supplier_payments').insert({
+      organization_id:  organization.id,
       supplier_id:      form.supplier_id,
       amount:           amt,
       payment_date:     form.payment_date,
       payment_method:   form.payment_method || null,
       reference_number: form.reference_number.trim() || null,
       notes:            form.notes.trim() || null,
+      created_by_id:    user?.id,
+      created_by_name:  userName,
     }).select('id').single()
 
     if (err) { setError(err.message); setSaving(false); return }
@@ -200,6 +212,7 @@ function RecordPaymentModal({ suppliers, initialSupplierId, onClose, onSaved }) 
     if (form.account_id && inserted) {
       const supplierName = suppliers.find(s => s.id === form.supplier_id)?.name ?? 'Supplier'
       await supabase.from('transactions').insert({
+        organization_id:  organization.id,
         account_id:       form.account_id,
         transaction_type: 'out',
         category:         'supplier_payment',
@@ -220,14 +233,14 @@ function RecordPaymentModal({ suppliers, initialSupplierId, onClose, onSaved }) 
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
       <div className="w-full max-w-md bg-white rounded-2xl shadow-xl p-6 max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between mb-5">
-          <h2 className="text-lg font-semibold text-gray-800">Record Payment</h2>
+          <h2 className="text-lg font-semibold text-gray-800">{t('suppliers.recordPayment')}</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
           {/* Supplier */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Supplier *</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">{t('nav.suppliers')} *</label>
             <select
               required value={form.supplier_id} onChange={set('supplier_id')}
               className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-amber-400"
@@ -244,7 +257,7 @@ function RecordPaymentModal({ suppliers, initialSupplierId, onClose, onSaved }) 
             <div className={`rounded-lg px-4 py-3 flex items-center justify-between ${
               outstanding > 0 ? 'bg-red-50 border border-red-200' : 'bg-green-50 border border-green-200'
             }`}>
-              <span className="text-sm font-medium text-gray-700">Outstanding Balance</span>
+              <span className="text-sm font-medium text-gray-700">{t('suppliers.outstandingBalance')}</span>
               <span className={`text-lg font-bold ${outstanding > 0 ? 'text-red-600' : 'text-green-600'}`}>
                 {formatCurrency(outstanding)}
               </span>
@@ -270,19 +283,19 @@ function RecordPaymentModal({ suppliers, initialSupplierId, onClose, onSaved }) 
           {/* Payment Method + Date */}
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Payment Method</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">{t('suppliers.paymentMethod')}</label>
               <select
                 value={form.payment_method} onChange={set('payment_method')}
                 className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-amber-400"
               >
-                <option>Cash</option>
-                <option>Bank Transfer</option>
-                <option>Cheque</option>
+                <option>{t('suppliers.methods.cash')}</option>
+                <option>{t('suppliers.methods.bankTransfer')}</option>
+                <option>{t('suppliers.methods.cheque')}</option>
                 <option>UPI</option>
               </select>
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Date *</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">{t('common.date')} *</label>
               <input
                 required type="date"
                 value={form.payment_date} onChange={set('payment_date')}
@@ -293,7 +306,9 @@ function RecordPaymentModal({ suppliers, initialSupplierId, onClose, onSaved }) 
 
           {/* Reference Number */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Reference Number <span className="text-gray-400 font-normal">(optional)</span></label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              {t('suppliers.referenceNumber')} <span className="text-gray-400 font-normal">({t('common.optional')})</span>
+            </label>
             <input
               value={form.reference_number} onChange={set('reference_number')}
               placeholder="e.g. Cheque no. or UTR"
@@ -319,7 +334,9 @@ function RecordPaymentModal({ suppliers, initialSupplierId, onClose, onSaved }) 
 
           {/* Notes */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Notes <span className="text-gray-400 font-normal">(optional)</span></label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              {t('common.notes')} <span className="text-gray-400 font-normal">({t('common.optional')})</span>
+            </label>
             <textarea
               rows={2} value={form.notes} onChange={set('notes')}
               className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-amber-400"
@@ -335,13 +352,13 @@ function RecordPaymentModal({ suppliers, initialSupplierId, onClose, onSaved }) 
               type="button" onClick={onClose}
               className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition"
             >
-              Cancel
+              {t('common.cancel')}
             </button>
             <button
               type="submit" disabled={saving}
               className="flex-1 rounded-lg bg-amber-500 hover:bg-amber-600 disabled:opacity-60 px-4 py-2 text-sm font-semibold text-white transition"
             >
-              {saving ? 'Saving…' : 'Record Payment'}
+              {saving ? t('common.loading') : t('suppliers.recordPayment')}
             </button>
           </div>
         </form>
@@ -352,7 +369,8 @@ function RecordPaymentModal({ suppliers, initialSupplierId, onClose, onSaved }) 
 
 // ─── Supplier card ────────────────────────────────────────────────────────────
 
-function SupplierCard({ supplier, onEdit, onPayment, onClick }) {
+function SupplierCard({ supplier, onEdit, onPayment, onClick, canEdit, canDelete }) {
+  const { t } = useTranslation()
   const { outstanding } = supplier
   const isPaid = outstanding <= 0
 
@@ -385,13 +403,15 @@ function SupplierCard({ supplier, onEdit, onPayment, onClick }) {
           {isPaid ? '✓ Cleared' : formatCurrency(outstanding)}
         </span>
         <div className="flex items-center gap-2 mt-1" onClick={e => e.stopPropagation()}>
-          <button
-            onClick={onEdit}
-            className="rounded-lg border border-gray-200 px-3 py-1 text-xs font-medium text-gray-600 hover:bg-gray-50 transition"
-          >
-            Edit
-          </button>
-          {!isPaid && (
+          {canEdit && (
+            <button
+              onClick={onEdit}
+              className="rounded-lg border border-gray-200 px-3 py-1 text-xs font-medium text-gray-600 hover:bg-gray-50 transition"
+            >
+              {t('common.edit')}
+            </button>
+          )}
+          {!isPaid && canEdit && (
             <button
               onClick={onPayment}
               className="rounded-lg bg-amber-500 hover:bg-amber-600 px-3 py-1 text-xs font-semibold text-white transition"
@@ -409,6 +429,8 @@ function SupplierCard({ supplier, onEdit, onPayment, onClick }) {
 
 export default function Suppliers() {
   const navigate = useNavigate()
+  const { organization, canViewFinancials, canEdit, canDelete } = useAuth()
+  const { t } = useTranslation()
   const [suppliers, setSuppliers]         = useState([])
   const [loading, setLoading]             = useState(true)
   const [addModal, setAddModal]           = useState(false)
@@ -422,10 +444,10 @@ export default function Suppliers() {
     const { start, end } = currentMonthRange()
 
     const [{ data: sups }, { data: procs }, { data: pays }, { data: monthPays }] = await Promise.all([
-      supabase.from('suppliers').select('*').eq('is_active', true).order('name'),
-      supabase.from('procurement').select('supplier_id, cost').not('supplier_id', 'is', null),
-      supabase.from('supplier_payments').select('supplier_id, amount'),
-      supabase.from('supplier_payments').select('amount').gte('payment_date', start).lte('payment_date', end),
+      supabase.from('suppliers').select('*').eq('organization_id', organization.id).eq('is_active', true).order('name'),
+      supabase.from('procurement').select('supplier_id, cost').eq('organization_id', organization.id).not('supplier_id', 'is', null),
+      supabase.from('supplier_payments').select('supplier_id, amount').eq('organization_id', organization.id),
+      supabase.from('supplier_payments').select('amount').eq('organization_id', organization.id).gte('payment_date', start).lte('payment_date', end),
     ])
 
     // Build outstanding per supplier
@@ -452,6 +474,9 @@ export default function Suppliers() {
 
   useEffect(() => { fetchData() }, [])
 
+  // Guard — after all hooks
+  if (!canViewFinancials) return <Navigate to="/dashboard" replace />
+
   const totalOutstanding = suppliers.reduce((s, sup) => s + sup.outstanding, 0)
 
   function openPayment(supplierId) {
@@ -464,23 +489,25 @@ export default function Suppliers() {
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-bold text-gray-800">Suppliers</h1>
+          <h1 className="text-2xl font-bold text-gray-800">{t('suppliers.title')}</h1>
           <p className="text-sm text-gray-500 mt-0.5">Manage your suppliers and outstanding payments</p>
         </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => { setPaySupplier(null); setPayModalOpen(true) }}
-            className="inline-flex items-center gap-2 rounded-lg border border-amber-400 text-amber-700 hover:bg-amber-50 px-4 py-2 text-sm font-semibold transition"
-          >
-            💳 Record Payment
-          </button>
-          <button
-            onClick={() => setAddModal(true)}
-            className="inline-flex items-center gap-2 rounded-lg bg-amber-500 hover:bg-amber-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition"
-          >
-            <span className="text-base leading-none">+</span> Add Supplier
-          </button>
-        </div>
+        {canEdit && (
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => { setPaySupplier(null); setPayModalOpen(true) }}
+              className="inline-flex items-center gap-2 rounded-lg border border-amber-400 text-amber-700 hover:bg-amber-50 px-4 py-2 text-sm font-semibold transition"
+            >
+              💳 {t('suppliers.recordPayment')}
+            </button>
+            <button
+              onClick={() => setAddModal(true)}
+              className="inline-flex items-center gap-2 rounded-lg bg-amber-500 hover:bg-amber-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition"
+            >
+              <span className="text-base leading-none">+</span> {t('suppliers.addSupplier')}
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Summary bar */}
@@ -512,8 +539,8 @@ export default function Suppliers() {
       ) : suppliers.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-20 text-gray-400">
           <span className="text-5xl mb-3">🤝</span>
-          <p className="text-sm font-medium">No suppliers yet</p>
-          <p className="text-xs mt-1">Click "+ Add Supplier" to get started</p>
+          <p className="text-sm font-medium">{t('suppliers.noSuppliers')}</p>
+          <p className="text-xs mt-1">Click "+ {t('suppliers.addSupplier')}" to get started</p>
         </div>
       ) : (
         <div className="space-y-3">
@@ -524,6 +551,8 @@ export default function Suppliers() {
               onClick={() => navigate(`/suppliers/${s.id}`)}
               onEdit={e => { e.stopPropagation?.(); setEditSupplier(s) }}
               onPayment={e => { e.stopPropagation?.(); openPayment(s.id) }}
+              canEdit={canEdit}
+              canDelete={canDelete}
             />
           ))}
         </div>

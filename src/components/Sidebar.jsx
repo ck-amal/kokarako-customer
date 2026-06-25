@@ -1,24 +1,38 @@
 import { useState, useEffect } from 'react'
 import { NavLink, useNavigate, useLocation } from 'react-router-dom'
-import { supabase } from '../lib/supabaseClient'
+import { useTranslation } from 'react-i18next'
+import { useAuth } from '../contexts/AuthContext'
+import LanguageSwitcher from './LanguageSwitcher'
 
-const NAV = [
-  { to: '/dashboard',        label: 'Dashboard',       icon: '🏠' },
-  { to: '/farms',            label: 'Farms',           icon: '🏡' },
-  { to: '/batches',          label: 'Batches',         icon: '🐣' },
-  { to: '/procurement',      label: 'Procurement',     icon: '🛒' },
-  { to: '/suppliers',        label: 'Suppliers',       icon: '🏭' },
-  { to: '/stock',            label: 'Stock',           icon: '📦' },
-  { to: '/vendors',          label: 'Vendors',         icon: '🤝' },
-  { to: '/sales',            label: 'Sales',           icon: '💰' },
-  { to: '/cash-collection',  label: 'Cash Collection', icon: '💳' },
-  { to: '/expenses',         label: 'Expenses',        icon: '🧾' },
-  { to: '/accounts',         label: 'Cash & Bank',     icon: '💵' },
-  { to: '/growing-fees',         label: 'Growing Fees',    icon: '🌿' },
-  { to: '/reports/pl',           label: 'P&L Report',      icon: '📊' },
-  { to: '/reports/fcr',          label: 'FCR Report',       icon: '🌾' },
-  { to: '/settings/catalog',     label: 'Item Catalog',     icon: '⚙️' },
-  { to: '/settings/growing-fee', label: 'Fee Config',       icon: '🔧' },
+// ─── All possible nav items with role requirements ────────────────────────────
+
+const ALL_NAV = [
+  // Core — visible to all roles
+  { to: '/dashboard',        labelKey: 'nav.dashboard',    icon: '🏠', roles: null },
+  { to: '/farms',            labelKey: 'nav.farms',        icon: '🏡', roles: null },
+  { to: '/batches',          labelKey: 'nav.batches',      icon: '🐣', roles: null },
+  { to: '/stock',            labelKey: 'nav.stock',        icon: '📦', roles: null },
+  { to: '/sales',            labelKey: 'nav.sales',        icon: '💰', roles: null },
+
+  // Manager+ (not farm_supervisor, not accountant, not viewer)
+  { to: '/procurement',     labelKey: 'nav.procurement',   icon: '🛒', roles: ['owner','manager'] },
+  { to: '/suppliers',       labelKey: 'nav.suppliers',     icon: '🏭', roles: ['owner','manager','accountant'] },
+  { to: '/vendors',         labelKey: 'nav.vendors',       icon: '🤝', roles: ['owner','manager','accountant'] },
+  { to: '/cash-collection', labelKey: 'nav.cashCollection',icon: '💳', roles: ['owner','manager','accountant'] },
+  { to: '/expenses',        labelKey: 'nav.expenses',      icon: '🧾', roles: ['owner','manager','accountant'] },
+
+  // Financial — owner, manager, accountant
+  { to: '/accounts',          labelKey: 'nav.cashBank',    icon: '💵', roles: ['owner','manager','accountant'] },
+  { to: '/growing-fees',      labelKey: 'nav.growingFees', icon: '🌿', roles: ['owner','manager','accountant'] },
+  { to: '/reports/pl',        labelKey: 'nav.plReport',    icon: '📊', roles: ['owner','manager','accountant'] },
+  { to: '/reports/fcr',       labelKey: 'nav.fcrReport',   icon: '🌾', roles: ['owner','manager','accountant'] },
+
+  // Settings — varies
+  { to: '/settings/catalog',      labelKey: 'nav.itemCatalog',  icon: '⚙️',  roles: ['owner','manager'] },
+  { to: '/settings/growing-fee',  labelKey: 'nav.feeConfig',    icon: '🔧', roles: ['owner'] },
+  { to: '/settings/team',         labelKey: 'nav.team',         icon: '👥', roles: ['owner'] },
+  { to: '/settings/organization', labelKey: 'nav.organization', icon: '🏢', roles: ['owner'] },
+  { to: '/settings/profile',      labelKey: 'nav.profile',      icon: '👤', roles: null }, // all roles
 ]
 
 function NavItem({ to, label, icon, onClick }) {
@@ -40,13 +54,40 @@ function NavItem({ to, label, icon, onClick }) {
   )
 }
 
-// ─── Desktop sidebar (always visible ≥ lg) ───────────────────────────────────
+function useFilteredNav(userRole) {
+  return ALL_NAV.filter(item => {
+    if (!item.roles) return true          // visible to everyone
+    if (!userRole)   return false         // not yet loaded
+    return item.roles.includes(userRole)
+  })
+}
+
+// ── Read-only banner ─────────────────────────────────────────────────────────
+
+function RoleBanner({ userRole }) {
+  if (userRole === 'accountant') return (
+    <div className="mx-3 mb-2 rounded-xl bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-700">
+      📊 Read-only access to financial data
+    </div>
+  )
+  if (userRole === 'viewer') return (
+    <div className="mx-3 mb-2 rounded-xl bg-gray-50 border border-gray-200 px-3 py-2 text-xs text-gray-500">
+      👁 View-only access
+    </div>
+  )
+  return null
+}
+
+// ─── Desktop sidebar ──────────────────────────────────────────────────────────
 
 export function DesktopSidebar() {
   const navigate = useNavigate()
+  const { t } = useTranslation()
+  const { signOut, organization, userRole } = useAuth()
+  const navItems = useFilteredNav(userRole)
 
   async function handleLogout() {
-    await supabase.auth.signOut()
+    await signOut()
     navigate('/login')
   }
 
@@ -58,24 +99,39 @@ export function DesktopSidebar() {
           <div className="h-8 w-8 rounded-lg bg-amber-500 flex items-center justify-center text-white text-base shrink-0">
             🐔
           </div>
-          <span className="font-bold text-gray-800 text-sm leading-tight">Poultry<br />Manager</span>
+          <div className="min-w-0">
+            <span className="font-bold text-gray-800 text-sm leading-tight block truncate">
+              {organization?.name || 'Poultry Manager'}
+            </span>
+            <span className="text-xs text-gray-400 leading-tight block">Poultry Manager</span>
+          </div>
         </div>
       </div>
 
+      {/* Role banner */}
+      <div className="pt-3">
+        <RoleBanner userRole={userRole} />
+      </div>
+
       {/* Nav links */}
-      <nav className="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto">
-        {NAV.map(item => <NavItem key={item.to} {...item} />)}
+      <nav className="flex-1 px-3 pb-4 space-y-0.5 overflow-y-auto">
+        {navItems.map(item => (
+          <NavItem key={item.to} to={item.to} label={t(item.labelKey)} icon={item.icon} />
+        ))}
       </nav>
 
-      {/* Logout */}
-      <div className="px-3 py-4 border-t border-gray-100">
+      {/* Footer: Logout + Language switcher */}
+      <div className="px-3 py-4 border-t border-gray-100 space-y-2">
         <button
           onClick={handleLogout}
           className="flex items-center gap-3 w-full px-3 py-2.5 rounded-xl text-sm font-medium text-gray-500 hover:bg-red-50 hover:text-red-600 transition-all"
         >
           <span className="text-base w-5 text-center">🚪</span>
-          <span>Logout</span>
+          <span>{t('auth.logout')}</span>
         </button>
+        <div className="flex justify-center">
+          <LanguageSwitcher compact />
+        </div>
       </div>
     </aside>
   )
@@ -87,88 +143,73 @@ export function MobileHeader() {
   const [open, setOpen]   = useState(false)
   const navigate          = useNavigate()
   const location          = useLocation()
+  const { t } = useTranslation()
+  const { signOut, organization, userRole } = useAuth()
+  const navItems = useFilteredNav(userRole)
 
-  // Close drawer on route change
   useEffect(() => { setOpen(false) }, [location.pathname])
-
-  // Prevent body scroll when drawer is open
   useEffect(() => {
     document.body.style.overflow = open ? 'hidden' : ''
     return () => { document.body.style.overflow = '' }
   }, [open])
 
   async function handleLogout() {
-    await supabase.auth.signOut()
+    await signOut()
     navigate('/login')
   }
 
-  const currentPage = NAV.find(n => location.pathname.startsWith(n.to))?.label ?? 'Poultry Manager'
+  const currentPage = ALL_NAV.find(n => location.pathname.startsWith(n.to))?.labelKey ?? null
 
   return (
     <>
-      {/* Top bar */}
       <header className="lg:hidden sticky top-0 z-30 bg-white border-b border-gray-100 flex items-center justify-between px-4 py-3">
         <div className="flex items-center gap-2.5">
           <div className="h-7 w-7 rounded-lg bg-amber-500 flex items-center justify-center text-sm">🐔</div>
-          <span className="font-semibold text-gray-800 text-sm">{currentPage}</span>
+          <span className="font-semibold text-gray-800 text-sm">
+            {currentPage ? t(currentPage) : 'Poultry Manager'}
+          </span>
         </div>
-        <button
-          onClick={() => setOpen(true)}
-          className="p-2 rounded-lg hover:bg-gray-100 transition"
-          aria-label="Open menu"
-        >
-          {/* Hamburger icon */}
+        <button onClick={() => setOpen(true)} className="p-2 rounded-lg hover:bg-gray-100 transition" aria-label="Open menu">
           <svg className="h-5 w-5 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
           </svg>
         </button>
       </header>
 
-      {/* Backdrop */}
-      {open && (
-        <div
-          className="lg:hidden fixed inset-0 z-40 bg-black/40 transition-opacity"
-          onClick={() => setOpen(false)}
-        />
-      )}
+      {open && <div className="lg:hidden fixed inset-0 z-40 bg-black/40" onClick={() => setOpen(false)} />}
 
-      {/* Drawer */}
       <div className={`lg:hidden fixed top-0 left-0 z-50 h-full w-64 bg-white shadow-xl transform transition-transform duration-200 ease-in-out flex flex-col ${
         open ? 'translate-x-0' : '-translate-x-full'
       }`}>
-        {/* Drawer header */}
         <div className="px-4 py-4 border-b border-gray-100 flex items-center justify-between">
           <div className="flex items-center gap-2.5">
             <div className="h-8 w-8 rounded-lg bg-amber-500 flex items-center justify-center text-white text-base">🐔</div>
-            <span className="font-bold text-gray-800 text-sm">Poultry Manager</span>
+            <span className="font-bold text-gray-800 text-sm truncate max-w-[140px]">{organization?.name || 'Poultry Manager'}</span>
           </div>
-          <button
-            onClick={() => setOpen(false)}
-            className="p-1.5 rounded-lg hover:bg-gray-100 transition text-gray-400 hover:text-gray-600"
-            aria-label="Close menu"
-          >
+          <button onClick={() => setOpen(false)} className="p-1.5 rounded-lg hover:bg-gray-100 transition text-gray-400 hover:text-gray-600">
             <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
             </svg>
           </button>
         </div>
 
-        {/* Nav */}
+        <RoleBanner userRole={userRole} />
+
         <nav className="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto">
-          {NAV.map(item => (
-            <NavItem key={item.to} {...item} onClick={() => setOpen(false)} />
+          {navItems.map(item => (
+            <NavItem key={item.to} to={item.to} label={t(item.labelKey)} icon={item.icon} onClick={() => setOpen(false)} />
           ))}
         </nav>
 
-        {/* Logout */}
-        <div className="px-3 py-4 border-t border-gray-100">
-          <button
-            onClick={handleLogout}
-            className="flex items-center gap-3 w-full px-3 py-2.5 rounded-xl text-sm font-medium text-gray-500 hover:bg-red-50 hover:text-red-600 transition-all"
-          >
+        <div className="px-3 py-4 border-t border-gray-100 space-y-2">
+          <button onClick={handleLogout}
+            className="flex items-center gap-3 w-full px-3 py-2.5 rounded-xl text-sm font-medium text-gray-500 hover:bg-red-50 hover:text-red-600 transition-all">
             <span className="text-base w-5 text-center">🚪</span>
-            <span>Logout</span>
+            <span>{t('auth.logout')}</span>
           </button>
+          <div className="flex justify-center">
+            <LanguageSwitcher compact />
+          </div>
         </div>
       </div>
     </>

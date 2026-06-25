@@ -1,9 +1,14 @@
 import { useEffect, useState, useCallback } from 'react'
+import { Navigate } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import { supabase } from '../lib/supabaseClient'
+import { useAuth } from '../contexts/AuthContext'
 
 // ─── Confirm Modal ────────────────────────────────────────────────────────────
 
-function ConfirmModal({ title, message, onClose, onConfirm, destructive = true, confirmLabel = 'Confirm' }) {
+function ConfirmModal({ title, message, onClose, onConfirm, destructive = true, confirmLabel }) {
+  const { t } = useTranslation()
+  const label = confirmLabel || t('common.confirm')
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
       <div className="w-full max-w-sm bg-white rounded-2xl shadow-xl p-6">
@@ -14,7 +19,7 @@ function ConfirmModal({ title, message, onClose, onConfirm, destructive = true, 
             onClick={onClose}
             className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition"
           >
-            Cancel
+            {t('common.cancel')}
           </button>
           <button
             onClick={onConfirm}
@@ -23,7 +28,7 @@ function ConfirmModal({ title, message, onClose, onConfirm, destructive = true, 
             onMouseEnter={e => { e.currentTarget.style.backgroundColor = destructive ? '#dc2626' : '#d97706' }}
             onMouseLeave={e => { e.currentTarget.style.backgroundColor = destructive ? '#ef4444' : '#f59e0b' }}
           >
-            {confirmLabel}
+            {label}
           </button>
         </div>
       </div>
@@ -54,6 +59,8 @@ function Toggle({ checked, onChange }) {
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function CatalogSettings() {
+  const { t } = useTranslation()
+  const { organization, canEdit } = useAuth()
   const [itemTypes, setItemTypes] = useState([])
   const [selectedTypeId, setSelectedTypeId] = useState(null)
   const [items, setItems] = useState([])
@@ -85,11 +92,13 @@ export default function CatalogSettings() {
     const { data: types } = await supabase
       .from('item_types')
       .select('id, name, description, created_at')
+      .eq('organization_id', organization?.id)
       .order('name')
 
     const { data: countRows } = await supabase
       .from('items')
       .select('item_type_id')
+      .eq('organization_id', organization?.id)
 
     const counts = {}
     ;(countRows || []).forEach(r => {
@@ -118,6 +127,7 @@ export default function CatalogSettings() {
     const { data } = await supabase
       .from('items')
       .select('id, item_type_id, name, unit, description, is_active, kg_per_unit, created_at')
+      .eq('organization_id', organization?.id)
       .eq('item_type_id', typeId)
       .order('name')
     // Sort: active first, then inactive
@@ -135,6 +145,9 @@ export default function CatalogSettings() {
     if (selectedTypeId) loadItems(selectedTypeId)
     else setItems([])
   }, [selectedTypeId, loadItems])
+
+  // Guard — canEdit only (owner/manager), after all hooks
+  if (!canEdit) return <Navigate to="/dashboard" replace />
 
   // ── Type form helpers ─────────────────────────────────────────────────────
 
@@ -160,7 +173,7 @@ export default function CatalogSettings() {
     e.preventDefault()
     setTypeFormError('')
     if (!typeFormData.name.trim()) {
-      setTypeFormError('Type name is required.')
+      setTypeFormError(t('errors.required'))
       return
     }
     setSaving(true)
@@ -172,7 +185,7 @@ export default function CatalogSettings() {
     if (typeForm.mode === 'edit') {
       ;({ error } = await supabase.from('item_types').update(payload).eq('id', typeForm.id))
     } else {
-      ;({ error } = await supabase.from('item_types').insert(payload))
+      ;({ error } = await supabase.from('item_types').insert({ ...payload, organization_id: organization?.id }))
     }
     setSaving(false)
     if (error) {
@@ -191,9 +204,9 @@ export default function CatalogSettings() {
 
     if (count > 0) {
       setConfirmModal({
-        title: 'Delete Item Type',
+        title: t('catalog.editItemType'),
         message: `This type has ${count} item${count !== 1 ? 's' : ''}. Deleting it will deactivate all associated items. Existing procurement records will not be affected.`,
-        confirmLabel: 'Delete Anyway',
+        confirmLabel: t('common.delete'),
         destructive: true,
         onConfirm: async () => {
           setConfirmModal(null)
@@ -207,9 +220,9 @@ export default function CatalogSettings() {
       })
     } else {
       setConfirmModal({
-        title: 'Delete Item Type',
-        message: 'Delete this item type? This action cannot be undone.',
-        confirmLabel: 'Delete',
+        title: t('catalog.editItemType'),
+        message: t('common.noData'),
+        confirmLabel: t('common.delete'),
         destructive: true,
         onConfirm: async () => {
           setConfirmModal(null)
@@ -253,16 +266,16 @@ export default function CatalogSettings() {
     e.preventDefault()
     setItemFormError('')
     if (!itemFormData.name.trim()) {
-      setItemFormError('Item name is required.')
+      setItemFormError(t('errors.required'))
       return
     }
     if (!itemFormData.unit.trim()) {
-      setItemFormError('Unit is required.')
+      setItemFormError(t('errors.required'))
       return
     }
     const isFeed = selectedType?.name?.toLowerCase().includes('feed')
     if (isFeed && !itemFormData.kg_per_unit) {
-      setItemFormError('KG per unit is required for feed items.')
+      setItemFormError(t('errors.required'))
       return
     }
     setSaving(true)
@@ -277,7 +290,7 @@ export default function CatalogSettings() {
     if (itemForm.mode === 'edit') {
       ;({ error } = await supabase.from('items').update(payload).eq('id', itemForm.id))
     } else {
-      ;({ error } = await supabase.from('items').insert({ ...payload, item_type_id: selectedTypeId }))
+      ;({ error } = await supabase.from('items').insert({ ...payload, item_type_id: selectedTypeId, organization_id: organization?.id }))
     }
     setSaving(false)
     if (error) {
@@ -311,9 +324,9 @@ export default function CatalogSettings() {
 
     if (isUsed) {
       setConfirmModal({
-        title: 'Cannot Delete Item',
+        title: t('catalog.editItem'),
         message: 'This item has existing records (procurement or distributions). It will be deactivated instead of deleted. Continue?',
-        confirmLabel: 'Deactivate',
+        confirmLabel: t('team.deactivate'),
         destructive: false,
         onConfirm: async () => {
           setConfirmModal(null)
@@ -324,9 +337,9 @@ export default function CatalogSettings() {
       })
     } else {
       setConfirmModal({
-        title: 'Delete Item',
-        message: `Delete "${item.name}"? This action cannot be undone.`,
-        confirmLabel: 'Delete',
+        title: t('catalog.editItem'),
+        message: `${t('common.delete')} "${item.name}"?`,
+        confirmLabel: t('common.delete'),
         destructive: true,
         onConfirm: async () => {
           setConfirmModal(null)
@@ -351,7 +364,7 @@ export default function CatalogSettings() {
     <div>
       {/* Page header */}
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-800">Item Catalog</h1>
+        <h1 className="text-2xl font-bold text-gray-800">{t('catalog.title')}</h1>
         <p className="text-sm text-gray-500 mt-0.5">
           Manage item types and items for procurement &amp; distributions
         </p>
@@ -372,7 +385,7 @@ export default function CatalogSettings() {
             <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden flex flex-col">
               {/* Panel header */}
               <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
-                <h2 className="text-sm font-semibold text-gray-700">Item Types</h2>
+                <h2 className="text-sm font-semibold text-gray-700">{t('catalog.itemTypes')}</h2>
                 <button
                   onClick={openAddType}
                   disabled={typeForm !== null}
@@ -381,7 +394,7 @@ export default function CatalogSettings() {
                   onMouseEnter={e => { if (!e.currentTarget.disabled) e.currentTarget.style.backgroundColor = '#d97706' }}
                   onMouseLeave={e => { e.currentTarget.style.backgroundColor = '#f59e0b' }}
                 >
-                  <span className="text-sm leading-none">+</span> Add Type
+                  <span className="text-sm leading-none">+</span> {t('catalog.addItemType')}
                 </button>
               </div>
 
@@ -404,8 +417,8 @@ export default function CatalogSettings() {
               <div className="flex-1 overflow-y-auto divide-y divide-gray-50">
                 {itemTypes.length === 0 && typeForm?.mode !== 'add' ? (
                   <div className="flex flex-col items-center justify-center py-12 text-gray-400 px-4 text-center">
-                    <p className="text-sm font-medium">No item types yet.</p>
-                    <p className="text-xs mt-1">Add one to get started.</p>
+                    <p className="text-sm font-medium">{t('catalog.noItemTypes')}</p>
+                    <p className="text-xs mt-1">{t('common.add')}.</p>
                   </div>
                 ) : (
                   itemTypes.map(type => {
@@ -485,14 +498,14 @@ export default function CatalogSettings() {
             <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden flex flex-col">
               {!selectedType ? (
                 <div className="flex flex-col items-center justify-center py-24 text-gray-400">
-                  <p className="text-sm">← Select a type to view items</p>
+                  <p className="text-sm">← {t('catalog.itemTypes')}</p>
                 </div>
               ) : (
                 <>
                   {/* Panel header */}
                   <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100">
                     <h2 className="text-sm font-semibold text-gray-700">
-                      Items under{' '}
+                      {t('catalog.items')} —{' '}
                       <span className="text-amber-600">{selectedType.name}</span>
                     </h2>
                     <button
@@ -503,7 +516,7 @@ export default function CatalogSettings() {
                       onMouseEnter={e => { if (!e.currentTarget.disabled) e.currentTarget.style.backgroundColor = '#047857' }}
                       onMouseLeave={e => { e.currentTarget.style.backgroundColor = '#059669' }}
                     >
-                      <span className="text-sm leading-none">+</span> Add Item
+                      <span className="text-sm leading-none">+</span> {t('catalog.addItem')}
                     </button>
                   </div>
 
@@ -544,8 +557,8 @@ export default function CatalogSettings() {
                     </div>
                   ) : items.length === 0 && itemForm?.mode !== 'add' ? (
                     <div className="flex flex-col items-center justify-center py-16 text-gray-400">
-                      <p className="text-sm font-medium">No items yet.</p>
-                      <p className="text-xs mt-1">Click "Add Item" to get started.</p>
+                      <p className="text-sm font-medium">{t('catalog.noItems')}</p>
+                      <p className="text-xs mt-1">{t('catalog.addItem')}</p>
                     </div>
                   ) : (
                     <div className="flex-1 overflow-y-auto divide-y divide-gray-50">
@@ -572,7 +585,7 @@ export default function CatalogSettings() {
                         <>
                           {activeItems.length > 0 && (
                             <div className="px-5 py-2 bg-gray-50 border-t border-gray-100">
-                              <p className="text-xs font-medium text-gray-400 uppercase tracking-wider">Inactive</p>
+                              <p className="text-xs font-medium text-gray-400 uppercase tracking-wider">{t('common.inactive')}</p>
                             </div>
                           )}
                           {inactiveItems.map(item => (
@@ -621,20 +634,21 @@ export default function CatalogSettings() {
 // ─── TypeForm (reused for add / edit) ────────────────────────────────────────
 
 function TypeForm({ formData, setFormData, error, saving, onSave, onCancel, isEdit }) {
+  const { t } = useTranslation()
   return (
     <form onSubmit={onSave} className="space-y-2">
       <input
         autoFocus
         required
         type="text"
-        placeholder="Type name *"
+        placeholder={t('catalog.itemTypes') + ' *'}
         value={formData.name}
         onChange={e => setFormData(prev => ({ ...prev, name: e.target.value }))}
         className="w-full rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
       />
       <input
         type="text"
-        placeholder="Optional description"
+        placeholder={t('common.description')}
         value={formData.description}
         onChange={e => setFormData(prev => ({ ...prev, description: e.target.value }))}
         className="w-full rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
@@ -649,14 +663,14 @@ function TypeForm({ formData, setFormData, error, saving, onSave, onCancel, isEd
           className="flex-1 rounded-lg py-1.5 text-xs font-semibold text-white transition disabled:opacity-60"
           style={{ backgroundColor: '#f59e0b' }}
         >
-          {saving ? 'Saving…' : isEdit ? 'Update' : 'Save'}
+          {saving ? t('common.loading') : isEdit ? t('catalog.editItemType') : t('common.save')}
         </button>
         <button
           type="button"
           onClick={onCancel}
           className="flex-1 rounded-lg border border-gray-300 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 transition"
         >
-          Cancel
+          {t('common.cancel')}
         </button>
       </div>
     </form>
@@ -679,6 +693,7 @@ function ItemRow({
   onCancel,
   isFeedType,
 }) {
+  const { t } = useTranslation()
   const isEditing = itemForm?.mode === 'edit' && itemForm.id === item.id
 
   if (isEditing) {
@@ -735,7 +750,7 @@ function ItemRow({
               className="rounded-full px-2 py-0.5 text-xs font-medium"
               style={{ backgroundColor: '#fee2e2', color: '#dc2626' }}
             >
-              Inactive
+              {t('common.inactive')}
             </span>
           )}
         </div>
@@ -747,7 +762,7 @@ function ItemRow({
       <div className="flex items-center gap-2 shrink-0 mt-0.5">
         {/* Active toggle */}
         <div className="flex items-center gap-1.5">
-          <span className="text-xs text-gray-500">{item.is_active ? 'Active' : 'Inactive'}</span>
+          <span className="text-xs text-gray-500">{item.is_active ? t('common.active') : t('common.inactive')}</span>
           <Toggle checked={item.is_active} onChange={() => onToggleActive(item)} />
         </div>
         {/* Edit */}
@@ -776,6 +791,7 @@ function ItemRow({
 const UNIT_SUGGESTIONS = ['Bags', 'Vials', 'Bottles', 'Chicks', 'KG', 'Litres', 'Tablets']
 
 function ItemForm({ formData, setFormData, error, saving, onSave, onCancel, isEdit, isFeedType }) {
+  const { t } = useTranslation()
   return (
     <form onSubmit={onSave} className="space-y-2">
       <div className="grid grid-cols-2 gap-2">
@@ -783,7 +799,7 @@ function ItemForm({ formData, setFormData, error, saving, onSave, onCancel, isEd
           autoFocus
           required
           type="text"
-          placeholder="Item name *"
+          placeholder={t('catalog.items') + ' *'}
           value={formData.name}
           onChange={e => setFormData(prev => ({ ...prev, name: e.target.value }))}
           className="col-span-2 w-full rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400"
@@ -792,7 +808,7 @@ function ItemForm({ formData, setFormData, error, saving, onSave, onCancel, isEd
           <input
             required
             type="text"
-            placeholder="Unit *"
+            placeholder={t('catalog.unit') + ' *'}
             list="unit-suggestions"
             value={formData.unit}
             onChange={e => setFormData(prev => ({ ...prev, unit: e.target.value }))}
@@ -804,7 +820,7 @@ function ItemForm({ formData, setFormData, error, saving, onSave, onCancel, isEd
         </div>
         <input
           type="text"
-          placeholder="Description (optional)"
+          placeholder={t('common.description')}
           value={formData.description}
           onChange={e => setFormData(prev => ({ ...prev, description: e.target.value }))}
           className="col-span-2 sm:col-span-1 w-full rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400"
@@ -832,7 +848,7 @@ function ItemForm({ formData, setFormData, error, saving, onSave, onCancel, isEd
           checked={formData.is_active}
           onChange={val => setFormData(prev => ({ ...prev, is_active: val }))}
         />
-        <span className="text-sm text-gray-600">{formData.is_active ? 'Active' : 'Inactive'}</span>
+        <span className="text-sm text-gray-600">{formData.is_active ? t('common.active') : t('common.inactive')}</span>
       </div>
 
       {error && (
@@ -846,14 +862,14 @@ function ItemForm({ formData, setFormData, error, saving, onSave, onCancel, isEd
           className="flex-1 rounded-lg py-1.5 text-xs font-semibold text-white transition disabled:opacity-60"
           style={{ backgroundColor: '#059669' }}
         >
-          {saving ? 'Saving…' : isEdit ? 'Update' : 'Save'}
+          {saving ? t('common.loading') : isEdit ? t('catalog.editItem') : t('common.save')}
         </button>
         <button
           type="button"
           onClick={onCancel}
           className="flex-1 rounded-lg border border-gray-300 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 transition"
         >
-          Cancel
+          {t('common.cancel')}
         </button>
       </div>
     </form>

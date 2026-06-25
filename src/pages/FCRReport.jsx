@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
+import { useAuth } from '../contexts/AuthContext'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -39,6 +40,7 @@ function FCRBar({ fcr, max }) {
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function FCRReport() {
+  const { organization } = useAuth()
   const [batches,  setBatches]  = useState([])
   const [farms,    setFarms]    = useState([])
   const [loading,  setLoading]  = useState(true)
@@ -54,17 +56,18 @@ export default function FCRReport() {
         supabase
           .from('batches')
           .select('id, farm_id, start_date, sold_at, chick_count, status, fcr, fcr_rating, total_feed_kg, total_sale_kg, farms(name)')
+          .eq('organization_id', organization?.id)
           .not('fcr', 'is', null)
           .in('status', ['sold', 'closed'])
           .order('sold_at', { ascending: false }),
-        supabase.from('farms').select('id, name').order('name'),
+        supabase.from('farms').select('id, name').eq('organization_id', organization?.id).order('name'),
       ])
       setBatches(bData || [])
       setFarms(fData || [])
       setLoading(false)
     }
     load()
-  }, [])
+  }, [organization])
 
   // ── Filter + sort ─────────────────────────────────────────────────────────
 

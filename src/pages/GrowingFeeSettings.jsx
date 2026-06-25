@@ -1,5 +1,8 @@
 import { useEffect, useState, useCallback } from 'react'
+import { Navigate } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import { supabase } from '../lib/supabaseClient'
+import { useAuth } from '../contexts/AuthContext'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -38,6 +41,7 @@ function tierRowBg(rate, maxRate) {
 // ─── Confirm Modal ────────────────────────────────────────────────────────────
 
 function ConfirmModal({ title, message, onClose, onConfirm, destructive = true, confirmLabel = 'Confirm' }) {
+  const { t } = useTranslation()
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
       <div className="w-full max-w-sm bg-white rounded-2xl shadow-xl p-6">
@@ -48,7 +52,7 @@ function ConfirmModal({ title, message, onClose, onConfirm, destructive = true, 
             onClick={onClose}
             className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition"
           >
-            Cancel
+            {t('common.cancel')}
           </button>
           <button
             onClick={onConfirm}
@@ -77,6 +81,7 @@ const EMPTY_FORM = {
 }
 
 function TierFormModal({ initial, onSave, onClose, saving, error }) {
+  const { t } = useTranslation()
   const [form, setForm] = useState(() => {
     if (!initial) return EMPTY_FORM
     return {
@@ -139,12 +144,12 @@ function TierFormModal({ initial, onSave, onClose, saving, error }) {
         {/* Header */}
         <div className="flex items-center justify-between mb-5">
           <h2 className="text-lg font-semibold text-gray-800">
-            {initial ? 'Edit Tier' : 'Add Tier'}
+            {initial ? 'Edit Tier' : t('growingFees.config.addTier')}
           </h2>
           <button
             onClick={onClose}
             className="text-gray-400 hover:text-gray-600 transition text-xl leading-none"
-            aria-label="Close"
+            aria-label={t('common.close')}
           >
             &times;
           </button>
@@ -155,7 +160,7 @@ function TierFormModal({ initial, onSave, onClose, saving, error }) {
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">
-                FCR From <span className="text-red-500">*</span>
+                {t('growingFees.config.fcrFrom')} <span className="text-red-500">*</span>
               </label>
               <input
                 autoFocus
@@ -169,7 +174,7 @@ function TierFormModal({ initial, onSave, onClose, saving, error }) {
               />
             </div>
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">FCR To</label>
+              <label className="block text-xs font-medium text-gray-600 mb-1">{t('growingFees.config.fcrTo')}</label>
               <input
                 type="number"
                 step="0.01"
@@ -192,14 +197,14 @@ function TierFormModal({ initial, onSave, onClose, saving, error }) {
               className="rounded border-gray-300 text-amber-500 focus:ring-amber-400 h-4 w-4"
             />
             <span className="text-sm text-gray-600">
-              No upper limit — last tier <span className="text-gray-400 text-xs">(FCR To becomes open-ended)</span>
+              {t('growingFees.config.noUpperLimit')} <span className="text-gray-400 text-xs">(FCR To becomes open-ended)</span>
             </span>
           </label>
 
           {/* Rate per kg */}
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">
-              Rate per kg (₹) <span className="text-red-500">*</span>
+              {t('growingFees.config.ratePerKg')} (₹) <span className="text-red-500">*</span>
             </label>
             <div className="relative">
               <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-gray-500 font-medium">₹</span>
@@ -218,7 +223,7 @@ function TierFormModal({ initial, onSave, onClose, saving, error }) {
           {/* Description */}
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">
-              Description <span className="text-gray-400">(optional)</span>
+              {t('common.description')} <span className="text-gray-400">({t('common.optional')})</span>
             </label>
             <input
               type="text"
@@ -237,7 +242,7 @@ function TierFormModal({ initial, onSave, onClose, saving, error }) {
               onChange={e => set('is_active', e.target.checked)}
               className="rounded border-gray-300 text-amber-500 focus:ring-amber-400 h-4 w-4"
             />
-            <span className="text-sm text-gray-600">Active</span>
+            <span className="text-sm text-gray-600">{t('common.active')}</span>
           </label>
 
           {/* Error */}
@@ -254,7 +259,7 @@ function TierFormModal({ initial, onSave, onClose, saving, error }) {
               onClick={onClose}
               className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition"
             >
-              Cancel
+              {t('common.cancel')}
             </button>
             <button
               type="submit"
@@ -264,7 +269,7 @@ function TierFormModal({ initial, onSave, onClose, saving, error }) {
               onMouseEnter={e => { if (!e.currentTarget.disabled) e.currentTarget.style.backgroundColor = '#d97706' }}
               onMouseLeave={e => { e.currentTarget.style.backgroundColor = '#f59e0b' }}
             >
-              {saving ? 'Saving…' : initial ? 'Update Tier' : 'Add Tier'}
+              {saving ? t('common.loading') : initial ? 'Update Tier' : t('growingFees.config.addTier')}
             </button>
           </div>
         </form>
@@ -358,6 +363,8 @@ function TierLadder({ tiers }) {
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function GrowingFeeSettings() {
+  const { organization, userRole } = useAuth()
+  const { t } = useTranslation()
   const [tiers, setTiers] = useState([])
   const [loading, setLoading] = useState(true)
   const [pageError, setPageError] = useState('')
@@ -378,6 +385,7 @@ export default function GrowingFeeSettings() {
     const { data, error } = await supabase
       .from('growing_fee_config')
       .select('id, fcr_from, fcr_to, rate_per_kg, description, is_active, created_at')
+      .eq('organization_id', organization?.id)
       .order('fcr_from', { ascending: true })
     if (error) {
       setPageError(error.message)
@@ -388,6 +396,9 @@ export default function GrowingFeeSettings() {
   }, [])
 
   useEffect(() => { loadTiers() }, [loadTiers])
+
+  // Guard — owner only, after all hooks
+  if (userRole !== 'owner') return <Navigate to="/dashboard" replace />
 
   // ── Open / close modal ────────────────────────────────────────────────────
 
@@ -420,7 +431,7 @@ export default function GrowingFeeSettings() {
         .update(payload)
         .eq('id', modal.tier.id))
     } else {
-      ;({ error } = await supabase.from('growing_fee_config').insert(payload))
+      ;({ error } = await supabase.from('growing_fee_config').insert({ ...payload, organization_id: organization?.id }))
     }
 
     setSaving(false)
@@ -442,6 +453,7 @@ export default function GrowingFeeSettings() {
     let usageQuery = supabase
       .from('growing_fee_ledger')
       .select('id', { count: 'exact', head: true })
+      .eq('organization_id', organization?.id)
       .eq('rate_per_kg', tier.rate_per_kg)
       .eq('fcr_from', tier.fcr_from)
 
@@ -484,7 +496,7 @@ export default function GrowingFeeSettings() {
     setConfirmModal({
       title: 'Delete Tier',
       message: `Delete the tier FCR ${fcrRangeLabel(tier)} at ₹${fmt(tier.rate_per_kg)}/kg? This action cannot be undone.`,
-      confirmLabel: 'Delete',
+      confirmLabel: t('common.delete'),
       destructive: true,
       onConfirm: async () => {
         setConfirmModal(null)
@@ -522,9 +534,9 @@ export default function GrowingFeeSettings() {
       {/* Page header */}
       <div className="mb-6 flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-gray-800">Growing Fee Configuration</h1>
+          <h1 className="text-2xl font-bold text-gray-800">{t('growingFees.config.title')}</h1>
           <p className="text-sm text-gray-500 mt-0.5 max-w-xl">
-            Set the rate paid to farm owners per kg of chicken sold, based on FCR performance.
+            {t('growingFees.config.subtitle')}
           </p>
         </div>
         <button
@@ -534,7 +546,7 @@ export default function GrowingFeeSettings() {
           onMouseEnter={e => { e.currentTarget.style.backgroundColor = '#d97706' }}
           onMouseLeave={e => { e.currentTarget.style.backgroundColor = '#f59e0b' }}
         >
-          <span className="text-base leading-none">+</span> Add Tier
+          <span className="text-base leading-none">+</span> {t('growingFees.config.addTier')}
         </button>
       </div>
 
@@ -576,7 +588,7 @@ export default function GrowingFeeSettings() {
               <div className="flex flex-col items-center justify-center py-20 text-gray-400 text-center px-6">
                 <div className="text-4xl mb-3">📋</div>
                 <p className="text-sm font-medium text-gray-600">No tiers configured yet.</p>
-                <p className="text-xs mt-1">Click "Add Tier" to create your first growing fee tier.</p>
+                <p className="text-xs mt-1">Click "{t('growingFees.config.addTier')}" to create your first growing fee tier.</p>
               </div>
             ) : (
               <div className="overflow-x-auto">
@@ -584,19 +596,19 @@ export default function GrowingFeeSettings() {
                   <thead>
                     <tr className="bg-gray-50/70">
                       <th className="px-5 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">
-                        FCR Range
+                        {t('growingFees.config.fcrRange')}
                       </th>
                       <th className="px-5 py-2.5 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">
-                        Rate / kg
+                        {t('growingFees.config.ratePerKg')}
                       </th>
                       <th className="px-5 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                        Description
+                        {t('common.description')}
                       </th>
                       <th className="px-5 py-2.5 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                        Active
+                        {t('common.active')}
                       </th>
                       <th className="px-5 py-2.5 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                        Actions
+                        {t('common.actions')}
                       </th>
                     </tr>
                   </thead>
@@ -674,6 +686,7 @@ export default function GrowingFeeSettings() {
 // ─── TierRow ──────────────────────────────────────────────────────────────────
 
 function TierRow({ tier, onEdit, onDelete, onToggleActive }) {
+  const { t } = useTranslation()
   const isLastTier = tier.fcr_to == null
 
   return (
@@ -726,7 +739,7 @@ function TierRow({ tier, onEdit, onDelete, onToggleActive }) {
             className="inline-block w-1.5 h-1.5 rounded-full"
             style={{ backgroundColor: tier.is_active ? '#16a34a' : '#9ca3af' }}
           />
-          {tier.is_active ? 'Active' : 'Inactive'}
+          {tier.is_active ? t('common.active') : t('common.inactive')}
         </button>
       </td>
 
@@ -736,16 +749,16 @@ function TierRow({ tier, onEdit, onDelete, onToggleActive }) {
           <button
             onClick={e => onEdit(tier, e)}
             className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-medium text-amber-700 hover:bg-amber-100 transition"
-            title="Edit tier"
+            title={t('common.edit')}
           >
-            ✏️ Edit
+            ✏️ {t('common.edit')}
           </button>
           <button
             onClick={e => onDelete(tier, e)}
             className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-medium text-red-600 hover:bg-red-50 transition"
-            title="Delete tier"
+            title={t('common.delete')}
           >
-            🗑️ Delete
+            🗑️ {t('common.delete')}
           </button>
         </div>
       </td>

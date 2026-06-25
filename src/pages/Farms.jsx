@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import { supabase } from '../lib/supabaseClient'
+import { useAuth } from '../contexts/AuthContext'
+import { formatDate } from '../utils/dateFormat'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -27,6 +30,8 @@ function harvestColor(days) {
 // ─── Give Advance Modal ───────────────────────────────────────────────────────
 
 function GiveAdvanceModal({ farm, onClose, onSaved }) {
+  const { organization } = useAuth()
+  const { t, i18n } = useTranslation()
   const today = new Date().toISOString().slice(0, 10)
   const [form, setForm] = useState({
     batch_id:         '',
@@ -75,6 +80,7 @@ function GiveAdvanceModal({ farm, onClose, onSaved }) {
     setSaving(true)
 
     const { data: adv, error: advErr } = await supabase.from('growing_fee_advances').insert({
+      organization_id:  organization?.id,
       farm_id:          farm.id,
       batch_id:         form.batch_id,
       amount:           amt,
@@ -94,9 +100,10 @@ function GiveAdvanceModal({ farm, onClose, onSaved }) {
 
     const selectedBatch = activeBatches.find(b => b.id === form.batch_id)
     const batchDateStr = selectedBatch
-      ? new Date(selectedBatch.start_date + 'T12:00:00').toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
+      ? formatDate(selectedBatch.start_date + 'T12:00:00', i18n.language)
       : ''
     await supabase.from('transactions').insert({
+      organization_id:  organization?.id,
       account_id:       form.account_id,
       transaction_type: 'out',
       category:         'growing_fee_advance',
@@ -130,17 +137,17 @@ function GiveAdvanceModal({ farm, onClose, onSaved }) {
           </div>
         ) : activeBatches.length === 0 ? (
           <div className="rounded-xl bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-800 mb-4">
-            No active batch for this farm. Advances can only be given during an active batch.
+            {t('distributions.noActiveBatch')}. Advances can only be given during an active batch.
           </div>
         ) : (
           <form onSubmit={handleSubmit} className="space-y-4">
             {/* Batch */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Batch *</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">{t('sales.batch')} *</label>
               {activeBatches.length === 1 ? (
                 <div className="rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-800 font-medium">
-                  Batch {new Date(activeBatches[0].start_date + 'T12:00:00').toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
-                  {' '}— Day {Math.floor((Date.now() - new Date(activeBatches[0].start_date + 'T00:00:00')) / 86400000)}
+                  {t('sales.batch')} {formatDate(activeBatches[0].start_date + 'T12:00:00', i18n.language)}
+                  {' '}— {t('batches.dayCount', { day: Math.floor((Date.now() - new Date(activeBatches[0].start_date + 'T00:00:00')) / 86400000) })}
                   {' '}— {Number(activeBatches[0].chick_count).toLocaleString('en-IN')} chicks
                 </div>
               ) : (
@@ -148,8 +155,8 @@ function GiveAdvanceModal({ farm, onClose, onSaved }) {
                   className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-green-400">
                   {activeBatches.map(b => {
                     const day = Math.floor((Date.now() - new Date(b.start_date + 'T00:00:00')) / 86400000)
-                    const sd = new Date(b.start_date + 'T12:00:00').toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
-                    return <option key={b.id} value={b.id}>Batch {sd} — Day {day} — {Number(b.chick_count).toLocaleString('en-IN')} chicks</option>
+                    const sd = formatDate(b.start_date + 'T12:00:00', i18n.language)
+                    return <option key={b.id} value={b.id}>{t('sales.batch')} {sd} — {t('batches.dayCount', { day })} — {Number(b.chick_count).toLocaleString('en-IN')} chicks</option>
                   })}
                 </select>
               )}
@@ -210,7 +217,7 @@ function GiveAdvanceModal({ farm, onClose, onSaved }) {
 
             {/* Notes */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Notes <span className="text-gray-400 font-normal">(optional)</span></label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">{t('common.notes')} <span className="text-gray-400 font-normal">(optional)</span></label>
               <textarea rows={2} value={form.notes} onChange={set('notes')}
                 className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-green-400" />
             </div>
@@ -219,10 +226,10 @@ function GiveAdvanceModal({ farm, onClose, onSaved }) {
 
             <div className="flex gap-3 pt-1">
               <button type="button" onClick={onClose}
-                className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition">Cancel</button>
+                className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition">{t('common.cancel')}</button>
               <button type="submit" disabled={saving}
                 className="flex-1 rounded-lg bg-green-600 hover:bg-green-700 disabled:opacity-60 px-4 py-2 text-sm font-semibold text-white transition">
-                {saving ? 'Saving…' : 'Record Advance'}
+                {saving ? t('common.loading') : 'Record Advance'}
               </button>
             </div>
           </form>
@@ -231,7 +238,7 @@ function GiveAdvanceModal({ farm, onClose, onSaved }) {
         {activeBatches.length === 0 && !loadingBatches && (
           <button onClick={onClose}
             className="mt-2 w-full rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition">
-            Close
+            {t('common.close')}
           </button>
         )}
       </div>
@@ -242,6 +249,8 @@ function GiveAdvanceModal({ farm, onClose, onSaved }) {
 // ─── Farm Create / Edit Modal ─────────────────────────────────────────────────
 
 function FarmModal({ farm, onClose, onSaved }) {
+  const { organization } = useAuth()
+  const { t } = useTranslation()
   const isEdit = Boolean(farm)
   const [form, setForm] = useState({
     name:         farm?.name         ?? '',
@@ -269,8 +278,8 @@ function FarmModal({ farm, onClose, onSaved }) {
     }
 
     const { error } = isEdit
-      ? await supabase.from('farms').update(payload).eq('id', farm.id)
-      : await supabase.from('farms').insert(payload)
+      ? await supabase.from('farms').update(payload).eq('id', farm.id).eq('organization_id', organization?.id)
+      : await supabase.from('farms').insert({ ...payload, organization_id: organization?.id })
 
     if (error) { setError(error.message); setSaving(false) }
     else onSaved()
@@ -280,31 +289,31 @@ function FarmModal({ farm, onClose, onSaved }) {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
       <div className="w-full max-w-md bg-white rounded-2xl shadow-xl p-6">
         <div className="flex items-center justify-between mb-5">
-          <h2 className="text-lg font-semibold text-gray-800">{isEdit ? 'Edit Farm' : 'New Farm'}</h2>
+          <h2 className="text-lg font-semibold text-gray-800">{isEdit ? t('farms.editFarm') : t('farms.addFarm')}</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Farm Name *</label>
-            <input required value={form.name} onChange={set('name')} placeholder="e.g. Green Valley Farm"
+            <label className="block text-sm font-medium text-gray-700 mb-1">{t('farms.farmName')} *</label>
+            <input required value={form.name} onChange={set('name')} placeholder={t('farms.farmNamePlaceholder')}
               className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400" />
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Location</label>
-            <input value={form.location} onChange={set('location')} placeholder="e.g. Coimbatore, Tamil Nadu"
+            <label className="block text-sm font-medium text-gray-700 mb-1">{t('farms.location')}</label>
+            <input value={form.location} onChange={set('location')} placeholder={t('farms.locationPlaceholder')}
               className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400" />
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Capacity (birds) *</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">{t('farms.capacityBirds')} *</label>
             <input required type="number" min="1" value={form.capacity} onChange={set('capacity')} placeholder="e.g. 5000"
               className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400" />
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Phone Number</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">{t('farms.phoneNumber')}</label>
             <input value={form.phone_number} onChange={set('phone_number')} placeholder="e.g. 9876543210"
               className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400" />
           </div>
@@ -316,11 +325,11 @@ function FarmModal({ farm, onClose, onSaved }) {
           <div className="flex gap-3 pt-1">
             <button type="button" onClick={onClose}
               className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition">
-              Cancel
+              {t('common.cancel')}
             </button>
             <button type="submit" disabled={saving}
               className="flex-1 rounded-lg bg-amber-500 hover:bg-amber-600 disabled:opacity-60 px-4 py-2 text-sm font-semibold text-white transition">
-              {saving ? 'Saving…' : isEdit ? 'Save Changes' : 'Create Farm'}
+              {saving ? t('common.loading') : isEdit ? t('common.save') : t('farms.addFarm')}
             </button>
           </div>
         </form>
@@ -332,12 +341,14 @@ function FarmModal({ farm, onClose, onSaved }) {
 // ─── Delete confirmation modal ────────────────────────────────────────────────
 
 function DeleteModal({ farm, onClose, onDeleted }) {
+  const { organization } = useAuth()
+  const { t } = useTranslation()
   const [deleting, setDeleting] = useState(false)
   const [error,    setError]    = useState('')
 
   async function handleDelete() {
     setDeleting(true)
-    const { error } = await supabase.from('farms').delete().eq('id', farm.id)
+    const { error } = await supabase.from('farms').delete().eq('id', farm.id).eq('organization_id', organization?.id)
     if (error) { setError(error.message); setDeleting(false) }
     else onDeleted()
   }
@@ -345,9 +356,9 @@ function DeleteModal({ farm, onClose, onDeleted }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
       <div className="w-full max-w-sm bg-white rounded-2xl shadow-xl p-6">
-        <h2 className="text-lg font-semibold text-gray-800 mb-2">Delete Farm</h2>
+        <h2 className="text-lg font-semibold text-gray-800 mb-2">{t('farms.deleteFarm')}</h2>
         <p className="text-sm text-gray-600 mb-1">
-          Are you sure you want to delete <span className="font-semibold">{farm.name}</span>?
+          {t('farms.deleteConfirm')} <span className="font-semibold">{farm.name}</span>?
         </p>
         <p className="text-xs text-red-500 mb-5">This will fail if the farm has existing batches.</p>
 
@@ -358,11 +369,11 @@ function DeleteModal({ farm, onClose, onDeleted }) {
         <div className="flex gap-3">
           <button onClick={onClose}
             className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition">
-            Cancel
+            {t('common.cancel')}
           </button>
           <button onClick={handleDelete} disabled={deleting}
             className="flex-1 rounded-lg bg-red-500 hover:bg-red-600 disabled:opacity-60 px-4 py-2 text-sm font-semibold text-white transition">
-            {deleting ? 'Deleting…' : 'Delete'}
+            {deleting ? t('common.loading') : t('common.delete')}
           </button>
         </div>
       </div>
@@ -372,7 +383,8 @@ function DeleteModal({ farm, onClose, onDeleted }) {
 
 // ─── Farm Card ────────────────────────────────────────────────────────────────
 
-function FarmCard({ farm, batchInfo, onEdit, onDelete, onAdvance, onClick }) {
+function FarmCard({ farm, batchInfo, onEdit, onDelete, onAdvance, onClick, canEdit, canDelete }) {
+  const { t } = useTranslation()
   const { activeBatchCount = 0, liveChicks = 0, nextHarvestDays = null, totalBatches = 0 } = batchInfo || {}
   const hasActive = activeBatchCount > 0
   const capacity  = Number(farm.capacity || 0)
@@ -400,7 +412,7 @@ function FarmCard({ farm, batchInfo, onEdit, onDelete, onAdvance, onClick }) {
             </span>
           ) : (
             <span className="rounded-full bg-red-100 px-2.5 py-0.5 text-xs font-semibold text-red-600">
-              No active batches
+              {t('farms.noActiveBatches')}
             </span>
           )}
         </div>
@@ -426,7 +438,7 @@ function FarmCard({ farm, batchInfo, onEdit, onDelete, onAdvance, onClick }) {
             <div style={{ width: `${pct}%`, height: 4, backgroundColor: fillColor, borderRadius: 9999 }} />
           </div>
           <span className="text-xs font-semibold shrink-0" style={{ color: fillColor }}>
-            {overCap ? '⚠️ ' : ''}{capacity > 0 ? `${Math.round(pct)}%` : '—'}
+            {overCap ? '⚠️ ' : ''}{capacity > 0 ? t('farms.capacityUsed', { percent: Math.round(pct) }) : '—'}
           </span>
         </div>
 
@@ -437,7 +449,7 @@ function FarmCard({ farm, batchInfo, onEdit, onDelete, onAdvance, onClick }) {
             <span className="font-semibold" style={{ color: harvestColor(nextHarvestDays) }}>
               {nextHarvestDays < 0
                 ? `${Math.abs(nextHarvestDays)}d overdue`
-                : `Next harvest in ${nextHarvestDays}d`}
+                : t('farms.nextHarvest', { days: nextHarvestDays })}
             </span>
           )}
         </div>
@@ -445,18 +457,22 @@ function FarmCard({ farm, batchInfo, onEdit, onDelete, onAdvance, onClick }) {
 
       {/* Right: action buttons */}
       <div className="flex gap-1.5 shrink-0" onClick={e => e.stopPropagation()}>
-        <button
-          onClick={onEdit}
-          className="rounded-lg border border-gray-300 bg-white px-2.5 py-1 text-xs font-semibold text-gray-600 hover:bg-gray-50 transition"
-        >
-          Edit
-        </button>
-        <button
-          onClick={onDelete}
-          className="rounded-lg border border-red-200 bg-white px-2.5 py-1 text-xs font-semibold text-red-500 hover:bg-red-50 transition"
-        >
-          Delete
-        </button>
+        {canEdit && (
+          <button
+            onClick={onEdit}
+            className="rounded-lg border border-gray-300 bg-white px-2.5 py-1 text-xs font-semibold text-gray-600 hover:bg-gray-50 transition"
+          >
+            {t('common.edit')}
+          </button>
+        )}
+        {canDelete && (
+          <button
+            onClick={onDelete}
+            className="rounded-lg border border-red-200 bg-white px-2.5 py-1 text-xs font-semibold text-red-500 hover:bg-red-50 transition"
+          >
+            {t('common.delete')}
+          </button>
+        )}
       </div>
     </div>
   )
@@ -466,6 +482,8 @@ function FarmCard({ farm, batchInfo, onEdit, onDelete, onAdvance, onClick }) {
 
 export default function Farms() {
   const navigate = useNavigate()
+  const { organization, canEdit, canDelete } = useAuth()
+  const { t } = useTranslation()
 
   const [farms,        setFarms]        = useState([])
   const [farmBatchMap, setFarmBatchMap] = useState({}) // farm_id → { activeBatchCount, liveChicks, nextHarvestDays, totalBatches }
@@ -483,8 +501,8 @@ export default function Farms() {
   async function fetchData() {
     setLoading(true)
     const [{ data: farmsData }, { data: batchData }] = await Promise.all([
-      supabase.from('farms').select('*').order('name'),
-      supabase.from('batches').select('farm_id, chick_count, mortality_count, start_date, status'),
+      supabase.from('farms').select('*').eq('organization_id', organization?.id).order('name'),
+      supabase.from('batches').select('farm_id, chick_count, mortality_count, start_date, status').eq('organization_id', organization?.id),
     ])
 
     setFarms(farmsData || [])
@@ -540,29 +558,35 @@ export default function Farms() {
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-bold text-gray-800">Farms</h1>
+          <h1 className="text-2xl font-bold text-gray-800">{t('farms.title')}</h1>
           <p className="text-sm text-gray-500 mt-0.5">Manage your farm locations</p>
         </div>
-        <button
-          onClick={() => { setEditingFarm(null); setModalOpen(true) }}
-          className="inline-flex items-center gap-2 rounded-lg bg-amber-500 hover:bg-amber-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition"
-        >
-          <span className="text-base leading-none">+</span> New Farm
-        </button>
+        {canEdit && (
+          <button
+            onClick={() => { setEditingFarm(null); setModalOpen(true) }}
+            className="inline-flex items-center gap-2 rounded-lg bg-amber-500 hover:bg-amber-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition"
+          >
+            <span className="text-base leading-none">+</span> {t('farms.addFarm')}
+          </button>
+        )}
       </div>
 
       {/* Filters */}
       <div className="flex flex-wrap gap-3 mb-6">
         <input
           type="text"
-          placeholder="Search farms…"
+          placeholder={t('common.search') + ' farms…'}
           value={search}
           onChange={e => setSearch(e.target.value)}
           className="rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 w-48"
         />
 
         <div className="flex rounded-lg border border-gray-300 overflow-hidden text-sm">
-          {[['all', 'All'], ['active', 'Has Active Batch'], ['inactive', 'No Active Batch']].map(([val, label]) => (
+          {[
+            ['all', t('common.all')],
+            ['active', t('farms.hasActiveBatch')],
+            ['inactive', t('farms.noActiveBatches')],
+          ].map(([val, label]) => (
             <button
               key={val}
               onClick={() => setStatusFilter(val)}
@@ -594,21 +618,23 @@ export default function Farms() {
         <div className="flex flex-col items-center justify-center py-24 text-gray-400">
           <span className="text-5xl mb-3">🏡</span>
           <p className="text-sm font-medium">
-            {farms.length === 0 ? 'No farms yet' : 'No farms match your filter'}
+            {farms.length === 0 ? t('farms.noFarms') : 'No farms match your filter'}
           </p>
           {farms.length === 0 ? (
-            <button
-              onClick={() => { setEditingFarm(null); setModalOpen(true) }}
-              className="mt-4 rounded-lg bg-amber-500 hover:bg-amber-600 px-4 py-2 text-sm font-semibold text-white transition"
-            >
-              Add Farm
-            </button>
+            canEdit && (
+              <button
+                onClick={() => { setEditingFarm(null); setModalOpen(true) }}
+                className="mt-4 rounded-lg bg-amber-500 hover:bg-amber-600 px-4 py-2 text-sm font-semibold text-white transition"
+              >
+                {t('farms.addFarm')}
+              </button>
+            )
           ) : (
             <button
               onClick={() => { setSearch(''); setStatusFilter('all'); setLocationFilter('all') }}
               className="mt-4 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 transition"
             >
-              Clear filters
+              {t('common.clear')} filters
             </button>
           )}
         </div>
@@ -623,6 +649,8 @@ export default function Farms() {
               onEdit={() => { setEditingFarm(farm); setModalOpen(true) }}
               onDelete={() => setDeletingFarm(farm)}
               onAdvance={() => setAdvanceFarm(farm)}
+              canEdit={canEdit}
+              canDelete={canDelete}
             />
           ))}
         </div>

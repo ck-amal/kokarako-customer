@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { supabase } from '../lib/supabaseClient'
+import { useAuth } from '../contexts/AuthContext'
 
 function formatCurrency(n) {
   return '₹' + Number(n || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })
@@ -8,6 +10,8 @@ function formatCurrency(n) {
 // ─── Vendor Modal (Add / Edit) ────────────────────────────────────────────────
 
 function VendorModal({ vendor, onClose, onSaved }) {
+  const { t } = useTranslation()
+  const { organization } = useAuth()
   const isEdit = Boolean(vendor)
   const [form, setForm]   = useState({ name: vendor?.name ?? '', phone: vendor?.phone ?? '' })
   const [saving, setSaving] = useState(false)
@@ -25,8 +29,8 @@ function VendorModal({ vendor, onClose, onSaved }) {
     const payload = { name: form.name.trim(), phone: form.phone.trim() || null }
 
     const { error } = isEdit
-      ? await supabase.from('vendors').update(payload).eq('id', vendor.id)
-      : await supabase.from('vendors').insert(payload)
+      ? await supabase.from('vendors').update(payload).eq('id', vendor.id).eq('organization_id', organization?.id)
+      : await supabase.from('vendors').insert({ ...payload, organization_id: organization?.id })
 
     if (error) { setError(error.message); setSaving(false) }
     else        { onSaved() }
@@ -37,14 +41,14 @@ function VendorModal({ vendor, onClose, onSaved }) {
       <div className="w-full max-w-md bg-white rounded-2xl shadow-xl p-6">
         <div className="flex items-center justify-between mb-5">
           <h2 className="text-lg font-semibold text-gray-800">
-            {isEdit ? 'Edit Vendor' : 'Add Vendor'}
+            {isEdit ? t('vendors.editVendor') : t('vendors.addVendor')}
           </h2>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Name *</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">{t('common.name')} *</label>
             <input
               required
               type="text"
@@ -56,7 +60,7 @@ function VendorModal({ vendor, onClose, onSaved }) {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Phone</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">{t('common.phone')}</label>
             <input
               type="tel"
               value={form.phone}
@@ -75,13 +79,13 @@ function VendorModal({ vendor, onClose, onSaved }) {
               type="button" onClick={onClose}
               className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition"
             >
-              Cancel
+              {t('common.cancel')}
             </button>
             <button
               type="submit" disabled={saving}
               className="flex-1 rounded-lg bg-amber-500 hover:bg-amber-600 disabled:opacity-60 px-4 py-2 text-sm font-semibold text-white transition"
             >
-              {saving ? 'Saving…' : isEdit ? 'Update' : 'Add Vendor'}
+              {saving ? `${t('common.save')}…` : isEdit ? t('common.save') : t('vendors.addVendor')}
             </button>
           </div>
         </form>
@@ -93,12 +97,14 @@ function VendorModal({ vendor, onClose, onSaved }) {
 // ─── Delete confirmation ──────────────────────────────────────────────────────
 
 function DeleteModal({ vendor, onClose, onDeleted }) {
+  const { t } = useTranslation()
+  const { organization } = useAuth()
   const [deleting, setDeleting] = useState(false)
   const [error, setError]       = useState('')
 
   async function handleDelete() {
     setDeleting(true)
-    const { error } = await supabase.from('vendors').delete().eq('id', vendor.id)
+    const { error } = await supabase.from('vendors').delete().eq('id', vendor.id).eq('organization_id', organization?.id)
     if (error) { setError(error.message); setDeleting(false) }
     else        { onDeleted() }
   }
@@ -106,9 +112,9 @@ function DeleteModal({ vendor, onClose, onDeleted }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
       <div className="w-full max-w-sm bg-white rounded-2xl shadow-xl p-6">
-        <h2 className="text-lg font-semibold text-gray-800 mb-2">Delete Vendor</h2>
+        <h2 className="text-lg font-semibold text-gray-800 mb-2">{t('common.delete')} {t('vendors.title')}</h2>
         <p className="text-sm text-gray-600 mb-5">
-          Delete <span className="font-semibold">{vendor.name}</span>? This will fail if they have existing sales.
+          {t('common.delete')} <span className="font-semibold">{vendor.name}</span>? This will fail if they have existing sales.
         </p>
 
         {error && (
@@ -120,13 +126,13 @@ function DeleteModal({ vendor, onClose, onDeleted }) {
             onClick={onClose}
             className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition"
           >
-            Cancel
+            {t('common.cancel')}
           </button>
           <button
             onClick={handleDelete} disabled={deleting}
             className="flex-1 rounded-lg bg-red-500 hover:bg-red-600 disabled:opacity-60 px-4 py-2 text-sm font-semibold text-white transition"
           >
-            {deleting ? 'Deleting…' : 'Delete'}
+            {deleting ? `${t('common.delete')}…` : t('common.delete')}
           </button>
         </div>
       </div>
@@ -137,6 +143,8 @@ function DeleteModal({ vendor, onClose, onDeleted }) {
 // ─── Main page ────────────────────────────────────────────────────────────────
 
 export default function Vendors() {
+  const { t } = useTranslation()
+  const { organization, canEdit, canDelete } = useAuth()
   const [vendors, setVendors]       = useState([])
   const [loading, setLoading]       = useState(true)
   const [modal, setModal]           = useState(null) // null | { mode: 'add'|'edit'|'delete', vendor? }
@@ -147,12 +155,14 @@ export default function Vendors() {
     const { data } = await supabase
       .from('vendor_balances')
       .select('vendor_id, vendor_name, total_sales')
+      .eq('organization_id', organization?.id)
       .order('vendor_name')
 
     // Also fetch phone from vendors table
     const { data: rawVendors } = await supabase
       .from('vendors')
       .select('id, name, phone')
+      .eq('organization_id', organization?.id)
       .order('name')
 
     // Merge phone into balances
@@ -183,15 +193,17 @@ export default function Vendors() {
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-bold text-gray-800">Vendors</h1>
+          <h1 className="text-2xl font-bold text-gray-800">{t('vendors.title')}</h1>
           <p className="text-sm text-gray-500 mt-0.5">Manage your buyers</p>
         </div>
-        <button
-          onClick={openAdd}
-          className="inline-flex items-center gap-2 rounded-lg bg-amber-500 hover:bg-amber-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition"
-        >
-          <span className="text-base leading-none">+</span> Add Vendor
-        </button>
+        {canEdit && (
+          <button
+            onClick={openAdd}
+            className="inline-flex items-center gap-2 rounded-lg bg-amber-500 hover:bg-amber-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition"
+          >
+            <span className="text-base leading-none">+</span> {t('vendors.addVendor')}
+          </button>
+        )}
       </div>
 
       {/* Table */}
@@ -203,18 +215,18 @@ export default function Vendors() {
         ) : vendors.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-20 text-gray-400">
             <span className="text-5xl mb-3">🤝</span>
-            <p className="text-sm font-medium">No vendors yet</p>
-            <p className="text-xs mt-1">Click "Add Vendor" to get started</p>
+            <p className="text-sm font-medium">{t('vendors.noVendors')}</p>
+            <p className="text-xs mt-1">{t('vendors.addVendor')}</p>
           </div>
         ) : (
           <div className="overflow-x-auto">
           <table className="w-full text-sm min-w-[480px]">
             <thead>
               <tr className="bg-gray-50 border-b border-gray-100 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                <th className="px-5 py-3">Name</th>
-                <th className="px-5 py-3">Phone</th>
-                <th className="px-5 py-3 text-right">Total Purchases</th>
-                <th className="px-5 py-3 text-right">Actions</th>
+                <th className="px-5 py-3">{t('common.name')}</th>
+                <th className="px-5 py-3">{t('common.phone')}</th>
+                <th className="px-5 py-3 text-right">{t('vendors.totalSales')}</th>
+                <th className="px-5 py-3 text-right">{t('common.actions')}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
@@ -227,18 +239,22 @@ export default function Vendors() {
                   </td>
                   <td className="px-5 py-4 text-right">
                     <div className="flex justify-end gap-2">
-                      <button
-                        onClick={() => openEdit(v)}
-                        className="rounded-lg border border-amber-200 px-3 py-1.5 text-xs font-medium text-amber-600 hover:bg-amber-50 transition"
-                      >
-                        Edit
-                      </button>
-                      <button
-                        onClick={() => openDelete(v)}
-                        className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-medium text-red-500 hover:bg-red-50 transition"
-                      >
-                        Delete
-                      </button>
+                      {canEdit && (
+                        <button
+                          onClick={() => openEdit(v)}
+                          className="rounded-lg border border-amber-200 px-3 py-1.5 text-xs font-medium text-amber-600 hover:bg-amber-50 transition"
+                        >
+                          {t('common.edit')}
+                        </button>
+                      )}
+                      {canDelete && (
+                        <button
+                          onClick={() => openDelete(v)}
+                          className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-medium text-red-500 hover:bg-red-50 transition"
+                        >
+                          {t('common.delete')}
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>

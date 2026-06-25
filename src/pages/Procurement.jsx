@@ -1,8 +1,12 @@
 import { useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { supabase } from '../lib/supabaseClient'
 import { addToStock } from '../lib/stockHelpers'
 import { ledgerIn } from '../lib/stockLedger'
 import { formatCurrency, roundCurrency } from '../utils/format'
+import { formatDate } from '../utils/dateFormat'
+import { useAuth } from '../contexts/AuthContext'
+import AuditInfo from '../components/AuditInfo'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -15,12 +19,6 @@ const TYPE_STYLES = {
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function formatDate(d) {
-  return new Date(d).toLocaleDateString('en-IN', {
-    day: '2-digit', month: 'short', year: 'numeric',
-  })
-}
 
 function currentMonthRange() {
   const now   = new Date()
@@ -42,6 +40,7 @@ function TypeBadge({ type }) {
 // ─── Summary bar ─────────────────────────────────────────────────────────────
 
 function SummaryBar({ records }) {
+  const { t, i18n } = useTranslation()
   const { start, end } = currentMonthRange()
 
   const thisMonth = records.filter(r => r.date >= start && r.date <= end)
@@ -54,20 +53,20 @@ function SummaryBar({ records }) {
 
   const topType = Object.entries(byType).sort((a, b) => b[1] - a[1])[0]
 
-  const monthName = new Date().toLocaleString('en-IN', { month: 'long' })
+  const monthName = new Date().toLocaleString(i18n.language === 'ml' ? 'ml-IN' : 'en-IN', { month: 'long' })
 
   return (
     <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
       <div className="bg-white rounded-2xl border border-gray-100 shadow-sm px-5 py-4">
-        <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Spent in {monthName}</p>
+        <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">{t('procurement.totalThisMonth')}</p>
         <p className="text-2xl font-bold text-gray-800 mt-1">{formatCurrency(monthTotal)}</p>
       </div>
       <div className="bg-white rounded-2xl border border-gray-100 shadow-sm px-5 py-4">
-        <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Purchases this month</p>
+        <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">{t('common.thisMonth')}</p>
         <p className="text-2xl font-bold text-gray-800 mt-1">{thisMonth.length}</p>
       </div>
       <div className="bg-white rounded-2xl border border-gray-100 shadow-sm px-5 py-4">
-        <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Top category</p>
+        <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">{monthName}</p>
         <p className="text-2xl font-bold text-gray-800 mt-1 capitalize">
           {topType ? topType[0] : '—'}
         </p>
@@ -82,6 +81,9 @@ function SummaryBar({ records }) {
 // ─── New procurement modal ────────────────────────────────────────────────────
 
 function ProcurementModal({ onClose, onSaved }) {
+  const { t } = useTranslation()
+  const { organization, user } = useAuth()
+  const userName = user?.user_metadata?.full_name || user?.email || 'Unknown'
   const [itemTypes, setItemTypes]   = useState([])
   const [items, setItems]           = useState([])
   const [allItems, setAllItems]     = useState([])
@@ -189,15 +191,17 @@ function ProcurementModal({ onClose, onSaved }) {
   async function handleSubmit(e) {
     e.preventDefault()
     setError('')
-    if (!form.item_type_id) { setError('Select an item type'); return }
-    if (!form.item_id) { setError('Select an item'); return }
-    if (!selectedItem) { setError('Invalid item'); return }
+    if (!form.item_type_id) { setError(t('procurement.selectItemType')); return }
+    if (!form.item_id) { setError(t('procurement.selectItem')); return }
+    if (!selectedItem) { setError(t('errors.required')); return }
+    if (!form.supplier_id) { setError(t('procurement.selectSupplier')); return }
     setSaving(true)
 
     const qty = Number(form.quantity)
     const cpu = parseFloat(form.cost_per_unit) || (qty > 0 ? roundCurrency(Number(form.cost) / qty) : 0)
 
     const { data: inserted, error: insertErr } = await supabase.from('procurement').insert({
+      organization_id: organization?.id,
       type:          itemTypes.find(t => t.id === form.item_type_id)?.name?.toLowerCase() ?? 'other',
       item_name:     selectedItem.name,
       item_id:       form.item_id,
@@ -208,6 +212,8 @@ function ProcurementModal({ onClose, onSaved }) {
       supplier_id:   form.supplier_id || null,
       date:          form.date,
       notes:         form.notes.trim() || null,
+      created_by_id:   user?.id,
+      created_by_name: userName,
     }).select('id').single()
 
     if (insertErr) { setError(insertErr.message); setSaving(false); return }
@@ -215,6 +221,7 @@ function ProcurementModal({ onClose, onSaved }) {
     // Auto-record payment transaction if "Pay now" is checked
     if (form.pay_now && form.account_id) {
       await supabase.from('transactions').insert({
+        organization_id:  organization?.id,
         account_id:       form.account_id,
         transaction_type: 'out',
         category:         'procurement',
@@ -223,21 +230,24 @@ function ProcurementModal({ onClose, onSaved }) {
         transaction_date: form.date,
         reference_type:   'procurement',
         reference_id:     inserted.id,
+        created_by_id:   user?.id,
+        created_by_name: userName,
       })
     }
 
     // Write to stock ledger
     await ledgerIn({
-      itemName:      selectedItem.name,
-      itemType:      itemTypes.find(t => t.id === form.item_type_id)?.name?.toLowerCase() ?? 'other',
-      quantity:      qty,
-      unit:          selectedItem.unit,
-      referenceType: 'procurement',
-      referenceId:   inserted.id,
-      date:          form.date,
+      itemName:       selectedItem.name,
+      itemType:       itemTypes.find(t => t.id === form.item_type_id)?.name?.toLowerCase() ?? 'other',
+      quantity:       qty,
+      unit:           selectedItem.unit,
+      referenceType:  'procurement',
+      referenceId:    inserted.id,
+      date:           form.date,
+      organizationId: organization?.id,
     })
 
-    await addToStock(selectedItem.name, qty, selectedItem.unit, cpu)
+    await addToStock(selectedItem.name, qty, selectedItem.unit, cpu, organization?.id)
 
     onSaved()
   }
@@ -249,7 +259,7 @@ function ProcurementModal({ onClose, onSaved }) {
       <div className="w-full max-w-lg bg-white rounded-2xl shadow-xl p-6 max-h-[90vh] overflow-y-auto">
 
         <div className="flex items-center justify-between mb-5">
-          <h2 className="text-lg font-semibold text-gray-800">Record Purchase</h2>
+          <h2 className="text-lg font-semibold text-gray-800">{t('procurement.addPurchase')}</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
         </div>
 
@@ -257,14 +267,14 @@ function ProcurementModal({ onClose, onSaved }) {
 
           {/* Item Type */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Item Type *</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">{t('procurement.itemType')} *</label>
             <select
               required
               value={form.item_type_id}
               onChange={e => handleTypeChange(e.target.value)}
               className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-amber-400"
             >
-              <option value="">Select a type…</option>
+              <option value="">{t('procurement.selectItemType')}…</option>
               {itemTypes.map(t => (
                 <option key={t.id} value={t.id}>{t.name}</option>
               ))}
@@ -273,7 +283,7 @@ function ProcurementModal({ onClose, onSaved }) {
 
           {/* Item */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Item *</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">{t('procurement.item')} *</label>
             <select
               required
               value={form.item_id}
@@ -282,7 +292,7 @@ function ProcurementModal({ onClose, onSaved }) {
               className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-amber-400 disabled:bg-gray-50 disabled:text-gray-400"
             >
               <option value="">
-                {form.item_type_id ? 'Select an item…' : 'Select an item type first'}
+                {form.item_type_id ? `${t('procurement.selectItem')}…` : `${t('procurement.selectItemType')} ${t('common.required').toLowerCase()}`}
               </option>
               {items.map(i => (
                 <option key={i.id} value={i.id}>{i.name} ({i.unit})</option>
@@ -292,7 +302,7 @@ function ProcurementModal({ onClose, onSaved }) {
 
           {/* Unit — read-only badge */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Unit</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">{t('procurement.unit')}</label>
             <span className="inline-flex items-center rounded-lg bg-gray-100 border border-gray-200 px-3 py-2 text-sm text-gray-600 font-medium min-w-[80px]">
               {selectedItem?.unit ?? '—'}
             </span>
@@ -301,7 +311,7 @@ function ProcurementModal({ onClose, onSaved }) {
           {/* Quantity + Cost per unit */}
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Quantity *</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">{t('procurement.quantity')} *</label>
               <input
                 required type="number" min="0.01" step="0.01"
                 value={form.quantity} onChange={set('quantity')}
@@ -310,7 +320,7 @@ function ProcurementModal({ onClose, onSaved }) {
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Cost per Unit (₹)</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">{t('procurement.costPerUnit')} (₹)</label>
               <input
                 type="number" min="0" step="0.01"
                 value={form.cost_per_unit} onChange={set('cost_per_unit')}
@@ -322,7 +332,7 @@ function ProcurementModal({ onClose, onSaved }) {
 
           {/* Total Cost */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Total Cost (₹) *</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">{t('procurement.totalCost')} (₹) *</label>
             <input
               required type="number" min="0" step="0.01"
               value={form.cost} onChange={set('cost')}
@@ -334,20 +344,20 @@ function ProcurementModal({ onClose, onSaved }) {
           {/* Total preview pill */}
           {totalPreview > 0 && (
             <div className="flex items-center gap-2 rounded-lg bg-amber-50 border border-amber-200 px-4 py-2.5">
-              <span className="text-xs text-amber-700 font-medium">Total:</span>
+              <span className="text-xs text-amber-700 font-medium">{t('common.total')}:</span>
               <span className="text-sm font-bold text-amber-700">{formatCurrency(totalPreview)}</span>
             </div>
           )}
 
           {/* Supplier */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Supplier</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">{t('procurement.supplier')}</label>
             <select
               value={form.supplier_id}
               onChange={e => handleSupplierChange(e.target.value)}
               className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-amber-400"
             >
-              <option value="">No supplier / unknown</option>
+              <option value="">— {t('procurement.selectSupplier')} —</option>
               {suppliers.map(s => (
                 <option key={s.id} value={s.id}>
                   {s.name}{s.business_name ? ` — ${s.business_name}` : ''}
@@ -363,7 +373,7 @@ function ProcurementModal({ onClose, onSaved }) {
 
           {/* Date */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Date *</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">{t('common.date')} *</label>
             <input
               required type="date"
               value={form.date} onChange={set('date')}
@@ -373,7 +383,7 @@ function ProcurementModal({ onClose, onSaved }) {
 
           {/* Notes */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Notes <span className="text-gray-400 font-normal">(optional)</span></label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">{t('common.notes')} <span className="text-gray-400 font-normal">({t('common.optional')})</span></label>
             <textarea
               rows={2}
               value={form.notes} onChange={set('notes')}
@@ -392,7 +402,12 @@ function ProcurementModal({ onClose, onSaved }) {
                   onChange={e => setForm(f => ({ ...f, pay_now: e.target.checked }))}
                   className="h-4 w-4 rounded border-gray-300 accent-amber-500"
                 />
-                <span className="text-sm font-medium text-gray-700">Pay now (record cash outflow)</span>
+                <div>
+                  <span className="text-sm font-medium text-gray-700">{t('procurement.payNow')}</span>
+                  {!form.pay_now && (
+                    <p className="text-xs text-gray-400 mt-0.5">{t('procurement.payLater')}</p>
+                  )}
+                </div>
               </label>
               {form.pay_now && (
                 <div>
@@ -421,13 +436,13 @@ function ProcurementModal({ onClose, onSaved }) {
               type="button" onClick={onClose}
               className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition"
             >
-              Cancel
+              {t('common.cancel')}
             </button>
             <button
               type="submit" disabled={saving}
               className="flex-1 rounded-lg bg-amber-500 hover:bg-amber-600 disabled:opacity-60 px-4 py-2 text-sm font-semibold text-white transition"
             >
-              {saving ? 'Saving…' : 'Record Purchase'}
+              {saving ? `${t('common.save')}…` : t('procurement.addPurchase')}
             </button>
           </div>
 
@@ -440,6 +455,8 @@ function ProcurementModal({ onClose, onSaved }) {
 // ─── Main page ────────────────────────────────────────────────────────────────
 
 export default function Procurement() {
+  const { t, i18n } = useTranslation()
+  const { organization, canEdit } = useAuth()
   const [records, setRecords]       = useState([])
   const [itemTypes, setItemTypes]   = useState([])
   const [loading, setLoading]       = useState(true)
@@ -449,7 +466,7 @@ export default function Procurement() {
   async function fetchData() {
     setLoading(true)
     const [{ data: batchData }, { data: typesData }] = await Promise.all([
-      supabase.from('procurement').select('*, suppliers(name)').order('date', { ascending: false }),
+      supabase.from('procurement').select('*, suppliers(name), created_by_name, created_at, updated_by_name, updated_at').eq('organization_id', organization?.id).order('date', { ascending: false }),
       supabase.from('item_types').select('id, name'),
     ])
     setRecords(batchData || [])
@@ -470,33 +487,65 @@ export default function Procurement() {
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-bold text-gray-800">Procurement</h1>
+          <h1 className="text-2xl font-bold text-gray-800">{t('procurement.title')}</h1>
           <p className="text-sm text-gray-500 mt-0.5">All purchases — feed, chicks, medicine &amp; more</p>
         </div>
-        <button
-          onClick={() => setModalOpen(true)}
-          className="inline-flex items-center gap-2 rounded-lg bg-amber-500 hover:bg-amber-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition"
-        >
-          <span className="text-base leading-none">+</span> Record Purchase
-        </button>
+        {canEdit && (
+          <button
+            onClick={() => setModalOpen(true)}
+            className="inline-flex items-center gap-2 rounded-lg bg-amber-500 hover:bg-amber-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition"
+          >
+            <span className="text-base leading-none">+</span> {t('procurement.addPurchase')}
+          </button>
+        )}
       </div>
+
+      {/* Untracked payables alert */}
+      {!loading && (() => {
+        const untracked = records.filter(r => !r.supplier_id)
+        if (untracked.length === 0) return null
+        const total = untracked.reduce((s, r) => s + Number(r.cost), 0)
+        return (
+          <div className="mb-4 rounded-xl bg-amber-50 border border-amber-200 px-4 py-3 flex items-start gap-3">
+            <span className="text-lg leading-none mt-0.5">⚠️</span>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold text-amber-800">
+                {untracked.length} {t('procurement.untrackedWarning', { count: untracked.length, amount: formatCurrency(total) })}
+              </p>
+              <p className="text-xs text-amber-600 mt-0.5">
+                These are not tracked as liabilities anywhere. Edit them to assign a supplier, or mark as paid if already settled.
+              </p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {untracked.slice(0, 5).map(r => (
+                  <span key={r.id} className="inline-flex items-center gap-1 rounded-full bg-amber-100 border border-amber-200 px-2.5 py-0.5 text-xs text-amber-800">
+                    {r.item_name} · {formatCurrency(r.cost)} · {formatDate(r.date, i18n.language)}
+                  </span>
+                ))}
+                {untracked.length > 5 && (
+                  <span className="text-xs text-amber-500">+{untracked.length - 5} more</span>
+                )}
+              </div>
+            </div>
+          </div>
+        )
+      })()}
 
       {/* Summary bar */}
       {!loading && <SummaryBar records={records} />}
 
       {/* Type filter pills */}
       <div className="flex items-center gap-2 mb-4 flex-wrap">
-        {['all', ...itemTypes.map(t => t.name.toLowerCase())].map(t => (
+        {['all', ...itemTypes.map(t => t.name.toLowerCase())].map(type => (
           <button
-            key={t}
-            onClick={() => setTypeFilter(t)}
+            key={type}
+            onClick={() => setTypeFilter(type)}
             className={`rounded-full px-4 py-1.5 text-xs font-semibold transition border capitalize ${
-              typeFilter === t
+              typeFilter === type
                 ? 'bg-amber-500 text-white border-amber-500'
                 : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
             }`}
           >
-            {t === 'all' ? `All (${records.length})` : t}
+            {type === 'all' ? `${t('common.all')} (${records.length})` : type}
           </button>
         ))}
       </div>
@@ -510,9 +559,9 @@ export default function Procurement() {
         ) : visible.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-20 text-gray-400">
             <span className="text-5xl mb-3">🛒</span>
-            <p className="text-sm font-medium">No purchases recorded</p>
+            <p className="text-sm font-medium">{t('common.noData')}</p>
             <p className="text-xs mt-1">
-              {typeFilter !== 'all' ? 'Try a different filter' : 'Click "Record Purchase" to add one'}
+              {typeFilter !== 'all' ? t('common.filter') : `${t('procurement.addPurchase')}`}
             </p>
           </div>
         ) : (
@@ -521,14 +570,19 @@ export default function Procurement() {
             <table className="w-full text-sm min-w-[700px]">
               <thead>
                 <tr className="bg-gray-50 border-b border-gray-100 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                  <th className="px-5 py-3">Type</th>
-                  <th className="px-5 py-3">Item</th>
-                  <th className="px-5 py-3 text-right">Qty</th>
-                  <th className="px-5 py-3">Unit</th>
-                  <th className="px-5 py-3 text-right">Total Cost</th>
-                  <th className="px-5 py-3">Supplier</th>
-                  <th className="px-5 py-3">Date</th>
-                  <th className="px-5 py-3">Notes</th>
+                  <th className="px-5 py-3">{t('procurement.itemType')}</th>
+                  <th className="px-5 py-3">{t('procurement.item')}</th>
+                  <th className="px-5 py-3 text-right">{t('procurement.quantity')}</th>
+                  <th className="px-5 py-3">{t('procurement.unit')}</th>
+                  <th className="px-5 py-3 text-right">{t('procurement.totalCost')}</th>
+                  <th className="px-5 py-3">{t('procurement.supplier')}</th>
+                  <th className="px-5 py-3">{t('common.date')}</th>
+                  <th className="px-5 py-3">{t('common.notes')}</th>
+                  <th className="w-8 px-5 py-3">
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5 text-gray-400" viewBox="0 0 20 20" fill="currentColor">
+                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clipRule="evenodd" />
+                    </svg>
+                  </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
@@ -546,9 +600,12 @@ export default function Procurement() {
                       {formatCurrency(r.cost)}
                     </td>
                     <td className="px-5 py-3.5 text-gray-600">{r.suppliers?.name || '—'}</td>
-                    <td className="px-5 py-3.5 text-gray-500 whitespace-nowrap">{formatDate(r.date)}</td>
+                    <td className="px-5 py-3.5 text-gray-500 whitespace-nowrap">{formatDate(r.date, i18n.language)}</td>
                     <td className="px-5 py-3.5 text-gray-400 max-w-[140px] truncate" title={r.notes || ''}>
                       {r.notes || '—'}
+                    </td>
+                    <td className="px-5 py-3.5">
+                      <AuditInfo createdByName={r.created_by_name} createdAt={r.created_at} updatedByName={r.updated_by_name} updatedAt={r.updated_at} />
                     </td>
                   </tr>
                 ))}
@@ -559,7 +616,7 @@ export default function Procurement() {
             {/* Footer total */}
             <div className="flex items-center justify-end gap-3 px-5 py-3 bg-gray-50 border-t border-gray-100">
               <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
-                {typeFilter === 'all' ? 'Grand Total' : `${typeFilter} total`}
+                {typeFilter === 'all' ? t('common.total') : `${typeFilter} ${t('common.total').toLowerCase()}`}
               </span>
               <span className="text-sm font-bold text-gray-800">
                 {formatCurrency(visible.reduce((s, r) => s + Number(r.cost), 0))}

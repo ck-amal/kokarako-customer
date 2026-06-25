@@ -1,6 +1,11 @@
 import { useEffect, useState } from 'react'
+import { Navigate } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import { supabase } from '../lib/supabaseClient'
 import { formatCurrency } from '../utils/format'
+import { formatDate } from '../utils/dateFormat'
+import { useAuth } from '../contexts/AuthContext'
+import AuditInfo from '../components/AuditInfo'
 
 const CATEGORIES = ['labour', 'transport', 'utilities', 'veterinary', 'maintenance', 'misc']
 
@@ -11,10 +16,6 @@ const CATEGORY_STYLES = {
   veterinary:  'bg-teal-100   text-teal-700',
   maintenance: 'bg-orange-100 text-orange-700',
   misc:        'bg-gray-100   text-gray-600',
-}
-
-function formatDate(d) {
-  return new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
 }
 
 function currentMonthRange() {
@@ -38,6 +39,9 @@ function CategoryBadge({ category }) {
 // ─── New expense modal ────────────────────────────────────────────────────────
 
 function ExpenseModal({ batches, onClose, onSaved }) {
+  const { t, i18n } = useTranslation()
+  const { organization, user } = useAuth()
+  const userName = user?.user_metadata?.full_name || user?.email || 'Unknown'
   const [form, setForm] = useState({
     batch_id:             '',
     category:             'labour',
@@ -52,7 +56,7 @@ function ExpenseModal({ batches, onClose, onSaved }) {
   const [error, setError]   = useState('')
 
   useEffect(() => {
-    supabase.from('accounts').select('id, name, type').eq('is_active', true).order('name')
+    supabase.from('accounts').select('id, name, type').eq('organization_id', organization.id).eq('is_active', true).order('name')
       .then(({ data }) => {
         const list = data || []
         setAccounts(list)
@@ -69,18 +73,22 @@ function ExpenseModal({ batches, onClose, onSaved }) {
     setSaving(true)
 
     const { data: inserted, error } = await supabase.from('expenses').insert({
+      organization_id:      organization.id,
       batch_id:             form.batch_id || null,
       category:             form.category,
       amount:               Number(form.amount),
       description:          form.description.trim() || null,
       date:                 form.date,
       expense_category_type: form.expense_category_type,
+      created_by_id:        user?.id,
+      created_by_name:      userName,
     }).select('id').single()
 
     if (error) { setError(error.message); setSaving(false); return }
 
     if (form.account_id && inserted) {
       await supabase.from('transactions').insert({
+        organization_id:  organization.id,
         account_id:       form.account_id,
         transaction_type: 'out',
         category:         'expense',
@@ -89,6 +97,8 @@ function ExpenseModal({ batches, onClose, onSaved }) {
         transaction_date: form.date,
         reference_type:   'expense',
         reference_id:     inserted.id,
+        created_by_id:    user?.id,
+        created_by_name:  userName,
       })
     }
 
@@ -101,7 +111,7 @@ function ExpenseModal({ batches, onClose, onSaved }) {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
       <div className="w-full max-w-md bg-white rounded-2xl shadow-xl p-6">
         <div className="flex items-center justify-between mb-5">
-          <h2 className="text-lg font-semibold text-gray-800">Add Expense</h2>
+          <h2 className="text-lg font-semibold text-gray-800">{t('expenses.addExpense')}</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
         </div>
 
@@ -109,7 +119,7 @@ function ExpenseModal({ batches, onClose, onSaved }) {
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Category *</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">{t('expenses.category')} *</label>
               <select required value={form.category} onChange={set('category')} className={inputCls + ' bg-white'}>
                 {CATEGORIES.map(c => (
                   <option key={c} value={c} className="capitalize">{c}</option>
@@ -117,7 +127,7 @@ function ExpenseModal({ batches, onClose, onSaved }) {
               </select>
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Amount (₹) *</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">{t('expenses.amount')} (₹) *</label>
               <input
                 required type="number" min="0.01" step="0.01"
                 value={form.amount} onChange={set('amount')}
@@ -128,7 +138,7 @@ function ExpenseModal({ batches, onClose, onSaved }) {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">{t('common.description')}</label>
             <input
               type="text" value={form.description} onChange={set('description')}
               placeholder="e.g. Daily labour for cleaning"
@@ -138,7 +148,7 @@ function ExpenseModal({ batches, onClose, onSaved }) {
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Date *</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">{t('common.date')} *</label>
               <input
                 required type="date" value={form.date} onChange={set('date')}
                 className={inputCls}
@@ -146,13 +156,13 @@ function ExpenseModal({ batches, onClose, onSaved }) {
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                Link to Batch <span className="text-gray-400 font-normal">(optional)</span>
+                {t('expenses.batch')}
               </label>
               <select value={form.batch_id} onChange={set('batch_id')} className={inputCls + ' bg-white'}>
                 <option value="">— none —</option>
                 {batches.map(b => (
                   <option key={b.id} value={b.id}>
-                    {b.farms?.name} ({formatDate(b.start_date)})
+                    {b.farms?.name} ({formatDate(b.start_date, i18n.language)})
                   </option>
                 ))}
               </select>
@@ -161,11 +171,11 @@ function ExpenseModal({ batches, onClose, onSaved }) {
 
           {/* Cost type */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Expense Type</label>
+            <label className="block text-sm font-medium text-gray-700 mb-2">{t('expenses.expenseType')}</label>
             <div className="flex gap-2">
               {[
-                { value: 'operating', label: 'Operating', sub: 'Labour, transport, utilities…' },
-                { value: 'cogs',      label: 'Direct Cost', sub: 'Goes into COGS / P&L' },
+                { value: 'operating', label: t('expenses.operatingExpense'), sub: 'Labour, transport, utilities…' },
+                { value: 'cogs',      label: t('expenses.directCost'), sub: 'Goes into COGS / P&L' },
               ].map(opt => (
                 <button
                   key={opt.value}
@@ -207,11 +217,11 @@ function ExpenseModal({ batches, onClose, onSaved }) {
           <div className="flex gap-3 pt-1">
             <button type="button" onClick={onClose}
               className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition">
-              Cancel
+              {t('common.cancel')}
             </button>
             <button type="submit" disabled={saving}
               className="flex-1 rounded-lg bg-amber-500 hover:bg-amber-600 disabled:opacity-60 px-4 py-2 text-sm font-semibold text-white transition">
-              {saving ? 'Saving…' : 'Add Expense'}
+              {saving ? `${t('common.save')}…` : t('expenses.addExpense')}
             </button>
           </div>
 
@@ -224,6 +234,8 @@ function ExpenseModal({ batches, onClose, onSaved }) {
 // ─── Main page ────────────────────────────────────────────────────────────────
 
 export default function Expenses() {
+  const { t, i18n } = useTranslation()
+  const { organization, canViewFinancials, canEdit } = useAuth()
   const [expenses, setExpenses]   = useState([])
   const [batches, setBatches]     = useState([])
   const [loading, setLoading]     = useState(true)
@@ -235,11 +247,13 @@ export default function Expenses() {
     const [{ data: expData }, { data: batchData }] = await Promise.all([
       supabase
         .from('expenses')
-        .select('*, batches(start_date, farms(name))')
+        .select('*, batches(start_date, farms(name)), created_by_name, created_at, updated_by_name, updated_at')
+        .eq('organization_id', organization.id)
         .order('date', { ascending: false }),
       supabase
         .from('batches')
         .select('id, start_date, farms(name)')
+        .eq('organization_id', organization.id)
         .order('start_date', { ascending: false }),
     ])
     setExpenses(expData || [])
@@ -249,8 +263,11 @@ export default function Expenses() {
 
   useEffect(() => { fetchData() }, [])
 
+  // Guard — after all hooks
+  if (!canViewFinancials) return <Navigate to="/dashboard" replace />
+
   const { start, end } = currentMonthRange()
-  const monthName = new Date().toLocaleString('en-IN', { month: 'long' })
+  const monthName = new Date().toLocaleString(i18n.language === 'ml' ? 'ml-IN' : 'en-IN', { month: 'long' })
 
   const thisMonth     = expenses.filter(e => e.date >= start && e.date <= end)
   const monthTotal    = thisMonth.reduce((s, e) => s + Number(e.amount), 0)
@@ -271,35 +288,37 @@ export default function Expenses() {
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-bold text-gray-800">Expenses</h1>
+          <h1 className="text-2xl font-bold text-gray-800">{t('expenses.title')}</h1>
           <p className="text-sm text-gray-500 mt-0.5">Labour, transport, utilities and more</p>
         </div>
-        <button
-          onClick={() => setShowModal(true)}
-          className="inline-flex items-center gap-2 rounded-lg bg-amber-500 hover:bg-amber-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition"
-        >
-          <span className="text-base leading-none">+</span> Add Expense
-        </button>
+        {canEdit && (
+          <button
+            onClick={() => setShowModal(true)}
+            className="inline-flex items-center gap-2 rounded-lg bg-amber-500 hover:bg-amber-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition"
+          >
+            <span className="text-base leading-none">+</span> {t('expenses.addExpense')}
+          </button>
+        )}
       </div>
 
       {/* Monthly summary */}
       {!loading && (
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
           <div className="bg-white rounded-2xl border border-gray-100 shadow-sm px-5 py-4">
-            <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Spent in {monthName}</p>
+            <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">{t('expenses.totalThisMonth')} — {monthName}</p>
             <p className="text-2xl font-bold text-gray-800 mt-1">{formatCurrency(monthTotal)}</p>
             <p className="text-xs text-gray-400 mt-0.5">{thisMonth.length} entries</p>
           </div>
 
           <div className="bg-white rounded-2xl border border-gray-100 shadow-sm px-5 py-4">
-            <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">All-time Total</p>
+            <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">{t('common.total')}</p>
             <p className="text-2xl font-bold text-gray-800 mt-1">{formatCurrency(allTotal)}</p>
             <p className="text-xs text-gray-400 mt-0.5">{expenses.length} entries</p>
           </div>
 
           {/* Top category this month */}
           <div className="bg-white rounded-2xl border border-gray-100 shadow-sm px-5 py-4">
-            <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Top category ({monthName})</p>
+            <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">{t('expenses.category')} ({monthName})</p>
             {Object.keys(breakdown).length === 0 ? (
               <p className="text-sm text-gray-400 mt-2">No data this month</p>
             ) : (
@@ -331,7 +350,7 @@ export default function Expenses() {
                 : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
             }`}
           >
-            {c === 'all' ? `All (${expenses.length})` : c}
+            {c === 'all' ? `${t('common.all')} (${expenses.length})` : c}
           </button>
         ))}
       </div>
@@ -345,9 +364,9 @@ export default function Expenses() {
         ) : visible.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-20 text-gray-400">
             <span className="text-5xl mb-3">🧾</span>
-            <p className="text-sm font-medium">No expenses found</p>
+            <p className="text-sm font-medium">{t('expenses.noExpenses')}</p>
             <p className="text-xs mt-1">
-              {catFilter !== 'all' ? 'Try a different category filter' : 'Click "Add Expense" to record one'}
+              {catFilter !== 'all' ? t('common.filter') : t('expenses.addExpense')}
             </p>
           </div>
         ) : (
@@ -356,26 +375,34 @@ export default function Expenses() {
             <table className="w-full text-sm min-w-[560px]">
               <thead>
                 <tr className="bg-gray-50 border-b border-gray-100 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                  <th className="px-5 py-3">Date</th>
-                  <th className="px-5 py-3">Category</th>
-                  <th className="px-5 py-3">Description</th>
-                  <th className="px-5 py-3">Batch</th>
-                  <th className="px-5 py-3 text-right">Amount</th>
+                  <th className="px-5 py-3">{t('common.date')}</th>
+                  <th className="px-5 py-3">{t('expenses.category')}</th>
+                  <th className="px-5 py-3">{t('common.description')}</th>
+                  <th className="px-5 py-3">{t('expenses.batch')}</th>
+                  <th className="px-5 py-3 text-right">{t('expenses.amount')}</th>
+                  <th className="px-3 py-3 text-center">
+                    <svg className="h-3.5 w-3.5 inline text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                  </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
                 {visible.map(e => (
                   <tr key={e.id} className="hover:bg-amber-50/40 transition">
-                    <td className="px-5 py-4 text-gray-600 whitespace-nowrap">{formatDate(e.date)}</td>
+                    <td className="px-5 py-4 text-gray-600 whitespace-nowrap">{formatDate(e.date, i18n.language)}</td>
                     <td className="px-5 py-4"><CategoryBadge category={e.category} /></td>
                     <td className="px-5 py-4 text-gray-700">{e.description || <span className="text-gray-300">—</span>}</td>
                     <td className="px-5 py-4 text-gray-500 text-xs">
                       {e.batches
-                        ? `${e.batches.farms?.name} (${formatDate(e.batches.start_date)})`
+                        ? `${e.batches.farms?.name} (${formatDate(e.batches.start_date, i18n.language)})`
                         : <span className="text-gray-300">—</span>}
                     </td>
                     <td className="px-5 py-4 text-right font-semibold text-gray-800">
                       {formatCurrency(e.amount)}
+                    </td>
+                    <td className="px-3 py-4 text-center">
+                      <AuditInfo createdByName={e.created_by_name} createdAt={e.created_at} updatedByName={e.updated_by_name} updatedAt={e.updated_at} />
                     </td>
                   </tr>
                 ))}
@@ -386,7 +413,7 @@ export default function Expenses() {
             {/* Footer */}
             <div className="flex items-center justify-end gap-3 px-5 py-3 bg-gray-50 border-t border-gray-100">
               <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
-                {catFilter === 'all' ? 'Grand Total' : `${catFilter} total`}
+                {catFilter === 'all' ? t('common.total') : `${catFilter} ${t('common.total').toLowerCase()}`}
               </span>
               <span className="text-sm font-bold text-gray-800">
                 {formatCurrency(visible.reduce((s, e) => s + Number(e.amount), 0))}

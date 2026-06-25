@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import { supabase } from '../lib/supabaseClient'
 import { formatCurrency, roundCurrency } from '../utils/format'
+import { useAuth } from '../contexts/AuthContext'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -93,6 +95,8 @@ function ActivityRow({ type, label, sub, amount, date, positive }) {
 // ─── Main dashboard ───────────────────────────────────────────────────────────
 
 export default function Dashboard() {
+  const { organization } = useAuth()
+  const { t } = useTranslation()
   const [data, setData]     = useState(null)
   const [loading, setLoading] = useState(true)
 
@@ -119,23 +123,27 @@ export default function Dashboard() {
         supabase
           .from('batches')
           .select('id, start_date, chick_count, farms(name)')
+          .eq('organization_id', organization?.id)
           .eq('status', 'active')
           .order('start_date', { ascending: false }),
 
         // Vendor outstanding balances
         supabase
           .from('vendor_balances')
-          .select('outstanding_balance'),
+          .select('outstanding_balance')
+          .eq('organization_id', organization?.id),
 
         // Low stock items
         supabase
           .from('low_stock_alerts')
-          .select('id'),
+          .select('id')
+          .eq('organization_id', organization?.id),
 
         // 5 most recent sales
         supabase
           .from('sales')
           .select('id, date, total_amount, vendors(name), batches(farms(name))')
+          .eq('organization_id', organization?.id)
           .order('date', { ascending: false })
           .limit(5),
 
@@ -143,6 +151,7 @@ export default function Dashboard() {
         supabase
           .from('expenses')
           .select('id, date, amount, category, description')
+          .eq('organization_id', organization?.id)
           .order('date', { ascending: false })
           .limit(5),
 
@@ -150,6 +159,7 @@ export default function Dashboard() {
         supabase
           .from('sales')
           .select('total_amount')
+          .eq('organization_id', organization?.id)
           .gte('date', start)
           .lte('date', end),
 
@@ -157,33 +167,39 @@ export default function Dashboard() {
         supabase
           .from('procurement')
           .select('cost')
+          .eq('organization_id', organization?.id)
           .not('supplier_id', 'is', null),
 
         // Supplier payments — total paid
         supabase
           .from('supplier_payments')
-          .select('amount'),
+          .select('amount')
+          .eq('organization_id', organization?.id),
 
         // Accounts (for cash/bank balance)
         supabase
           .from('accounts')
           .select('id, name, type, opening_balance')
+          .eq('organization_id', organization?.id)
           .eq('is_active', true),
 
         // All transactions (for computing account balances)
         supabase
           .from('transactions')
-          .select('account_id, transaction_type, amount'),
+          .select('account_id, transaction_type, amount')
+          .eq('organization_id', organization?.id),
 
         // Stock (for stock value)
         supabase
           .from('stock')
-          .select('quantity, avg_cost'),
+          .select('quantity, avg_cost')
+          .eq('organization_id', organization?.id),
 
         // Batches sold this month with FCR
         supabase
           .from('batches')
           .select('fcr, fcr_rating')
+          .eq('organization_id', organization?.id)
           .eq('status', 'sold')
           .not('fcr', 'is', null)
           .gte('sold_at', start)
@@ -193,6 +209,7 @@ export default function Dashboard() {
         supabase
           .from('growing_fee_ledger')
           .select('balance_due')
+          .eq('organization_id', organization?.id)
           .in('status', ['pending', 'partial']),
       ])
 
@@ -270,7 +287,7 @@ export default function Dashboard() {
     }
 
     fetchAll()
-  }, [])
+  }, [organization])
 
   const monthName = new Date().toLocaleString('en-IN', { month: 'long', year: 'numeric' })
 
@@ -279,7 +296,7 @@ export default function Dashboard() {
 
       {/* Greeting */}
       <div>
-        <h1 className="text-2xl font-bold text-gray-800">Dashboard</h1>
+        <h1 className="text-2xl font-bold text-gray-800">{t('dashboard.title')}</h1>
         <p className="text-sm text-gray-500 mt-0.5">
           {new Date().toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
         </p>
@@ -288,7 +305,7 @@ export default function Dashboard() {
       {/* Summary cards */}
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
         <StatCard
-          label="Active Batches"
+          label={t('dashboard.activeBatches')}
           value={loading ? '…' : data.batches.length}
           sub={loading ? '' : `${data.batches.length === 1 ? '1 farm' : `${data.batches.length} farms`} running`}
           icon="🐣"
@@ -303,7 +320,7 @@ export default function Dashboard() {
           loading={loading}
         />
         <StatCard
-          label={`Revenue — ${new Date().toLocaleString('en-IN', { month: 'short' })}`}
+          label={`${t('dashboard.revenueThisMonth')} — ${new Date().toLocaleString('en-IN', { month: 'short' })}`}
           value={loading ? '…' : formatCurrency(data.monthRevenue)}
           sub={monthName}
           icon="💰"
@@ -312,7 +329,7 @@ export default function Dashboard() {
           loading={loading}
         />
         <StatCard
-          label="Outstanding Payments"
+          label={t('dashboard.outstandingPayments')}
           value={loading ? '…' : formatCurrency(data.totalOutstanding)}
           sub={loading || data.totalOutstanding === 0 ? 'All cleared' : 'owed by vendors'}
           icon="📋"
@@ -321,7 +338,7 @@ export default function Dashboard() {
           loading={loading}
         />
         <StatCard
-          label="Low Stock Alerts"
+          label={t('dashboard.lowStockAlerts')}
           value={loading ? '…' : data.lowStockCount}
           sub={loading ? '' : data.lowStockCount === 0 ? 'All stocked up' : `item${data.lowStockCount > 1 ? 's' : ''} need restocking`}
           icon="📦"
@@ -330,7 +347,7 @@ export default function Dashboard() {
           loading={loading}
         />
         <StatCard
-          label="Supplier Dues"
+          label={t('dashboard.supplierDues')}
           value={loading ? '…' : formatCurrency(data.supplierDues)}
           sub={loading || data.supplierDues === 0 ? 'Nothing owed' : 'owed to suppliers'}
           icon="🏭"
@@ -354,28 +371,28 @@ export default function Dashboard() {
       {/* Business Health */}
       <div>
         <div className="flex items-center justify-between mb-3">
-          <h2 className="text-base font-semibold text-gray-700">Business Health</h2>
-          <Link to="/accounts" className="text-xs text-amber-600 hover:underline font-medium">Cash & Bank →</Link>
+          <h2 className="text-base font-semibold text-gray-700">{t('dashboard.businessHealth')}</h2>
+          <Link to="/accounts" className="text-xs text-amber-600 hover:underline font-medium">{t('dashboard.cashAndBank')} →</Link>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           {/* Assets */}
           <div className="bg-white rounded-2xl border border-green-100 shadow-sm px-5 py-4">
-            <p className="text-xs font-semibold text-green-700 uppercase tracking-wide mb-3">Assets</p>
+            <p className="text-xs font-semibold text-green-700 uppercase tracking-wide mb-3">{t('dashboard.totalAssets')}</p>
             <div className="space-y-2">
               <div className="flex justify-between text-sm">
-                <span className="text-gray-500">Cash & Bank</span>
+                <span className="text-gray-500">{t('dashboard.cashAndBank')}</span>
                 <span className="font-semibold text-gray-800">{loading ? '…' : formatCurrency(data.cashAndBank)}</span>
               </div>
               <div className="flex justify-between text-sm">
-                <span className="text-gray-500">Vendor Receivables</span>
+                <span className="text-gray-500">{t('dashboard.vendorOutstanding')}</span>
                 <span className="font-semibold text-gray-800">{loading ? '…' : formatCurrency(data.totalOutstanding)}</span>
               </div>
               <div className="flex justify-between text-sm">
-                <span className="text-gray-500">Stock Value</span>
+                <span className="text-gray-500">{t('dashboard.stockValue')}</span>
                 <span className="font-semibold text-gray-800">{loading ? '…' : formatCurrency(data.stockValue)}</span>
               </div>
               <div className="flex justify-between text-sm border-t border-gray-100 pt-2 mt-2">
-                <span className="font-semibold text-gray-700">Total Assets</span>
+                <span className="font-semibold text-gray-700">{t('dashboard.totalAssets')}</span>
                 <span className="font-bold text-green-700">{loading ? '…' : formatCurrency(data.totalAssets)}</span>
               </div>
             </div>
@@ -383,18 +400,18 @@ export default function Dashboard() {
 
           {/* Liabilities */}
           <div className="bg-white rounded-2xl border border-red-100 shadow-sm px-5 py-4">
-            <p className="text-xs font-semibold text-red-600 uppercase tracking-wide mb-3">Liabilities</p>
+            <p className="text-xs font-semibold text-red-600 uppercase tracking-wide mb-3">{t('dashboard.totalLiabilities')}</p>
             <div className="space-y-2">
               <div className="flex justify-between text-sm">
-                <span className="text-gray-500">Supplier Payables</span>
+                <span className="text-gray-500">{t('dashboard.supplierOutstanding')}</span>
                 <span className="font-semibold text-gray-800">{loading ? '…' : formatCurrency(data.supplierDues)}</span>
               </div>
               <div className="flex justify-between text-sm">
-                <span className="text-gray-500">Growing Fees Payable</span>
+                <span className="text-gray-500">{t('dashboard.growingFeesDue')}</span>
                 <span className="font-semibold text-gray-800">{loading ? '…' : formatCurrency(data.growingFeePayable)}</span>
               </div>
               <div className="flex justify-between text-sm border-t border-gray-100 pt-2 mt-2">
-                <span className="font-semibold text-gray-700">Total Liabilities</span>
+                <span className="font-semibold text-gray-700">{t('dashboard.totalLiabilities')}</span>
                 <span className="font-bold text-red-600">{loading ? '…' : formatCurrency(data.totalLiabilities)}</span>
               </div>
             </div>
@@ -406,7 +423,7 @@ export default function Dashboard() {
               ? 'bg-amber-50 border-amber-200'
               : 'bg-red-50 border-red-200'
           }`}>
-            <p className="text-xs font-semibold text-amber-700 uppercase tracking-wide mb-3">Net Worth</p>
+            <p className="text-xs font-semibold text-amber-700 uppercase tracking-wide mb-3">{t('dashboard.netWorth')}</p>
             <p className={`text-3xl font-bold mt-1 ${loading ? 'text-gray-400' : data.netWorth >= 0 ? 'text-amber-700' : 'text-red-600'}`}>
               {loading ? '…' : formatCurrency(data.netWorth)}
             </p>
@@ -414,16 +431,16 @@ export default function Dashboard() {
             {!loading && (
               <div className="mt-3 pt-3 border-t border-amber-200/60 grid grid-cols-2 gap-2 text-xs">
                 <div>
-                  <p className="text-gray-500">Receivables</p>
+                  <p className="text-gray-500">{t('dashboard.vendorOutstanding')}</p>
                   <p className="font-semibold text-gray-700">{formatCurrency(data.totalOutstanding)}</p>
                 </div>
                 <div>
-                  <p className="text-gray-500">Supplier Dues</p>
+                  <p className="text-gray-500">{t('dashboard.supplierDues')}</p>
                   <p className="font-semibold text-gray-700">{formatCurrency(data.supplierDues)}</p>
                 </div>
                 {data.growingFeePayable > 0 && (
                   <div className="col-span-2">
-                    <p className="text-gray-500">Growing Fees Owed</p>
+                    <p className="text-gray-500">{t('dashboard.growingFeeOutstanding')}</p>
                     <p className="font-semibold text-amber-700">{formatCurrency(data.growingFeePayable)}</p>
                   </div>
                 )}
@@ -436,8 +453,8 @@ export default function Dashboard() {
       {/* Active batches table */}
       <div>
         <div className="flex items-center justify-between mb-3">
-          <h2 className="text-base font-semibold text-gray-700">Active Batches</h2>
-          <Link to="/batches" className="text-xs text-amber-600 hover:underline font-medium">View all →</Link>
+          <h2 className="text-base font-semibold text-gray-700">{t('dashboard.activeBatches')}</h2>
+          <Link to="/batches" className="text-xs text-amber-600 hover:underline font-medium">{t('dashboard.viewAll')} →</Link>
         </div>
 
         <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
@@ -448,7 +465,7 @@ export default function Dashboard() {
           ) : data.batches.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-12 text-gray-400">
               <span className="text-4xl mb-2">🐣</span>
-              <p className="text-sm">No active batches</p>
+              <p className="text-sm">{t('batches.noBatches')}</p>
               <Link to="/batches" className="text-xs text-amber-500 hover:underline mt-1">Start a batch →</Link>
             </div>
           ) : (
@@ -456,9 +473,9 @@ export default function Dashboard() {
             <table className="w-full text-sm min-w-[480px]">
               <thead>
                 <tr className="bg-gray-50 border-b border-gray-100 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                  <th className="px-5 py-3">Farm</th>
-                  <th className="px-5 py-3">Start Date</th>
-                  <th className="px-5 py-3 text-right">Chicks</th>
+                  <th className="px-5 py-3">{t('farms.title')}</th>
+                  <th className="px-5 py-3">{t('batches.startDate')}</th>
+                  <th className="px-5 py-3 text-right">{t('batches.chickCount')}</th>
                   <th className="px-5 py-3 text-center">Progress</th>
                   <th className="px-5 py-3 text-right">Days Remaining</th>
                 </tr>
@@ -501,10 +518,10 @@ export default function Dashboard() {
       {/* Recent transactions */}
       <div>
         <div className="flex items-center justify-between mb-3">
-          <h2 className="text-base font-semibold text-gray-700">Recent Transactions</h2>
+          <h2 className="text-base font-semibold text-gray-700">{t('dashboard.recentActivity')}</h2>
           <div className="flex gap-3">
-            <Link to="/sales"    className="text-xs text-amber-600 hover:underline font-medium">Sales →</Link>
-            <Link to="/expenses" className="text-xs text-amber-600 hover:underline font-medium">Expenses →</Link>
+            <Link to="/sales"    className="text-xs text-amber-600 hover:underline font-medium">{t('nav.sales')} →</Link>
+            <Link to="/expenses" className="text-xs text-amber-600 hover:underline font-medium">{t('nav.expenses')} →</Link>
           </div>
         </div>
 
@@ -516,12 +533,12 @@ export default function Dashboard() {
           ) : data.txns.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-12 text-gray-400">
               <span className="text-4xl mb-2">📊</span>
-              <p className="text-sm">No transactions yet</p>
+              <p className="text-sm">{t('dashboard.noActivity')}</p>
             </div>
           ) : (
             <div>
-              {data.txns.map(t => (
-                <ActivityRow key={`${t.type}-${t.id}`} {...t} />
+              {data.txns.map(tx => (
+                <ActivityRow key={`${tx.type}-${tx.id}`} {...tx} />
               ))}
             </div>
           )}

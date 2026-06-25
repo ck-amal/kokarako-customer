@@ -1,20 +1,17 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import { supabase } from '../lib/supabaseClient'
 import { ledgerIn, ledgerOut, getChickBalance } from '../lib/stockLedger'
 import { formatCurrency } from '../utils/format'
+import { formatDate } from '../utils/dateFormat'
+import { useAuth } from '../contexts/AuthContext'
 
 const GROW_OUT_DAYS = 45
 
 function daysElapsed(startDate) {
   const start = new Date(startDate + 'T00:00:00')
   return Math.floor((Date.now() - start.getTime()) / 86400000)
-}
-
-function formatDate(dateStr) {
-  return new Date(dateStr).toLocaleDateString('en-IN', {
-    day: '2-digit', month: 'short', year: 'numeric',
-  })
 }
 
 function urgency(status, startDate) {
@@ -28,14 +25,20 @@ function urgency(status, startDate) {
 // ─── Status badge ─────────────────────────────────────────────────────────────
 
 function StatusBadge({ status }) {
+  const { t } = useTranslation()
   const map = {
     active: 'bg-green-100 text-green-700',
     sold:   'bg-blue-100  text-blue-600',
     closed: 'bg-gray-100  text-gray-500',
   }
+  const labelMap = {
+    active: t('batches.status.active'),
+    sold:   t('batches.status.sold'),
+    closed: t('batches.status.closed'),
+  }
   return (
     <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold capitalize ${map[status] ?? map.closed}`}>
-      {status}
+      {labelMap[status] ?? status}
     </span>
   )
 }
@@ -43,6 +46,7 @@ function StatusBadge({ status }) {
 // ─── Day badge ────────────────────────────────────────────────────────────────
 
 function DayBadge({ status, startDate }) {
+  const { t } = useTranslation()
   if (status !== 'active') return <span className="text-gray-400 text-sm">—</span>
 
   const elapsed  = daysElapsed(startDate)
@@ -55,7 +59,7 @@ function DayBadge({ status, startDate }) {
       style={{ backgroundColor: bg, color }}>
       {u === 'overdue'     && <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse inline-block" />}
       {u === 'approaching' && '⚠️ '}
-      Day {elapsed}
+      {t('batches.dayCount', { day: elapsed })}
     </span>
   )
 }
@@ -63,6 +67,7 @@ function DayBadge({ status, startDate }) {
 // ─── Harvest status label ─────────────────────────────────────────────────────
 
 function HarvestLabel({ status, startDate }) {
+  const { t } = useTranslation()
   if (status !== 'active') return <span className="text-gray-400 text-xs">—</span>
   const elapsed   = daysElapsed(startDate)
   const daysLeft  = GROW_OUT_DAYS - elapsed
@@ -70,13 +75,15 @@ function HarvestLabel({ status, startDate }) {
   const color     = u === 'overdue' ? '#dc2626' : u === 'approaching' ? '#d97706' : '#6b7280'
   const label     = u === 'overdue'
     ? `${Math.abs(daysLeft)}d overdue`
-    : `${daysLeft}d to harvest`
+    : t('batches.daysToHarvest', { days: daysLeft })
   return <span className="text-xs font-semibold" style={{ color }}>{label}</span>
 }
 
 // ─── New batch modal ──────────────────────────────────────────────────────────
 
 function NewBatchModal({ farms, onClose, onSaved }) {
+  const { organization } = useAuth()
+  const { t, i18n } = useTranslation()
   const [form, setForm] = useState({
     farm_id:     farms[0]?.id ?? '',
     chick_count: '',
@@ -97,7 +104,7 @@ function NewBatchModal({ farms, onClose, onSaved }) {
   useEffect(() => {
     async function load() {
       const [balance, { data: sups }, { data: accs }] = await Promise.all([
-        getChickBalance(),
+        getChickBalance(organization?.id),
         supabase.from('suppliers').select('id, name').eq('is_active', true).order('name'),
         supabase.from('accounts').select('id, name, type').eq('is_active', true).order('name'),
       ])
@@ -134,6 +141,7 @@ function NewBatchModal({ farms, onClose, onSaved }) {
     if (needsPurchase) {
       const price = parseFloat(pricePerChick)
       const { data: proc, error: procErr } = await supabase.from('procurement').insert({
+        organization_id: organization?.id,
         type:          'chicks',
         item_name:     'Chicks',
         quantity:      chickCount,
@@ -149,18 +157,20 @@ function NewBatchModal({ farms, onClose, onSaved }) {
 
       // Add to stock ledger (IN)
       await ledgerIn({
-        itemName:      'Chicks',
-        itemType:      'chicks',
-        quantity:      chickCount,
-        unit:          'birds',
-        referenceType: 'procurement',
-        referenceId:   proc.id,
-        date:          form.start_date,
+        itemName:       'Chicks',
+        itemType:       'chicks',
+        quantity:       chickCount,
+        unit:           'birds',
+        referenceType:  'procurement',
+        referenceId:    proc.id,
+        date:           form.start_date,
+        organizationId: organization?.id,
       })
 
       // Record cash outflow only if Pay now is checked
       if (payNow && accountId) {
         await supabase.from('transactions').insert({
+          organization_id:  organization?.id,
           account_id:       accountId,
           transaction_type: 'out',
           category:         'procurement',
@@ -176,6 +186,7 @@ function NewBatchModal({ farms, onClose, onSaved }) {
 
     // Create the batch
     const { data: inserted, error: batchErr } = await supabase.from('batches').insert({
+      organization_id: organization?.id,
       farm_id:     form.farm_id,
       chick_count: chickCount,
       start_date:  form.start_date,
@@ -186,13 +197,14 @@ function NewBatchModal({ farms, onClose, onSaved }) {
 
     // Deduct chicks from stock ledger (OUT)
     await ledgerOut({
-      itemName:      'Chicks',
-      itemType:      'chicks',
-      quantity:      chickCount,
-      unit:          'birds',
-      referenceType: 'batch',
-      referenceId:   inserted.id,
-      date:          form.start_date,
+      itemName:       'Chicks',
+      itemType:       'chicks',
+      quantity:       chickCount,
+      unit:           'birds',
+      referenceType:  'batch',
+      referenceId:    inserted.id,
+      date:           form.start_date,
+      organizationId: organization?.id,
     })
 
     onSaved()
@@ -205,7 +217,7 @@ function NewBatchModal({ farms, onClose, onSaved }) {
       <div className="w-full max-w-md bg-white rounded-2xl shadow-xl p-6 max-h-[90vh] overflow-y-auto">
 
         <div className="flex items-center justify-between mb-5">
-          <h2 className="text-lg font-semibold text-gray-800">Start New Batch</h2>
+          <h2 className="text-lg font-semibold text-gray-800">{t('batches.startBatch')}</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
         </div>
 
@@ -226,7 +238,7 @@ function NewBatchModal({ farms, onClose, onSaved }) {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Chick Count *</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">{t('batches.chickCount')} *</label>
             <input
               required
               type="number"
@@ -255,7 +267,7 @@ function NewBatchModal({ farms, onClose, onSaved }) {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Start Date *</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">{t('batches.startDate')} *</label>
             <input
               required
               type="date"
@@ -285,7 +297,7 @@ function NewBatchModal({ farms, onClose, onSaved }) {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Total Cost</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">{t('procurement.totalCost')}</label>
                   <div className="flex items-center h-[38px] rounded-lg bg-white border border-gray-200 px-3 text-sm font-semibold text-amber-700">
                     {totalCost > 0 ? formatCurrency(totalCost) : '—'}
                   </div>
@@ -293,7 +305,7 @@ function NewBatchModal({ farms, onClose, onSaved }) {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Supplier <span className="text-gray-400 font-normal">(optional)</span></label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{t('procurement.supplier')} <span className="text-gray-400 font-normal">(optional)</span></label>
                 <select
                   value={supplierId}
                   onChange={e => setSupplierId(e.target.value)}
@@ -354,13 +366,13 @@ function NewBatchModal({ farms, onClose, onSaved }) {
               type="button" onClick={onClose}
               className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition"
             >
-              Cancel
+              {t('common.cancel')}
             </button>
             <button
               type="submit" disabled={saving || chickBalance === null}
               className="flex-1 rounded-lg bg-amber-500 hover:bg-amber-600 disabled:opacity-60 px-4 py-2 text-sm font-semibold text-white transition"
             >
-              {saving ? 'Saving…' : chickBalance === null ? 'Loading…' : 'Start Batch'}
+              {saving ? t('common.loading') : chickBalance === null ? t('common.loading') : t('batches.startBatch')}
             </button>
           </div>
 
@@ -373,6 +385,8 @@ function NewBatchModal({ farms, onClose, onSaved }) {
 // ─── Mark as sold confirmation ────────────────────────────────────────────────
 
 function SoldModal({ batch, onClose, onSaved }) {
+  const { organization } = useAuth()
+  const { t, i18n } = useTranslation()
   const [mortality,   setMortality]   = useState('')
   const [saving,      setSaving]      = useState(false)
   const [error,       setError]       = useState('')
@@ -398,6 +412,7 @@ function SoldModal({ batch, onClose, onSaved }) {
         sold_at:         today,
       })
       .eq('id', batch.id)
+      .eq('organization_id', organization?.id)
 
     if (error) { setError(error.message); setSaving(false) }
     else        { onSaved() }
@@ -408,15 +423,15 @@ function SoldModal({ batch, onClose, onSaved }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
       <div className="w-full max-w-sm bg-white rounded-2xl shadow-xl p-6">
-        <h2 className="text-lg font-semibold text-gray-800 mb-2">Mark as Sold</h2>
+        <h2 className="text-lg font-semibold text-gray-800 mb-2">{t('batches.markAsSold')}</h2>
         <p className="text-sm text-gray-600 mb-4">
-          Batch at <span className="font-semibold">{batch.farms?.name}</span> · started {formatDate(batch.start_date)}
+          {t('sales.batch')} at <span className="font-semibold">{batch.farms?.name}</span> · started {formatDate(batch.start_date, i18n.language)}
         </p>
 
         {/* Sales check banner */}
         {!loadingSales && salesCount === 0 && (
           <div className="mb-4 rounded-lg px-3 py-2 bg-red-50 border border-red-200 text-sm text-red-700 font-medium">
-            ⚠ No sales recorded for this batch. Record at least one sale before marking as sold.
+            ⚠ {t('sales.noSales')}. Record at least one sale before marking as sold.
           </div>
         )}
         {!loadingSales && salesCount > 0 && (
@@ -427,7 +442,7 @@ function SoldModal({ batch, onClose, onSaved }) {
 
         <div className="mb-5">
           <label className="block text-sm font-medium text-gray-700 mb-1">
-            Mortality Count <span className="text-gray-400 font-normal">(optional)</span>
+            {t('batches.mortality')} <span className="text-gray-400 font-normal">(optional)</span>
           </label>
           <input
             type="number" min="0" max={batch.chick_count}
@@ -451,14 +466,14 @@ function SoldModal({ batch, onClose, onSaved }) {
             onClick={onClose}
             className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition"
           >
-            Cancel
+            {t('common.cancel')}
           </button>
           <button
             onClick={handleConfirm}
             disabled={saving || loadingSales || salesCount === 0}
             className="flex-1 rounded-lg bg-green-500 hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed px-4 py-2 text-sm font-semibold text-white transition"
           >
-            {saving ? 'Updating…' : 'Confirm'}
+            {saving ? t('common.loading') : t('common.confirm')}
           </button>
         </div>
       </div>
@@ -470,6 +485,8 @@ function SoldModal({ batch, onClose, onSaved }) {
 
 export default function Batches() {
   const navigate = useNavigate()
+  const { organization, canEdit } = useAuth()
+  const { t, i18n } = useTranslation()
   const [batches, setBatches]       = useState([])
   const [farms, setFarms]           = useState([])
   const [loading, setLoading]       = useState(true)
@@ -484,8 +501,9 @@ export default function Batches() {
       supabase
         .from('batches')
         .select('*, farms(name), sold_at, closed_at')
+        .eq('organization_id', organization?.id)
         .order('start_date', { ascending: false }),
-      supabase.from('farms').select('id, name').order('name'),
+      supabase.from('farms').select('id, name').eq('organization_id', organization?.id).order('name'),
     ])
     setBatches(batchData || [])
     setFarms(farmData || [])
@@ -516,17 +534,19 @@ export default function Batches() {
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-bold text-gray-800">Batches</h1>
+          <h1 className="text-2xl font-bold text-gray-800">{t('batches.title')}</h1>
           <p className="text-sm text-gray-500 mt-0.5">Track all your grow-out cycles</p>
         </div>
-        <button
-          onClick={() => setNewModal(true)}
-          disabled={farms.length === 0}
-          title={farms.length === 0 ? 'Add a farm first' : ''}
-          className="inline-flex items-center gap-2 rounded-lg bg-amber-500 hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed px-4 py-2 text-sm font-semibold text-white shadow-sm transition"
-        >
-          <span className="text-base leading-none">+</span> New Batch
-        </button>
+        {canEdit && (
+          <button
+            onClick={() => setNewModal(true)}
+            disabled={farms.length === 0}
+            title={farms.length === 0 ? 'Add a farm first' : ''}
+            className="inline-flex items-center gap-2 rounded-lg bg-amber-500 hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed px-4 py-2 text-sm font-semibold text-white shadow-sm transition"
+          >
+            <span className="text-base leading-none">+</span> {t('batches.startBatch')}
+          </button>
+        )}
       </div>
 
       {/* Overdue alert */}
@@ -535,7 +555,7 @@ export default function Batches() {
           style={{ backgroundColor: '#fef2f2', borderLeft: '4px solid #dc2626' }}>
           <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse inline-block" />
           <span className="text-sm font-bold text-red-700">
-            {overdueCount} batch{overdueCount > 1 ? 'es' : ''} overdue — harvest immediately
+            {overdueCount} batch{overdueCount > 1 ? 'es' : ''} {t('batches.overdue')} — {t('batches.overdueMessage')}
           </span>
         </div>
       )}
@@ -544,10 +564,10 @@ export default function Batches() {
       <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
         <div className="flex items-center gap-2 flex-wrap">
           {[
-            { key: 'all',    label: `All (${counts.all})` },
-            { key: 'active', label: `Active (${counts.active})` },
-            { key: 'sold',   label: `Sold (${counts.sold})` },
-            { key: 'closed', label: `Closed (${counts.closed})` },
+            { key: 'all',    label: `${t('batches.filterAll')} (${counts.all})` },
+            { key: 'active', label: `${t('batches.filterActive')} (${counts.active})` },
+            { key: 'sold',   label: `${t('batches.filterSold')} (${counts.sold})` },
+            { key: 'closed', label: `${t('batches.status.closed')} (${counts.closed})` },
           ].map(({ key, label }) => (
             <button
               key={key}
@@ -594,7 +614,7 @@ export default function Batches() {
         ) : visible.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-20 text-gray-400">
             <span className="text-5xl mb-3">🐣</span>
-            <p className="text-sm font-medium">No batches found</p>
+            <p className="text-sm font-medium">{t('batches.noBatches')}</p>
             <p className="text-xs mt-1">
               {filter !== 'all' ? 'Try switching the filter above' : 'Click "New Batch" to start one'}
             </p>
@@ -605,14 +625,14 @@ export default function Batches() {
             <thead>
               <tr className="bg-gray-50 border-b border-gray-100 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
                 <th className="px-5 py-3">Farm</th>
-                <th className="px-5 py-3">Start Date</th>
+                <th className="px-5 py-3">{t('batches.startDate')}</th>
                 {filter === 'sold'   && <th className="px-5 py-3">Sold On</th>}
                 {filter === 'closed' && <th className="px-5 py-3">Closed On</th>}
-                <th className="px-5 py-3 text-right">Chicks</th>
+                <th className="px-5 py-3 text-right">{t('batches.chickCount')}</th>
                 <th className="px-5 py-3 text-center">Day</th>
                 <th className="px-5 py-3 text-center">Harvest</th>
-                <th className="px-5 py-3 text-center">Status</th>
-                <th className="px-5 py-3 text-right">Action</th>
+                <th className="px-5 py-3 text-center">{t('common.status')}</th>
+                <th className="px-5 py-3 text-right">{t('common.actions')}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
@@ -630,10 +650,10 @@ export default function Batches() {
                       {batch.farms?.name ?? '—'}
                     </td>
                     <td className="px-5 py-4 text-gray-600">
-                      {formatDate(batch.start_date)}
+                      {formatDate(batch.start_date, i18n.language)}
                     </td>
-                    {filter === 'sold'   && <td className="px-5 py-4 text-gray-600">{batch.sold_at   ? formatDate(batch.sold_at)   : '—'}</td>}
-                    {filter === 'closed' && <td className="px-5 py-4 text-gray-600">{batch.closed_at ? formatDate(batch.closed_at) : '—'}</td>}
+                    {filter === 'sold'   && <td className="px-5 py-4 text-gray-600">{batch.sold_at   ? formatDate(batch.sold_at, i18n.language)   : '—'}</td>}
+                    {filter === 'closed' && <td className="px-5 py-4 text-gray-600">{batch.closed_at ? formatDate(batch.closed_at, i18n.language) : '—'}</td>}
                     <td className="px-5 py-4 text-right text-gray-700 font-medium">
                       {Number(batch.chick_count).toLocaleString('en-IN')}
                     </td>
@@ -649,18 +669,20 @@ export default function Batches() {
                     <td className="px-5 py-4 text-right">
                       <div className="inline-flex gap-2" onClick={e => e.stopPropagation()}>
                         {batch.status === 'active' ? (
-                          <button
-                            onClick={() => setSoldBatch(batch)}
-                            className="rounded-lg border border-green-200 px-3 py-1.5 text-xs font-medium text-green-600 hover:bg-green-50 transition"
-                          >
-                            Mark as Sold
-                          </button>
+                          canEdit && (
+                            <button
+                              onClick={() => setSoldBatch(batch)}
+                              className="rounded-lg border border-green-200 px-3 py-1.5 text-xs font-medium text-green-600 hover:bg-green-50 transition"
+                            >
+                              {t('batches.markAsSold')}
+                            </button>
+                          )
                         ) : (
                           <Link
                             to={`/batches/${batch.id}/report`}
                             className="rounded-lg border border-amber-200 px-3 py-1.5 text-xs font-medium text-amber-600 hover:bg-amber-50 transition"
                           >
-                            View Report
+                            {t('common.view')} Report
                           </Link>
                         )}
                       </div>

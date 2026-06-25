@@ -6,13 +6,14 @@ import { supabase } from './supabaseClient'
  * If found → increments quantity.
  * If not found → creates a new row with reorder_level = 0.
  */
-export async function addToStock(itemName, quantity, unit, costPerUnit = 0) {
+export async function addToStock(itemName, quantity, unit, costPerUnit = 0, organizationId) {
   const name = itemName.trim()
 
   const { data: existing } = await supabase
     .from('stock')
     .select('id, quantity, avg_cost')
     .ilike('item_name', name)
+    .eq('organization_id', organizationId)
     .maybeSingle()
 
   if (existing) {
@@ -31,11 +32,12 @@ export async function addToStock(itemName, quantity, unit, costPerUnit = 0) {
   }
 
   return supabase.from('stock').insert({
-    item_name:     name,
-    quantity:      Number(quantity),
+    item_name:       name,
+    quantity:        Number(quantity),
     unit,
-    reorder_level: 0,
-    avg_cost:      Number(costPerUnit || 0),
+    reorder_level:   0,
+    avg_cost:        Number(costPerUnit || 0),
+    organization_id: organizationId,
   })
 }
 
@@ -43,10 +45,11 @@ export async function addToStock(itemName, quantity, unit, costPerUnit = 0) {
  * Subtract from stock (feed distribution, medicine use, etc.)
  * Clamps at 0 — won't go negative.
  */
-export async function subtractFromStock(stockId, currentQty, amount) {
+export async function subtractFromStock(stockId, currentQty, amount, organizationId) {
   const newQty = Math.max(0, Number(currentQty) - Number(amount))
   return supabase
     .from('stock')
     .update({ quantity: newQty })
     .eq('id', stockId)
+    .eq('organization_id', organizationId)
 }

@@ -1,1 +1,12 @@
 @import "tailwindcss";
+
+:root {
+  --font-english: 'Inter', sans-serif;
+  --font-malayalam: 'Noto Sans Malayalam', sans-serif;
+}
+
+[lang="ml"] {
+  font-family: var(--font-malayalam);
+  font-size: 1.05rem;
+  line-height: 1.8;
+}

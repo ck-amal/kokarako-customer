@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { supabase } from '../lib/supabaseClient'
+import { useAuth } from '../contexts/AuthContext'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -78,6 +79,7 @@ function PLRow({ label, value, sub, indent, bold, positive, negative, separator 
 // ─── Main page ────────────────────────────────────────────────────────────────
 
 export default function BatchReport() {
+  const { organization } = useAuth()
   const { id }          = useParams()
   const [report, setReport] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -91,6 +93,7 @@ export default function BatchReport() {
       const { data: batch, error: bErr } = await supabase
         .from('batches')
         .select('*, farms(name, location)')
+        .eq('organization_id', organization?.id)
         .eq('id', id)
         .single()
 
@@ -100,6 +103,7 @@ export default function BatchReport() {
       const { data: procurement } = await supabase
         .from('procurement')
         .select('*')
+        .eq('organization_id', organization?.id)
         .eq('batch_id', id)
         .order('date')
 
@@ -107,6 +111,7 @@ export default function BatchReport() {
       const { data: sales } = await supabase
         .from('sales')
         .select('*, vendors(name)')
+        .eq('organization_id', organization?.id)
         .eq('batch_id', id)
         .order('date')
 
@@ -114,6 +119,7 @@ export default function BatchReport() {
       const { data: expenses } = await supabase
         .from('expenses')
         .select('*')
+        .eq('organization_id', organization?.id)
         .eq('batch_id', id)
         .order('date')
 
@@ -157,7 +163,7 @@ export default function BatchReport() {
     }
 
     fetchReport()
-  }, [id])
+  }, [id, organization])
 
   if (loading) return (
     <div className="flex items-center justify-center py-32">

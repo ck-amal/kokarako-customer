@@ -1,7 +1,11 @@
 import { useEffect, useState } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import { supabase } from '../lib/supabaseClient'
 import { formatCurrency, roundCurrency } from '../utils/format'
+import StockReturnModal from '../components/StockReturnModal'
+import AuditInfo from '../components/AuditInfo'
+import { useAuth } from '../contexts/AuthContext'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function fmtDate(d) {
@@ -14,10 +18,11 @@ function daysElapsed(startDate) {
 // ─── Day status badge ──────────────────────────────────────────────────────────
 
 function DayBadge({ elapsed, status }) {
+  const { t } = useTranslation()
   if (status !== 'active') {
     return (
       <span className="inline-flex items-center rounded-full px-3 py-1 text-sm font-bold bg-gray-100 text-gray-500">
-        Day {elapsed}
+        {t('batches.dayCount', { day: elapsed })}
       </span>
     )
   }
@@ -30,7 +35,7 @@ function DayBadge({ elapsed, status }) {
       style={{ backgroundColor: bg, color }}>
       {isOverdue     && <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse inline-block" />}
       {isApproaching && '⚠️ '}
-      Day {elapsed}
+      {t('batches.dayCount', { day: elapsed })}
     </span>
   )
 }
@@ -57,6 +62,8 @@ function StackedBar({ segments }) {
 // ─── Give Advance Modal ───────────────────────────────────────────────────────
 
 function GiveAdvanceModal({ farm, batch, onClose, onSaved }) {
+  const { t } = useTranslation()
+  const { organization, user } = useAuth()
   const today = new Date().toISOString().slice(0, 10)
   const [form, setForm] = useState({
     account_id:       '',
@@ -71,7 +78,7 @@ function GiveAdvanceModal({ farm, batch, onClose, onSaved }) {
   const [error,    setError]    = useState('')
 
   useEffect(() => {
-    supabase.from('accounts').select('id, name, type').eq('is_active', true).order('created_at')
+    supabase.from('accounts').select('id, name, type').eq('is_active', true).eq('organization_id', organization?.id).order('created_at')
       .then(({ data }) => {
         const accs = data || []
         setAccounts(accs)
@@ -90,6 +97,7 @@ function GiveAdvanceModal({ farm, batch, onClose, onSaved }) {
     if (!form.account_id) { setError('Select an account'); return }
 
     setSaving(true)
+    const userName = user?.user_metadata?.full_name || user?.email || 'Unknown'
 
     const { data: adv, error: advErr } = await supabase.from('growing_fee_advances').insert({
       farm_id:          farm.id,
@@ -100,12 +108,15 @@ function GiveAdvanceModal({ farm, batch, onClose, onSaved }) {
       reference_number: form.reference_number.trim() || null,
       account_id:       form.account_id,
       notes:            form.notes.trim() || null,
+      organization_id:  organization?.id,
+      created_by_id:    user?.id,
+      created_by_name:  userName,
     }).select('id').single()
 
     if (advErr) { setError(advErr.message); setSaving(false); return }
 
     // Update batch total_advances
-    const { data: currentBatch } = await supabase.from('batches').select('total_advances').eq('id', batch.id).single()
+    const { data: currentBatch } = await supabase.from('batches').select('total_advances').eq('id', batch.id).eq('organization_id', organization?.id).single()
     await supabase.from('batches').update({
       total_advances: Number(currentBatch?.total_advances || 0) + amt,
     }).eq('id', batch.id)
@@ -121,6 +132,9 @@ function GiveAdvanceModal({ farm, batch, onClose, onSaved }) {
       transaction_date: form.payment_date,
       reference_type:   'growing_fee_advance',
       reference_id:     adv.id,
+      organization_id:  organization?.id,
+      created_by_id:    user?.id,
+      created_by_name:  userName,
     })
 
     setSaving(false)
@@ -134,7 +148,7 @@ function GiveAdvanceModal({ farm, batch, onClose, onSaved }) {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
       <div className="w-full max-w-lg bg-white rounded-2xl shadow-xl p-6 max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between mb-5">
-          <h2 className="text-lg font-semibold text-gray-800">Growing Fee Advance Payment</h2>
+          <h2 className="text-lg font-semibold text-gray-800">{t('growingFees.advancePaymentTitle')}</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
         </div>
 
@@ -147,10 +161,10 @@ function GiveAdvanceModal({ farm, batch, onClose, onSaved }) {
         <form onSubmit={handleSubmit} className="space-y-4">
           {accounts.length > 0 && (
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Pay From Account *</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">{t('growingFees.payFromAccount')} *</label>
               <select required value={form.account_id} onChange={set('account_id')}
                 className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-400">
-                <option value="">Select account…</option>
+                <option value="">{t('growingFees.selectAccount')}</option>
                 {accounts.map(a => (
                   <option key={a.id} value={a.id}>
                     {a.type === 'cash' ? '💵' : a.type === 'bank' ? '🏦' : '📱'} {a.name}
@@ -161,7 +175,7 @@ function GiveAdvanceModal({ farm, batch, onClose, onSaved }) {
           )}
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Amount (₹) *</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">{t('growingFees.amountRs')} *</label>
             <div className="relative">
               <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm font-medium">₹</span>
               <input required type="number" min="0.01" step="0.01" value={form.amount} onChange={set('amount')}
@@ -172,30 +186,30 @@ function GiveAdvanceModal({ farm, batch, onClose, onSaved }) {
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Payment Date *</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">{t('growingFees.paymentDate')} *</label>
               <input required type="date" value={form.payment_date} onChange={set('payment_date')}
                 className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Payment Method</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">{t('growingFees.paymentMethod')}</label>
               <select value={form.payment_method} onChange={set('payment_method')}
                 className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-400">
-                <option>Cash</option>
-                <option>Bank Transfer</option>
-                <option>Cheque</option>
-                <option>Other</option>
+                <option>{t('suppliers.methods.cash')}</option>
+                <option>{t('suppliers.methods.bankTransfer')}</option>
+                <option>{t('suppliers.methods.cheque')}</option>
+                <option>{t('suppliers.methods.other')}</option>
               </select>
             </div>
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Reference Number <span className="text-gray-400 font-normal">(optional)</span></label>
-            <input value={form.reference_number} onChange={set('reference_number')} placeholder="e.g. Cheque no. or UTR"
+            <label className="block text-sm font-medium text-gray-700 mb-1">{t('growingFees.referenceNumber')} <span className="text-gray-400 font-normal">({t('common.optional')})</span></label>
+            <input value={form.reference_number} onChange={set('reference_number')} placeholder={t('growingFees.referenceNumberOptional')}
               className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Notes <span className="text-gray-400 font-normal">(optional)</span></label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">{t('common.notes')} <span className="text-gray-400 font-normal">({t('common.optional')})</span></label>
             <textarea rows={2} value={form.notes} onChange={set('notes')}
               className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-400" />
           </div>
@@ -204,10 +218,10 @@ function GiveAdvanceModal({ farm, batch, onClose, onSaved }) {
 
           <div className="flex gap-3 pt-1">
             <button type="button" onClick={onClose}
-              className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition">Cancel</button>
+              className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition">{t('common.cancel')}</button>
             <button type="submit" disabled={saving}
               className="flex-1 rounded-lg bg-green-600 hover:bg-green-700 disabled:opacity-60 px-4 py-2 text-sm font-semibold text-white transition">
-              {saving ? 'Saving…' : 'Record Advance'}
+              {saving ? t('batches.saving') : t('growingFees.recordPayment')}
             </button>
           </div>
         </form>
@@ -221,6 +235,8 @@ function GiveAdvanceModal({ farm, batch, onClose, onSaved }) {
 export default function BatchDetail() {
   const { farmId, batchId } = useParams()
   const navigate = useNavigate()
+  const { t } = useTranslation()
+  const { organization, user, canEdit, canDelete, canRecordOperations, canViewFinancials } = useAuth()
 
   const [farm,         setFarm]         = useState(null)
   const [batch,        setBatch]        = useState(null)
@@ -247,6 +263,9 @@ export default function BatchDetail() {
   const [confirmModal,   setConfirmModal]   = useState(null) // { label, newStatus }
   const [closeBatchLoading,setCloseBatchLoading]= useState(false)
   const [advanceModal,   setAdvanceModal]   = useState(false)
+  const [returnModal,    setReturnModal]    = useState(null)  // distribution row being returned
+  const [postCloseModal, setPostCloseModal] = useState(false) // prompt after batch close
+  const [expenseReturns, setExpenseReturns] = useState([])
 
   async function load() {
     const [
@@ -259,14 +278,14 @@ export default function BatchDetail() {
       { data: allBatchData },
       { data: vendorData },
     ] = await Promise.all([
-      supabase.from('farms').select('id, name, owner_name, owner_phone').eq('id', farmId).single(),
-      supabase.from('batches').select('*').eq('id', batchId).single(),
-      supabase.from('distributions').select('*').eq('batch_id', batchId).order('date', { ascending: true }),
-      supabase.from('sales').select('*, vendors(name)').eq('batch_id', batchId).order('date', { ascending: true }),
-      supabase.from('farm_expenses').select('*').eq('batch_id', batchId),
-      supabase.from('procurement').select('cost, quantity').eq('type', 'chicks'),
-      supabase.from('batches').select('chick_count'),
-      supabase.from('vendors').select('id, name').order('name'),
+      supabase.from('farms').select('id, name, owner_name, owner_phone').eq('id', farmId).eq('organization_id', organization?.id).single(),
+      supabase.from('batches').select('*').eq('id', batchId).eq('organization_id', organization?.id).single(),
+      supabase.from('distributions').select('*, created_by_name, created_at, updated_by_name, updated_at').eq('batch_id', batchId).eq('organization_id', organization?.id).order('date', { ascending: true }),
+      supabase.from('sales').select('*, vendors(name), created_by_name, created_at, updated_by_name, updated_at').eq('batch_id', batchId).eq('organization_id', organization?.id).order('date', { ascending: true }),
+      supabase.from('farm_expenses').select('*').eq('batch_id', batchId).eq('organization_id', organization?.id),
+      supabase.from('procurement').select('cost, quantity').eq('type', 'chicks').eq('organization_id', organization?.id),
+      supabase.from('batches').select('chick_count').eq('organization_id', organization?.id),
+      supabase.from('vendors').select('id, name').eq('organization_id', organization?.id).order('name'),
     ])
     setFarm(farmData)
     setBatch(batchData)
@@ -282,18 +301,27 @@ export default function BatchDetail() {
       .from('growing_fee_advances')
       .select('id, amount, payment_date, payment_method')
       .eq('batch_id', batchId)
+      .eq('organization_id', organization?.id)
       .order('payment_date')
     setAdvances(advData || [])
+
+    // Fetch farm_expense_returns for net cost display
+    const { data: ferData } = await supabase
+      .from('farm_expense_returns')
+      .select('distribution_id, item_type, total_cost, cost_per_unit')
+      .eq('batch_id', batchId)
+      .eq('organization_id', organization?.id)
+    setExpenseReturns(ferData || [])
 
     setLoading(false)
   }
 
   async function refresh() {
     const [{ data: batchData }, { data: distData }, { data: salesData }, { data: expData }] = await Promise.all([
-      supabase.from('batches').select('*').eq('id', batchId).single(),
-      supabase.from('distributions').select('*').eq('batch_id', batchId).order('date', { ascending: true }),
-      supabase.from('sales').select('*, vendors(name)').eq('batch_id', batchId).order('date', { ascending: true }),
-      supabase.from('farm_expenses').select('*').eq('batch_id', batchId),
+      supabase.from('batches').select('*').eq('id', batchId).eq('organization_id', organization?.id).single(),
+      supabase.from('distributions').select('*, created_by_name, created_at, updated_by_name, updated_at').eq('batch_id', batchId).eq('organization_id', organization?.id).order('date', { ascending: true }),
+      supabase.from('sales').select('*, vendors(name), created_by_name, created_at, updated_by_name, updated_at').eq('batch_id', batchId).eq('organization_id', organization?.id).order('date', { ascending: true }),
+      supabase.from('farm_expenses').select('*').eq('batch_id', batchId).eq('organization_id', organization?.id),
     ])
     // Fetch growing fee ledger separately (safe — won't break if migration not run yet)
     let ledgerData = null
@@ -310,8 +338,17 @@ export default function BatchDetail() {
       .from('growing_fee_advances')
       .select('id, amount, payment_date, payment_method')
       .eq('batch_id', batchId)
+      .eq('organization_id', organization?.id)
       .order('payment_date')
     setAdvances(advData || [])
+
+    // Refresh expense returns too
+    const { data: ferData } = await supabase
+      .from('farm_expense_returns')
+      .select('distribution_id, item_type, total_cost, cost_per_unit')
+      .eq('batch_id', batchId)
+      .eq('organization_id', organization?.id)
+    setExpenseReturns(ferData || [])
 
     setBatch(batchData ? { ...batchData, growing_fee_ledger: ledgerData } : null)
     setDistributions(distData || [])
@@ -324,9 +361,13 @@ export default function BatchDetail() {
   async function handleEditBatch(e) {
     e.preventDefault()
     setSaving(true)
+    const userName = user?.user_metadata?.full_name || user?.email || 'Unknown'
     const { error } = await supabase.from('batches').update({
-      chick_count: Number(editForm.chick_count),
-      start_date:  editForm.start_date,
+      chick_count:     Number(editForm.chick_count),
+      start_date:      editForm.start_date,
+      updated_by_id:   user?.id,
+      updated_by_name: userName,
+      updated_at:      new Date().toISOString(),
     }).eq('id', batchId)
     setSaving(false)
     if (error) { setActionError(error.message); return }
@@ -366,9 +407,10 @@ export default function BatchDetail() {
 
     // Step 1: Mark as sold
     const isAlreadySold = batch.status === 'sold' || batch.status === 'closed'
+    const userName = user?.user_metadata?.full_name || user?.email || 'Unknown'
     if (!isAlreadySold) {
       const { error } = await supabase.from('batches')
-        .update({ status: 'sold', sold_at: new Date().toISOString().slice(0, 10) })
+        .update({ status: 'sold', sold_at: new Date().toISOString().slice(0, 10), updated_by_id: user?.id, updated_by_name: userName, updated_at: new Date().toISOString() })
         .eq('id', batchId)
       if (error) {
         setActionError(error.message)
@@ -382,6 +424,7 @@ export default function BatchDetail() {
       .from('distributions')
       .select('id, item_name, quantity, unit')
       .eq('batch_id', batchId)
+      .eq('organization_id', organization?.id)
       .eq('type', 'feed')
 
     const itemNames = [...new Set((feedDists || []).map(d => d.item_name).filter(Boolean))]
@@ -391,6 +434,7 @@ export default function BatchDetail() {
         .from('items')
         .select('name, kg_per_unit')
         .in('name', itemNames)
+        .eq('organization_id', organization?.id)
       for (const item of (itemRows || [])) {
         if (item.kg_per_unit != null) kgMap[item.name] = item.kg_per_unit
       }
@@ -405,10 +449,13 @@ export default function BatchDetail() {
     const fcrRating = fcr == null ? null : fcr <= 1.8 ? 'Excellent' : fcr <= 2.1 ? 'Good' : fcr <= 2.5 ? 'Average' : 'Poor'
 
     await supabase.from('batches').update({
-      total_feed_kg: totalFeedKg || null,
-      total_sale_kg: totalSaleKg || null,
+      total_feed_kg:   totalFeedKg || null,
+      total_sale_kg:   totalSaleKg || null,
       fcr,
-      fcr_rating: fcrRating,
+      fcr_rating:      fcrRating,
+      updated_by_id:   user?.id,
+      updated_by_name: userName,
+      updated_at:      new Date().toISOString(),
     }).eq('id', batchId)
 
     // Step 3: Calculate Growing Fee (if FCR is known and no fee already recorded)
@@ -417,6 +464,7 @@ export default function BatchDetail() {
         .from('growing_fee_config')
         .select('*')
         .eq('is_active', true)
+        .eq('organization_id', organization?.id)
         .order('fcr_from', { ascending: true })
 
       const tier = (feeConfigs || []).find(c =>
@@ -432,6 +480,7 @@ export default function BatchDetail() {
           .from('farms')
           .select('owner_name')
           .eq('id', farmId)
+          .eq('organization_id', organization?.id)
           .single()
 
         // Fetch total advances given for this batch
@@ -439,6 +488,7 @@ export default function BatchDetail() {
           .from('growing_fee_advances')
           .select('amount')
           .eq('batch_id', batchId)
+          .eq('organization_id', organization?.id)
         const totalAdvances = (advRows || []).reduce((s, r) => s + Number(r.amount), 0)
 
         const rawBalance  = roundCurrency(totalFee - totalAdvances)
@@ -462,6 +512,7 @@ export default function BatchDetail() {
             status:               ledgerStatus,
             amount_paid:          0,
             balance_due:          balanceDue,
+            organization_id:      organization?.id,
           })
           .select('id')
           .single()
@@ -471,6 +522,9 @@ export default function BatchDetail() {
             growing_fee_id:     ledgerRow.id,
             growing_fee_per_kg: Number(tier.rate_per_kg),
             growing_fee_total:  totalFee,
+            updated_by_id:      user?.id,
+            updated_by_name:    userName,
+            updated_at:         new Date().toISOString(),
           }).eq('id', batchId)
         }
       }
@@ -478,13 +532,16 @@ export default function BatchDetail() {
 
     setCloseBatchLoading(false)
     refresh()
+    // Prompt user to return any leftover stock
+    setPostCloseModal(true)
   }
 
   async function handleMarkStatus() {
     if (!confirmModal) return
     setSaving(true)
-    const today  = new Date().toISOString().slice(0, 10)
-    const update = { status: confirmModal.newStatus }
+    const today    = new Date().toISOString().slice(0, 10)
+    const userName = user?.user_metadata?.full_name || user?.email || 'Unknown'
+    const update   = { status: confirmModal.newStatus, updated_by_id: user?.id, updated_by_name: userName, updated_at: new Date().toISOString() }
     if (confirmModal.newStatus === 'closed') update.closed_at = today
     const { error } = await supabase.from('batches').update(update).eq('id', batchId)
     setSaving(false)
@@ -507,13 +564,17 @@ export default function BatchDetail() {
     const kg    = parseFloat(saleForm.kg_sold)
     const price = parseFloat(saleForm.price_per_kg)
     setSaving(true)
+    const userName = user?.user_metadata?.full_name || user?.email || 'Unknown'
     const { error } = await supabase.from('sales').insert({
-      batch_id:      batchId,
-      vendor_id:     saleForm.vendor_id,
-      chicken_count: count,
-      kg_sold:       kg,
-      price_per_kg:  price,
-      date:          saleForm.date,
+      batch_id:        batchId,
+      vendor_id:       saleForm.vendor_id,
+      chicken_count:   count,
+      kg_sold:         kg,
+      price_per_kg:    price,
+      date:            saleForm.date,
+      organization_id: organization?.id,
+      created_by_id:   user?.id,
+      created_by_name: userName,
     })
     setSaving(false)
     if (error) { setActionError(error.message); return }
@@ -534,8 +595,8 @@ export default function BatchDetail() {
     return (
       <div className="text-center py-20 text-gray-400">
         <p className="text-5xl mb-3">🐔</p>
-        <p className="font-medium text-gray-600">Batch not found</p>
-        <button onClick={() => navigate(-1)} className="text-amber-600 hover:underline text-sm mt-3 inline-block">← Back</button>
+        <p className="font-medium text-gray-600">{t('batches.batchNotFound')}</p>
+        <button onClick={() => navigate(-1)} className="text-amber-600 hover:underline text-sm mt-3 inline-block">← {t('common.back')}</button>
       </div>
     )
   }
@@ -551,8 +612,19 @@ export default function BatchDetail() {
 
   // Financial
   const revenue   = sales.reduce((s, r) => s + Number(r.total_amount || 0), 0)
-  const feedCost  = expenses.filter(e => e.item_type === 'feed').reduce((s, e) => s + Number(e.total_cost || 0), 0)
-  const medCost   = expenses.filter(e => e.item_type === 'medicine').reduce((s, e) => s + Number(e.total_cost || 0), 0)
+
+  // Return credits keyed by distribution_id for per-row net display
+  const returnCostByDist = {}
+  for (const fer of expenseReturns) {
+    if (fer.distribution_id) {
+      returnCostByDist[fer.distribution_id] = (returnCostByDist[fer.distribution_id] || 0) + Number(fer.total_cost || 0)
+    }
+  }
+
+  const feedReturnCredit = expenseReturns.filter(r => r.item_type?.toLowerCase().includes('feed')).reduce((s, r) => s + Number(r.total_cost || 0), 0)
+  const medReturnCredit  = expenseReturns.filter(r => r.item_type?.toLowerCase().includes('medicine')).reduce((s, r) => s + Number(r.total_cost || 0), 0)
+  const feedCost  = roundCurrency(expenses.filter(e => e.item_type === 'feed').reduce((s, e) => s + Number(e.total_cost || 0), 0) - feedReturnCredit)
+  const medCost   = roundCurrency(expenses.filter(e => e.item_type === 'medicine').reduce((s, e) => s + Number(e.total_cost || 0), 0) - medReturnCredit)
 
   const totalChickCostAll = chickProc.reduce((s, p) => s + Number(p.cost || 0), 0)
   const chickCost = allBatchTotal > 0
@@ -593,11 +665,11 @@ export default function BatchDetail() {
 
       {/* Breadcrumb */}
       <div className="flex items-center gap-2 text-sm text-gray-500">
-        <Link to="/farms" className="hover:text-amber-600 transition">Farms</Link>
+        <Link to="/farms" className="hover:text-amber-600 transition">{t('nav.farms')}</Link>
         <span>/</span>
         <Link to={`/farms/${farmId}`} className="hover:text-amber-600 transition">{farm.name}</Link>
         <span>/</span>
-        <span className="text-gray-800 font-medium">Batch {fmtDate(batch.start_date)}</span>
+        <span className="text-gray-800 font-medium">{t('batches.title')} {fmtDate(batch.start_date)}</span>
       </div>
 
       {/* ── Header card ─────────────────────────────────────────────────── */}
@@ -607,13 +679,17 @@ export default function BatchDetail() {
           <div className="mb-4 rounded-xl px-4 py-3 flex items-center gap-2"
             style={{ backgroundColor: '#fef2f2', borderLeft: '4px solid #dc2626' }}>
             <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse inline-block" />
-            <span className="text-sm font-bold text-red-700">Overdue by {Math.abs(daysToHarvest)} days — harvest immediately</span>
+            <span className="text-sm font-bold text-red-700">{t('batches.overdueByDays', { days: Math.abs(daysToHarvest) })}</span>
           </div>
         )}
         {isApproaching && (
           <div className="mb-4 rounded-xl px-4 py-3"
             style={{ backgroundColor: '#fffbeb', borderLeft: '4px solid #d97706' }}>
-            <span className="text-sm font-bold text-amber-700">⚠️ Approaching harvest — {daysToHarvest} day{daysToHarvest !== 1 ? 's' : ''} remaining</span>
+            <span className="text-sm font-bold text-amber-700">
+              {daysToHarvest !== 1
+                ? t('batches.approachingHarvestDaysPlural', { days: daysToHarvest })
+                : t('batches.approachingHarvestDays', { days: daysToHarvest })}
+            </span>
           </div>
         )}
 
@@ -621,14 +697,14 @@ export default function BatchDetail() {
           <div>
             <p style={{ color: '#78716c' }} className="text-sm font-medium mb-1">{farm.name}</p>
             <h1 style={{ color: '#1c1917' }} className="text-2xl font-extrabold">
-              Batch — {fmtDate(batch.start_date)}
+              {t('batches.title')} — {fmtDate(batch.start_date)}
             </h1>
             <div className="flex items-center gap-3 mt-3 flex-wrap">
               <DayBadge elapsed={elapsed} status={batch.status} />
               <span className={`inline-flex items-center rounded-full px-3 py-1 text-sm font-semibold
                 ${batch.status === 'active' ? 'bg-green-100 text-green-700' :
                   batch.status === 'sold'   ? 'bg-blue-100 text-blue-700'   : 'bg-gray-100 text-gray-600'}`}>
-                {batch.status.charAt(0).toUpperCase() + batch.status.slice(1)}
+                {t(`batches.status.${batch.status}`)}
               </span>
             </div>
           </div>
@@ -637,7 +713,7 @@ export default function BatchDetail() {
             style={{ borderColor: '#e7e5e0', color: '#78716c' }}
             className="rounded-lg border px-4 py-2 text-sm font-medium hover:bg-stone-50 transition"
           >
-            ← Back to Farm
+            {t('batches.backToFarm')}
           </button>
         </div>
 
@@ -645,44 +721,54 @@ export default function BatchDetail() {
         <div className="flex gap-2 flex-wrap mt-4 pt-4" style={{ borderTop: '1px solid #e7e5e0' }}>
           {isActive ? (
             <>
-              <button
-                onClick={() => { setEditForm({ chick_count: String(batch.chick_count), start_date: batch.start_date }); setActionError(''); setEditModal(true) }}
-                style={{ borderColor: '#d1d5db', color: '#374151' }}
-                className="rounded-lg border bg-white hover:bg-gray-50 px-3 py-1.5 text-xs font-semibold transition"
-              >
-                ✏️ Edit Batch
-              </button>
-              <button
-                onClick={() => { setMortalityVal(String(batch.mortality_count || 0)); setActionError(''); setMortalityModal(true) }}
-                style={{ borderColor: '#fecaca', color: '#dc2626', backgroundColor: '#fef2f2' }}
-                className="rounded-lg border px-3 py-1.5 text-xs font-semibold hover:opacity-80 transition"
-              >
-                💀 Set Mortality
-              </button>
-              <button
-                onClick={() => promptMarkStatus('sold')}
-                disabled={saving || closeBatchLoading}
-                className="rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-60 px-3 py-1.5 text-xs font-semibold text-white transition"
-              >
-                {closeBatchLoading ? 'Saving…' : '✅ Mark as Sold'}
-              </button>
-              <button
-                onClick={() => promptMarkStatus('closed')}
-                disabled={saving}
-                className="rounded-lg bg-gray-500 hover:bg-gray-600 disabled:opacity-60 px-3 py-1.5 text-xs font-semibold text-white transition"
-              >
-                🔒 Mark as Closed
-              </button>
+              {canEdit && (
+                <button
+                  onClick={() => { setEditForm({ chick_count: String(batch.chick_count), start_date: batch.start_date }); setActionError(''); setEditModal(true) }}
+                  style={{ borderColor: '#d1d5db', color: '#374151' }}
+                  className="rounded-lg border bg-white hover:bg-gray-50 px-3 py-1.5 text-xs font-semibold transition"
+                >
+                  ✏️ {t('batches.editBatch')}
+                </button>
+              )}
+              {canEdit && (
+                <button
+                  onClick={() => { setMortalityVal(String(batch.mortality_count || 0)); setActionError(''); setMortalityModal(true) }}
+                  style={{ borderColor: '#fecaca', color: '#dc2626', backgroundColor: '#fef2f2' }}
+                  className="rounded-lg border px-3 py-1.5 text-xs font-semibold hover:opacity-80 transition"
+                >
+                  💀 {t('batches.setMortality')}
+                </button>
+              )}
+              {canEdit && (
+                <button
+                  onClick={() => promptMarkStatus('sold')}
+                  disabled={saving || closeBatchLoading}
+                  className="rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-60 px-3 py-1.5 text-xs font-semibold text-white transition"
+                >
+                  {closeBatchLoading ? t('batches.saving') : `✅ ${t('batches.markAsSold')}`}
+                </button>
+              )}
+              {canEdit && (
+                <button
+                  onClick={() => promptMarkStatus('closed')}
+                  disabled={saving}
+                  className="rounded-lg bg-gray-500 hover:bg-gray-600 disabled:opacity-60 px-3 py-1.5 text-xs font-semibold text-white transition"
+                >
+                  🔒 {t('batches.closeBatch')}
+                </button>
+              )}
             </>
           ) : (
             <>
-<button
-              onClick={() => promptMarkStatus('active')}
-              disabled={saving}
-              className="rounded-lg bg-green-600 hover:bg-green-700 disabled:opacity-60 px-3 py-1.5 text-xs font-semibold text-white transition"
-            >
-              ♻️ Reactivate Batch
-            </button>
+              {canEdit && (
+                <button
+                  onClick={() => promptMarkStatus('active')}
+                  disabled={saving}
+                  className="rounded-lg bg-green-600 hover:bg-green-700 disabled:opacity-60 px-3 py-1.5 text-xs font-semibold text-white transition"
+                >
+                  ♻️ {t('batches.reactivateBatch')}
+                </button>
+              )}
             </>
           )}
         </div>
@@ -694,12 +780,12 @@ export default function BatchDetail() {
       {/* ── Overview cards ────────────────────────────────────────────── */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         {[
-          { label: 'Chick Count',     value: Number(batch.chick_count).toLocaleString('en-IN'),   bg: '#f0fdf4', color: '#15803d' },
-          { label: 'Alive',           value: alive.toLocaleString('en-IN'),                       bg: '#f0fdf4', color: '#15803d' },
-          { label: 'Days Elapsed',    value: `Day ${elapsed}`,                                    bg: isOverdue ? '#fef2f2' : isApproaching ? '#fffbeb' : '#fafaf5', color: isOverdue ? '#dc2626' : isApproaching ? '#d97706' : '#1c1917' },
-          { label: isActive ? 'Days to Harvest' : 'Total Days', value: isActive ? (daysToHarvest < 0 ? `${Math.abs(daysToHarvest)}d overdue` : `${daysToHarvest}d`) : `${elapsed}d`, bg: '#fafaf5', color: '#78716c' },
-          { label: 'Mortality',       value: Number(batch.mortality_count || 0).toLocaleString('en-IN'), bg: '#fef2f2', color: '#dc2626' },
-          { label: 'Distributions',   value: distributions.length,                               bg: '#fafaf5', color: '#78716c' },
+          { label: t('batches.chickCount'),   value: Number(batch.chick_count).toLocaleString('en-IN'),   bg: '#f0fdf4', color: '#15803d' },
+          { label: t('batches.alive'),        value: alive.toLocaleString('en-IN'),                       bg: '#f0fdf4', color: '#15803d' },
+          { label: t('batches.daysElapsed'),  value: t('batches.dayCount', { day: elapsed }),             bg: isOverdue ? '#fef2f2' : isApproaching ? '#fffbeb' : '#fafaf5', color: isOverdue ? '#dc2626' : isApproaching ? '#d97706' : '#1c1917' },
+          { label: isActive ? t('batches.toHarvest') : t('batches.totalDays'), value: isActive ? (daysToHarvest < 0 ? t('batches.daysOverdue', { days: Math.abs(daysToHarvest) }) : `${daysToHarvest}d`) : `${elapsed}d`, bg: '#fafaf5', color: '#78716c' },
+          { label: t('batches.mortality'),    value: Number(batch.mortality_count || 0).toLocaleString('en-IN'), bg: '#fef2f2', color: '#dc2626' },
+          { label: t('batches.distributions'), value: distributions.length,                               bg: '#fafaf5', color: '#78716c' },
         ].map(card => (
           <div key={card.label}
             style={{ backgroundColor: card.bg, borderColor: '#e7e5e0' }}
@@ -711,106 +797,144 @@ export default function BatchDetail() {
       </div>
 
       {/* ── Financial summary ─────────────────────────────────────────── */}
-      <div style={{ backgroundColor: '#fffffe', borderColor: '#e7e5e0' }} className="rounded-xl border shadow-sm p-5">
-        <h3 style={{ color: '#1c1917' }} className="text-sm font-semibold mb-4">Financial Summary</h3>
+      {canViewFinancials && (
+        <div style={{ backgroundColor: '#fffffe', borderColor: '#e7e5e0' }} className="rounded-xl border shadow-sm p-5">
+          <h3 style={{ color: '#1c1917' }} className="text-sm font-semibold mb-4">{t('batches.financialSummary')}</h3>
 
-        <div style={{ height: 20, backgroundColor: '#f0f0f0', borderRadius: 8, overflow: 'hidden', marginBottom: 10 }}>
-          {revenue > 0 ? (
-            <StackedBar segments={[
-              { pct: Math.min((chickCost  / revenue) * 100, 100), color: '#fca5a5' },
-              { pct: Math.min((feedCost   / revenue) * 100, 100), color: '#fdba74' },
-              { pct: Math.min((medCost    / revenue) * 100, 100), color: '#fde047' },
-              ...(growingFee > 0 ? [{ pct: Math.min((growingFee / revenue) * 100, 100), color: '#c4b5fd' }] : []),
-              ...(profit > 0 ? [{ pct: Math.min((profit / revenue) * 100, 100), color: '#15803d' }] : []),
-            ]} />
-          ) : null}
+          <div style={{ height: 20, backgroundColor: '#f0f0f0', borderRadius: 8, overflow: 'hidden', marginBottom: 10 }}>
+            {revenue > 0 ? (
+              <StackedBar segments={[
+                { pct: Math.min((chickCost  / revenue) * 100, 100), color: '#fca5a5' },
+                { pct: Math.min((feedCost   / revenue) * 100, 100), color: '#fdba74' },
+                { pct: Math.min((medCost    / revenue) * 100, 100), color: '#fde047' },
+                ...(growingFee > 0 ? [{ pct: Math.min((growingFee / revenue) * 100, 100), color: '#c4b5fd' }] : []),
+                ...(profit > 0 ? [{ pct: Math.min((profit / revenue) * 100, 100), color: '#15803d' }] : []),
+              ]} />
+            ) : null}
+          </div>
+
+          <div className="flex flex-wrap gap-3 mb-4 text-xs" style={{ color: '#78716c' }}>
+            {[
+              { color: '#fca5a5', label: t('batches.chickCost') },
+              { color: '#fdba74', label: t('batches.feedCost') },
+              { color: '#fde047', label: t('batches.medicineCost') },
+              ...(growingFee > 0 ? [{ color: '#c4b5fd', label: t('growingFees.title') }] : []),
+              ...(profit > 0 ? [{ color: '#15803d', label: t('batches.profit') }] : []),
+            ].map(l => (
+              <span key={l.label} className="flex items-center gap-1.5">
+                <span style={{ width: 12, height: 12, borderRadius: 3, backgroundColor: l.color, display: 'inline-block' }} />
+                {l.label}
+              </span>
+            ))}
+          </div>
+
+          {(() => {
+            const rows = [
+              { label: t('batches.revenue'),        value: formatCurrency(revenue),                                      color: '#15803d', bold: false },
+              { label: t('batches.chickCost'),      value: formatCurrency(chickCost),                                   color: '#dc2626', bold: false },
+              { label: t('batches.feedCost'),       value: formatCurrency(feedCost),                                    color: '#dc2626', bold: false },
+              { label: t('batches.medicineCost'),   value: formatCurrency(medCost),                                     color: '#dc2626', bold: false },
+              ...(growingFee > 0 ? [{ label: t('growingFees.title'), value: formatCurrency(growingFee), color: '#7c3aed', bold: false }] : []),
+              { label: t('batches.totalExpenses'),  value: formatCurrency(totalExpenses),                               color: '#dc2626', bold: true },
+              { label: t('batches.grossProfit'),    value: (profit < 0 ? '−' : '') + formatCurrency(Math.abs(profit)),  color: profit >= 0 ? '#15803d' : '#dc2626', bold: true },
+              { label: t('batches.profitMargin'),   value: `${margin.toFixed(1)}%`,                          color: margin >= 0 ? '#15803d' : '#dc2626', bold: false },
+            ]
+            return (
+              <div>
+                {rows.map((row, i) => (
+                  <div key={row.label}
+                    className="flex justify-between items-center py-2"
+                    style={{ borderBottom: i < rows.length - 1 ? '1px solid #f5f5f4' : 'none' }}>
+                    <span style={{ color: '#78716c', fontWeight: row.bold ? 600 : 400 }} className="text-sm">{row.label}</span>
+                    <span style={{ color: row.color, fontWeight: row.bold ? 800 : 600 }} className="text-sm">{row.value}</span>
+                  </div>
+                ))}
+              </div>
+            )
+          })()}
         </div>
-
-        <div className="flex flex-wrap gap-3 mb-4 text-xs" style={{ color: '#78716c' }}>
-          {[
-            { color: '#fca5a5', label: 'Chick Cost' },
-            { color: '#fdba74', label: 'Feed Cost' },
-            { color: '#fde047', label: 'Medicine' },
-            ...(growingFee > 0 ? [{ color: '#c4b5fd', label: 'Growing Fee' }] : []),
-            ...(profit > 0 ? [{ color: '#15803d', label: 'Profit' }] : []),
-          ].map(l => (
-            <span key={l.label} className="flex items-center gap-1.5">
-              <span style={{ width: 12, height: 12, borderRadius: 3, backgroundColor: l.color, display: 'inline-block' }} />
-              {l.label}
-            </span>
-          ))}
-        </div>
-
-        {(() => {
-          const rows = [
-            { label: 'Revenue',        value: formatCurrency(revenue),                                      color: '#15803d', bold: false },
-            { label: 'Chick Cost',     value: formatCurrency(chickCost),                                   color: '#dc2626', bold: false },
-            { label: 'Feed Cost',      value: formatCurrency(feedCost),                                    color: '#dc2626', bold: false },
-            { label: 'Medicine Cost',  value: formatCurrency(medCost),                                     color: '#dc2626', bold: false },
-            ...(growingFee > 0 ? [{ label: 'Growing Fee', value: formatCurrency(growingFee), color: '#7c3aed', bold: false }] : []),
-            { label: 'Total Expenses', value: formatCurrency(totalExpenses),                               color: '#dc2626', bold: true },
-            { label: 'Gross Profit',   value: (profit < 0 ? '−' : '') + formatCurrency(Math.abs(profit)),  color: profit >= 0 ? '#15803d' : '#dc2626', bold: true },
-            { label: 'Profit Margin',  value: `${margin.toFixed(1)}%`,                          color: margin >= 0 ? '#15803d' : '#dc2626', bold: false },
-          ]
-          return (
-            <div>
-              {rows.map((row, i) => (
-                <div key={row.label}
-                  className="flex justify-between items-center py-2"
-                  style={{ borderBottom: i < rows.length - 1 ? '1px solid #f5f5f4' : 'none' }}>
-                  <span style={{ color: '#78716c', fontWeight: row.bold ? 600 : 400 }} className="text-sm">{row.label}</span>
-                  <span style={{ color: row.color, fontWeight: row.bold ? 800 : 600 }} className="text-sm">{row.value}</span>
-                </div>
-              ))}
-            </div>
-          )
-        })()}
-      </div>
+      )}
 
       {/* ── Distributions ─────────────────────────────────────────────── */}
       <div style={{ backgroundColor: '#fffffe', borderColor: '#e7e5e0' }} className="rounded-xl border shadow-sm overflow-hidden">
         <div className="flex items-center justify-between px-5 py-4 border-b" style={{ borderColor: '#e7e5e0' }}>
           <h3 style={{ color: '#1c1917' }} className="text-sm font-semibold">
-            Distributions ({distributions.length})
+            {t('batches.distributions')} ({distributions.length})
           </h3>
-          <Link
-            to={`/distribute?batchId=${batchId}&farmId=${farmId}`}
-            className="rounded-lg bg-green-600 hover:bg-green-700 px-3 py-1.5 text-xs font-semibold text-white transition"
-          >
-            + Record
-          </Link>
+          {canRecordOperations && (
+            <Link
+              to={`/distribute?batchId=${batchId}&farmId=${farmId}`}
+              className="rounded-lg bg-green-600 hover:bg-green-700 px-3 py-1.5 text-xs font-semibold text-white transition"
+            >
+              {t('batches.record')}
+            </Link>
+          )}
         </div>
         {distributions.length === 0 ? (
-          <p style={{ color: '#78716c' }} className="text-sm text-center py-8">No distributions recorded yet.</p>
+          <p style={{ color: '#78716c' }} className="text-sm text-center py-8">{t('batches.noDistributions')}</p>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-sm min-w-[500px]">
+            <table className="w-full text-sm min-w-[640px]">
               <thead>
                 <tr style={{ backgroundColor: '#fafaf5', borderBottom: '1px solid #e7e5e0', color: '#78716c' }}
                   className="text-left text-xs font-semibold uppercase tracking-wider">
-                  <th className="px-5 py-3">Date</th>
-                  <th className="px-5 py-3">Item</th>
-                  <th className="px-5 py-3">Type</th>
-                  <th className="px-5 py-3 text-right">Quantity</th>
+                  <th className="px-5 py-3">{t('common.date')}</th>
+                  <th className="px-5 py-3">{t('distributions.selectItem')}</th>
+                  <th className="px-5 py-3">{t('common.status')}</th>
+                  <th className="px-5 py-3 text-right">{t('batches.distributed')}</th>
+                  <th className="px-5 py-3 text-right">{t('batches.returned')}</th>
+                  {canViewFinancials && <th className="px-5 py-3 text-right">{t('batches.netCost')}</th>}
+                  <th className="px-4 py-3 w-8"></th>
+                  <th className="px-5 py-3"></th>
                 </tr>
               </thead>
               <tbody>
-                {distributions.map((d, i) => (
-                  <tr key={d.id}
-                    style={{ borderBottom: i < distributions.length - 1 ? '1px solid #f5f5f4' : 'none' }}>
-                    <td className="px-5 py-3" style={{ color: '#78716c' }}>{fmtDate(d.date)}</td>
-                    <td className="px-5 py-3 font-medium" style={{ color: '#1c1917' }}>{d.item_name}</td>
-                    <td className="px-5 py-3">
-                      <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold
-                        ${d.type === 'feed' ? 'bg-green-100 text-green-700' : d.type === 'medicine' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'}`}>
-                        {d.type}
-                      </span>
-                    </td>
-                    <td className="px-5 py-3 text-right" style={{ color: '#78716c' }}>
-                      {Number(d.quantity).toLocaleString('en-IN')} {d.unit}
-                    </td>
-                  </tr>
-                ))}
+                {distributions.map((d, i) => {
+                  const returned    = Number(d.returned_quantity || 0)
+                  const returnCredit= returnCostByDist[d.id] || 0
+                  const expRow      = expenses.find(e => e.distribution_id === d.id)
+                  const grossCost   = expRow ? Number(expRow.total_cost || 0) : 0
+                  const netCost     = roundCurrency(grossCost - returnCredit)
+                  const canReturn   = Number(d.quantity) - returned > 0
+                  return (
+                    <tr key={d.id}
+                      style={{ borderBottom: i < distributions.length - 1 ? '1px solid #f5f5f4' : 'none' }}>
+                      <td className="px-5 py-3" style={{ color: '#78716c' }}>{fmtDate(d.date)}</td>
+                      <td className="px-5 py-3 font-medium" style={{ color: '#1c1917' }}>{d.item_name}</td>
+                      <td className="px-5 py-3">
+                        <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold
+                          ${d.type === 'feed' ? 'bg-green-100 text-green-700' : d.type === 'medicine' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'}`}>
+                          {d.type}
+                        </span>
+                      </td>
+                      <td className="px-5 py-3 text-right" style={{ color: '#78716c' }}>
+                        {Number(d.quantity).toLocaleString('en-IN')} {d.unit}
+                      </td>
+                      <td className="px-5 py-3 text-right">
+                        {returned > 0
+                          ? <span className="text-orange-600 font-medium">− {returned.toLocaleString('en-IN')} {d.unit}</span>
+                          : <span style={{ color: '#d1d5db' }}>—</span>
+                        }
+                      </td>
+                      {canViewFinancials && (
+                        <td className="px-5 py-3 text-right" style={{ color: '#78716c' }}>
+                          {grossCost > 0 ? formatCurrency(netCost) : '—'}
+                        </td>
+                      )}
+                      <td className="px-4 py-3"><AuditInfo createdByName={d.created_by_name} createdAt={d.created_at} updatedByName={d.updated_by_name} updatedAt={d.updated_at} /></td>
+                      <td className="px-5 py-3 text-right">
+                        {canReturn && canRecordOperations && (
+                          <button
+                            onClick={() => setReturnModal({ ...d, farm_id: farmId })}
+                            className="rounded px-2 py-1 text-xs font-medium bg-orange-50 text-orange-600 border border-orange-200 hover:bg-orange-100 transition"
+                          >
+                            {t('batches.return')}
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           </div>
@@ -821,28 +945,31 @@ export default function BatchDetail() {
       <div style={{ backgroundColor: '#fffffe', borderColor: '#e7e5e0' }} className="rounded-xl border shadow-sm overflow-hidden">
         <div className="flex items-center justify-between px-5 py-4 border-b" style={{ borderColor: '#e7e5e0' }}>
           <h3 style={{ color: '#1c1917' }} className="text-sm font-semibold">
-            Sales ({sales.length})
+            {t('batches.sales')} ({sales.length})
           </h3>
-          <button
-            onClick={() => { setSaleForm({ vendor_id: vendors[0]?.id || '', kg_sold: '', price_per_kg: '', date: new Date().toISOString().slice(0, 10) }); setActionError(''); setSaleModal(true) }}
-            className="rounded-lg bg-amber-500 hover:bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white transition"
-          >
-            + Record Sale
-          </button>
+          {canRecordOperations && (
+            <button
+              onClick={() => { setSaleForm({ vendor_id: vendors[0]?.id || '', kg_sold: '', price_per_kg: '', date: new Date().toISOString().slice(0, 10) }); setActionError(''); setSaleModal(true) }}
+              className="rounded-lg bg-amber-500 hover:bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white transition"
+            >
+              + {t('sales.recordSale')}
+            </button>
+          )}
         </div>
         {sales.length === 0 ? (
-          <p style={{ color: '#78716c' }} className="text-sm text-center py-8">No sales recorded yet.</p>
+          <p style={{ color: '#78716c' }} className="text-sm text-center py-8">{t('batches.noSalesYet')}</p>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm min-w-[500px]">
               <thead>
                 <tr style={{ color: '#78716c', backgroundColor: '#fafaf5', borderBottom: '1px solid #e7e5e0' }}
                   className="text-left text-xs font-semibold uppercase tracking-wider">
-                  <th className="px-5 py-3">Date</th>
-                  <th className="px-5 py-3">Vendor</th>
-                  <th className="px-5 py-3 text-right">Kg Sold</th>
-                  <th className="px-5 py-3 text-right">Price/kg</th>
-                  <th className="px-5 py-3 text-right">Total</th>
+                  <th className="px-5 py-3">{t('common.date')}</th>
+                  <th className="px-5 py-3">{t('sales.vendor')}</th>
+                  <th className="px-5 py-3 text-right">{t('sales.kgSold')}</th>
+                  <th className="px-5 py-3 text-right">{t('sales.pricePerKg')}</th>
+                  <th className="px-5 py-3 text-right">{t('common.total')}</th>
+                  <th className="px-4 py-3 w-8"></th>
                 </tr>
               </thead>
               <tbody>
@@ -854,13 +981,15 @@ export default function BatchDetail() {
                     <td className="px-5 py-3 text-right" style={{ color: '#78716c' }}>{Number(s.kg_sold).toLocaleString('en-IN')}</td>
                     <td className="px-5 py-3 text-right" style={{ color: '#78716c' }}>₹{Number(s.price_per_kg).toLocaleString('en-IN')}</td>
                     <td className="px-5 py-3 text-right font-bold" style={{ color: '#15803d' }}>{formatCurrency(s.total_amount)}</td>
+                    <td className="px-4 py-3"><AuditInfo createdByName={s.created_by_name} createdAt={s.created_at} updatedByName={s.updated_by_name} updatedAt={s.updated_at} /></td>
                   </tr>
                 ))}
               </tbody>
               <tfoot>
                 <tr style={{ borderTop: '2px solid #e7e5e0', backgroundColor: '#fafaf5' }}>
-                  <td colSpan={4} className="px-5 py-3 text-sm font-semibold text-right" style={{ color: '#78716c' }}>Total Revenue</td>
+                  <td colSpan={4} className="px-5 py-3 text-sm font-semibold text-right" style={{ color: '#78716c' }}>{t('batches.totalRevenue')}</td>
                   <td className="px-5 py-3 text-right font-extrabold" style={{ color: '#15803d' }}>{formatCurrency(revenue)}</td>
+                  <td></td>
                 </tr>
               </tfoot>
             </table>
@@ -869,13 +998,13 @@ export default function BatchDetail() {
       </div>
 
       {/* ── Growing Fee Advances (active batch) ─────────────────────── */}
-      {isActive && (
+      {isActive && canViewFinancials && (
         <div style={{ backgroundColor: '#fffffe', borderColor: '#e7e5e0' }} className="rounded-xl border shadow-sm p-5">
           <div className="flex items-center justify-between mb-3">
-            <h3 style={{ color: '#1c1917' }} className="text-sm font-semibold">Growing Fee Advance Tracking</h3>
-            <span className="text-xs font-medium text-gray-400">Batch Active — Day {elapsed}</span>
+            <h3 style={{ color: '#1c1917' }} className="text-sm font-semibold">{t('growingFees.advanceTracking')}</h3>
+            <span className="text-xs font-medium text-gray-400">{t('growingFees.batchActiveDay', { day: elapsed })}</span>
           </div>
-          <p style={{ color: '#78716c' }} className="text-xs mb-3">Fee will be calculated automatically when batch is marked as sold.</p>
+          <p style={{ color: '#78716c' }} className="text-xs mb-3">{t('growingFees.feeCalculatedAtClose')}</p>
           {advances.length > 0 ? (
             <div className="space-y-2 mb-3">
               {advances.map((adv, i) => (
@@ -888,19 +1017,21 @@ export default function BatchDetail() {
                 </div>
               ))}
               <div className="pt-2 border-t border-gray-100 flex items-center justify-between">
-                <span style={{ color: '#78716c' }} className="text-sm font-semibold">Total Advances</span>
+                <span style={{ color: '#78716c' }} className="text-sm font-semibold">{t('growingFees.totalAdvancesLabel')}</span>
                 <span className="font-bold text-amber-700">{formatCurrency(advances.reduce((s, a) => s + Number(a.amount), 0))}</span>
               </div>
             </div>
           ) : (
-            <p style={{ color: '#78716c' }} className="text-xs italic mb-3">No advances recorded for this batch yet.</p>
+            <p style={{ color: '#78716c' }} className="text-xs italic mb-3">{t('growingFees.noAdvances')}</p>
           )}
-          <button
-            onClick={() => { setActionError(''); setAdvanceModal(true) }}
-            className="w-full rounded-lg border border-green-600 text-green-700 hover:bg-green-50 px-4 py-2 text-sm font-semibold transition"
-          >
-            + Give Advance
-          </button>
+          {canEdit && (
+            <button
+              onClick={() => { setActionError(''); setAdvanceModal(true) }}
+              className="w-full rounded-lg border border-green-600 text-green-700 hover:bg-green-50 px-4 py-2 text-sm font-semibold transition"
+            >
+              {t('growingFees.giveAdvanceBtn')}
+            </button>
+          )}
         </div>
       )}
 
@@ -916,17 +1047,17 @@ export default function BatchDetail() {
         return (
           <div style={{ backgroundColor: '#fffffe', borderColor: '#e7e5e0' }} className="rounded-xl border shadow-sm p-5">
             <div className="flex items-center justify-between mb-4">
-              <h3 style={{ color: '#1c1917' }} className="text-sm font-semibold">Feed Conversion Ratio (FCR)</h3>
-              <span className="text-xs font-semibold rounded-full px-3 py-1" style={{ backgroundColor: ratingBg, color: ratingColor }}>{rating}</span>
+              <h3 style={{ color: '#1c1917' }} className="text-sm font-semibold">{t('batches.fcrSection')}</h3>
+              <span className="text-xs font-semibold rounded-full px-3 py-1" style={{ backgroundColor: ratingBg, color: ratingColor }}>{t(`batches.fcrRating.${rating.toLowerCase()}`)}</span>
             </div>
             <div className="flex items-end gap-4 mb-4">
               <div>
                 <p style={{ color: ratingColor }} className="text-4xl font-extrabold">{fcr.toFixed(2)}</p>
-                <p style={{ color: '#78716c' }} className="text-xs mt-1">Feed KG ÷ Sale KG</p>
+                <p style={{ color: '#78716c' }} className="text-xs mt-1">{t('batches.fcrFeedKgDivSaleKg')}</p>
               </div>
               <div className="flex-1 text-right text-xs" style={{ color: '#78716c' }}>
-                <p>{Number(batch.total_feed_kg || 0).toLocaleString('en-IN')} kg feed consumed</p>
-                <p>{Number(batch.total_sale_kg || 0).toLocaleString('en-IN')} kg chicken sold</p>
+                <p>{t('batches.fcrFeedConsumed', { kg: Number(batch.total_feed_kg || 0).toLocaleString('en-IN') })}</p>
+                <p>{t('batches.fcrChickenSold', { kg: Number(batch.total_sale_kg || 0).toLocaleString('en-IN') })}</p>
               </div>
             </div>
             {/* Gauge bar */}
@@ -939,9 +1070,9 @@ export default function BatchDetail() {
               </div>
               <div className="flex justify-between text-xs mt-1" style={{ color: '#9ca3af' }}>
                 <span>0</span>
-                <span className="text-green-600 font-medium">≤1.8 Excellent</span>
-                <span className="text-blue-600 font-medium">≤2.1 Good</span>
-                <span className="text-amber-600 font-medium">≤2.5 Avg</span>
+                <span className="text-green-600 font-medium">≤1.8 {t('batches.fcrRating.excellent')}</span>
+                <span className="text-blue-600 font-medium">≤2.1 {t('batches.fcrRating.good')}</span>
+                <span className="text-amber-600 font-medium">≤2.5 {t('batches.fcrRating.average')}</span>
                 <span className="text-red-600 font-medium">3+</span>
               </div>
             </div>
@@ -950,7 +1081,7 @@ export default function BatchDetail() {
       })()}
 
       {/* ── Growing Fee Section ──────────────────────────────────────── */}
-      {(batch.status === 'sold' || batch.status === 'closed') && batch.growing_fee_total != null && (() => {
+      {canViewFinancials && (batch.status === 'sold' || batch.status === 'closed') && batch.growing_fee_total != null && (() => {
         const grossFee     = Number(batch.growing_fee_total)
         const totalAdv     = Number(batch.growing_fee_ledger?.total_advances ?? advances.reduce((s, a) => s + Number(a.amount), 0))
         const postClosePaid= Number(batch.growing_fee_ledger?.amount_paid || 0)
@@ -962,39 +1093,39 @@ export default function BatchDetail() {
         return (
           <div style={{ backgroundColor: '#fffffe', borderColor: '#e7e5e0' }} className="rounded-xl border shadow-sm p-5">
             <div className="flex items-center justify-between mb-4">
-              <h3 style={{ color: '#1c1917' }} className="text-sm font-semibold">Growing Fee</h3>
+              <h3 style={{ color: '#1c1917' }} className="text-sm font-semibold">{t('growingFees.title')}</h3>
               <span className="text-xs font-semibold rounded-full px-3 py-1 capitalize" style={{ backgroundColor: statusBg, color: statusColor }}>{status}</span>
             </div>
             <div className="space-y-2 text-sm">
               {farm?.owner_name && (
                 <div className="flex justify-between">
-                  <span style={{ color: '#78716c' }}>Farm Owner</span>
+                  <span style={{ color: '#78716c' }}>{t('growingFees.farmOwner')}</span>
                   <span className="font-medium" style={{ color: '#1c1917' }}>{farm.owner_name}</span>
                 </div>
               )}
               {batch.growing_fee_ledger?.fcr_tier_description && (
                 <div className="flex justify-between">
-                  <span style={{ color: '#78716c' }}>FCR Tier</span>
+                  <span style={{ color: '#78716c' }}>{t('growingFees.fcrTier')}</span>
                   <span className="font-medium" style={{ color: '#1c1917' }}>{batch.growing_fee_ledger.fcr_tier_description}</span>
                 </div>
               )}
               <div className="flex justify-between">
-                <span style={{ color: '#78716c' }}>Rate Applied</span>
+                <span style={{ color: '#78716c' }}>{t('growingFees.rateApplied')}</span>
                 <span className="font-medium" style={{ color: '#1c1917' }}>₹{Number(batch.growing_fee_per_kg).toFixed(2)} / kg</span>
               </div>
               <div className="flex justify-between">
-                <span style={{ color: '#78716c' }}>Chicken Sold</span>
+                <span style={{ color: '#78716c' }}>{t('growingFees.chickenSold')}</span>
                 <span className="font-medium" style={{ color: '#1c1917' }}>{Number(batch.total_sale_kg || 0).toLocaleString('en-IN')} kg</span>
               </div>
               <div className="pt-2 border-t border-gray-100 space-y-1.5">
                 <div className="flex justify-between">
-                  <span style={{ color: '#78716c' }}>Gross Growing Fee</span>
+                  <span style={{ color: '#78716c' }}>{t('growingFees.grossGrowingFee')}</span>
                   <span className="font-bold text-base" style={{ color: '#1c1917' }}>{formatCurrency(grossFee)}</span>
                 </div>
                 {totalAdv > 0 && (
                   <>
                     <div className="flex justify-between">
-                      <span style={{ color: '#78716c' }}>Advances Paid</span>
+                      <span style={{ color: '#78716c' }}>{t('growingFees.advancesPaid')}</span>
                       <span className="font-medium text-amber-700">− {formatCurrency(totalAdv)}</span>
                     </div>
                     {advances.length > 0 && (
@@ -1011,19 +1142,19 @@ export default function BatchDetail() {
                 )}
                 {postClosePaid > 0 && (
                   <div className="flex justify-between">
-                    <span style={{ color: '#78716c' }}>Post-close Paid</span>
+                    <span style={{ color: '#78716c' }}>{t('growingFees.postClosePaid')}</span>
                     <span className="font-medium text-green-700">− {formatCurrency(postClosePaid)}</span>
                   </div>
                 )}
                 <div className="pt-1 border-t border-gray-100">
                   {overpaid > 0 ? (
                     <div className="flex justify-between">
-                      <span className="font-semibold text-green-700">Overpaid (credit)</span>
+                      <span className="font-semibold text-green-700">{t('growingFees.overpaidCredit')}</span>
                       <span className="font-bold text-green-700">+ {formatCurrency(overpaid)}</span>
                     </div>
                   ) : (
                     <div className="flex justify-between">
-                      <span style={{ color: '#78716c' }}>Balance Due</span>
+                      <span style={{ color: '#78716c' }}>{t('growingFees.balanceDue')}</span>
                       <span className="font-bold text-lg" style={{ color: balance > 0 ? '#dc2626' : '#15803d' }}>{formatCurrency(balance)}</span>
                     </div>
                   )}
@@ -1032,12 +1163,12 @@ export default function BatchDetail() {
             </div>
             {overpaid > 0 && (
               <div className="mt-3 rounded-lg bg-green-50 border border-green-200 px-4 py-2.5 text-sm text-green-700">
-                Advance exceeds growing fee. {formatCurrency(overpaid)} credit for farm owner.
+                {t('growingFees.overpaidMsg', { amount: formatCurrency(overpaid) })}
               </div>
             )}
             {balance > 0 && (
               <a href="/growing-fees" className="mt-4 w-full block text-center rounded-lg bg-blue-600 hover:bg-blue-700 px-4 py-2 text-sm font-semibold text-white transition">
-                Record Payment →
+                {t('growingFees.recordPaymentLink')}
               </a>
             )}
           </div>
@@ -1046,9 +1177,9 @@ export default function BatchDetail() {
 
       {/* ── Timeline ─────────────────────────────────────────────────── */}
       <div style={{ backgroundColor: '#fffffe', borderColor: '#e7e5e0' }} className="rounded-xl border shadow-sm p-5">
-        <h3 style={{ color: '#1c1917' }} className="text-sm font-semibold mb-5">Timeline</h3>
+        <h3 style={{ color: '#1c1917' }} className="text-sm font-semibold mb-5">{t('batches.timeline')}</h3>
         {timelineEvents.length === 0 ? (
-          <p style={{ color: '#78716c' }} className="text-sm text-center py-4">No events yet.</p>
+          <p style={{ color: '#78716c' }} className="text-sm text-center py-4">{t('batches.noEvents')}</p>
         ) : (
           <div className="relative">
             <div className="absolute left-[19px] top-0 bottom-0 w-0.5" style={{ backgroundColor: '#e7e5e0' }} />
@@ -1079,28 +1210,28 @@ export default function BatchDetail() {
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
         <div className="w-full max-w-sm bg-white rounded-2xl shadow-xl p-6">
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-base font-semibold text-gray-800">Edit Batch</h2>
+            <h2 className="text-base font-semibold text-gray-800">{t('batches.editBatch')}</h2>
             <button onClick={() => setEditModal(false)} className="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
           </div>
           <form onSubmit={handleEditBatch} className="space-y-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Start Date *</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">{t('batches.startDate')} *</label>
               <input required type="date" value={editForm.start_date}
                 onChange={e => setEditForm(p => ({ ...p, start_date: e.target.value }))}
                 className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400" />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Chick Count *</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">{t('batches.chickCount')} *</label>
               <input required type="number" min="1" value={editForm.chick_count}
                 onChange={e => setEditForm(p => ({ ...p, chick_count: e.target.value }))}
                 className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400" />
             </div>
             <div className="flex gap-3 pt-1">
               <button type="button" onClick={() => setEditModal(false)}
-                className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition">Cancel</button>
+                className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition">{t('common.cancel')}</button>
               <button type="submit" disabled={saving}
                 className="flex-1 rounded-lg bg-amber-500 hover:bg-amber-600 disabled:opacity-60 px-4 py-2 text-sm font-semibold text-white transition">
-                {saving ? 'Saving…' : 'Save'}
+                {saving ? t('batches.saving') : t('common.save')}
               </button>
             </div>
           </form>
@@ -1113,13 +1244,13 @@ export default function BatchDetail() {
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
         <div className="w-full max-w-sm bg-white rounded-2xl shadow-xl p-6">
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-base font-semibold text-gray-800">Set Mortality Count</h2>
+            <h2 className="text-base font-semibold text-gray-800">{t('batches.setMortalityCount')}</h2>
             <button onClick={() => setMortalityModal(false)} className="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
           </div>
           <form onSubmit={handleMortality} className="space-y-4">
-            <p className="text-sm text-gray-500">Total number of birds that have died in this batch.</p>
+            <p className="text-sm text-gray-500">{t('batches.mortalityDesc')}</p>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Mortality Count *</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">{t('batches.mortalityCount')} *</label>
               <input required type="number" min="0" value={mortalityVal}
                 onChange={e => setMortalityVal(e.target.value)}
                 className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-400" />
@@ -1127,10 +1258,10 @@ export default function BatchDetail() {
             {actionError && <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{actionError}</p>}
             <div className="flex gap-3 pt-1">
               <button type="button" onClick={() => setMortalityModal(false)}
-                className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition">Cancel</button>
+                className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition">{t('common.cancel')}</button>
               <button type="submit" disabled={saving}
                 className="flex-1 rounded-lg bg-red-600 hover:bg-red-700 disabled:opacity-60 px-4 py-2 text-sm font-semibold text-white transition">
-                {saving ? 'Saving…' : 'Update'}
+                {saving ? t('batches.saving') : t('batches.update')}
               </button>
             </div>
           </form>
@@ -1142,19 +1273,18 @@ export default function BatchDetail() {
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
         <div className="w-full max-w-sm bg-white rounded-2xl shadow-xl p-6">
           <div className="flex items-center justify-between mb-3">
-            <h2 className="text-base font-semibold text-gray-800">Confirm Status Change</h2>
+            <h2 className="text-base font-semibold text-gray-800">{t('batches.confirmStatusChange')}</h2>
             <button onClick={() => setConfirmModal(null)} className="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
           </div>
           <p className="text-sm text-gray-600 mb-5">
-            Mark this batch as <span className="font-semibold text-gray-900">{confirmModal.label}</span>?
-            This will change the batch status.
+            {t('batches.confirmStatusMsg', { label: confirmModal.label })}
           </p>
           <div className="flex gap-3">
             <button
               onClick={() => setConfirmModal(null)}
               className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition"
             >
-              Cancel
+              {t('common.cancel')}
             </button>
             <button
               onClick={handleMarkStatus}
@@ -1166,7 +1296,7 @@ export default function BatchDetail() {
                   confirmModal.newStatus === 'closed' ? '#6b7280' : '#16a34a'
               }}
             >
-              {saving ? 'Saving…' : `Yes, ${confirmModal.label}`}
+              {saving ? t('batches.saving') : t('batches.yesWith', { label: confirmModal.label })}
             </button>
           </div>
         </div>
@@ -1188,17 +1318,17 @@ export default function BatchDetail() {
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
         <div className="w-full max-w-sm bg-white rounded-2xl shadow-xl p-6">
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-base font-semibold text-gray-800">Record Sale</h2>
+            <h2 className="text-base font-semibold text-gray-800">{t('batches.recordSaleTitle')}</h2>
             <button onClick={() => setSaleModal(false)} className="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
           </div>
           <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-xs text-amber-800 mb-4">
-            Batch {fmtDate(batch.start_date)} · {Number(batch.chick_count).toLocaleString('en-IN')} chicks
+            {t('batches.title')} {fmtDate(batch.start_date)} · {Number(batch.chick_count).toLocaleString('en-IN')} chicks
           </div>
           <form onSubmit={handleSale} className="space-y-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Vendor *</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">{t('sales.vendor')} *</label>
               {vendors.length === 0 ? (
-                <p className="text-sm text-red-500">No vendors found. Add a vendor first.</p>
+                <p className="text-sm text-red-500">{t('batches.noVendorsFound')}</p>
               ) : (
                 <select required value={saleForm.vendor_id}
                   onChange={e => setSaleForm(p => ({ ...p, vendor_id: e.target.value }))}
@@ -1209,7 +1339,7 @@ export default function BatchDetail() {
             </div>
             <div className="grid grid-cols-3 gap-3">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">No. of Chickens *</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{t('batches.chickensNo')} *</label>
                 <input required type="number" min="1" step="1" value={saleForm.chicken_count}
                   onChange={e => setSaleForm(p => ({ ...p, chicken_count: e.target.value }))}
                   placeholder="e.g. 500"
@@ -1221,20 +1351,22 @@ export default function BatchDetail() {
                   const entered = parseInt(saleForm.chicken_count) || 0
                   return (
                     <p className={`text-xs mt-1 font-medium ${entered > available ? 'text-red-600' : 'text-gray-400'}`}>
-                      {entered > available ? `⚠ Exceeds available (${available.toLocaleString('en-IN')})` : `Available: ${available.toLocaleString('en-IN')} birds`}
+                      {entered > available
+                        ? t('batches.exceedsAvailable', { count: available.toLocaleString('en-IN') })
+                        : t('batches.availableBirds', { count: available.toLocaleString('en-IN') })}
                     </p>
                   )
                 })()}
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Kg Sold *</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{t('sales.kgSold')} *</label>
                 <input required type="number" min="0.01" step="0.01" value={saleForm.kg_sold}
                   onChange={e => setSaleForm(p => ({ ...p, kg_sold: e.target.value }))}
                   placeholder="e.g. 150"
                   className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400" />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Price / kg (₹) *</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{t('sales.pricePerKg')} (₹) *</label>
                 <input required type="number" min="0.01" step="0.01" value={saleForm.price_per_kg}
                   onChange={e => setSaleForm(p => ({ ...p, price_per_kg: e.target.value }))}
                   placeholder="e.g. 95"
@@ -1243,14 +1375,14 @@ export default function BatchDetail() {
             </div>
             {saleForm.kg_sold && saleForm.price_per_kg && (
               <div className="bg-green-50 border border-green-200 rounded-lg px-4 py-2.5 flex justify-between items-center">
-                <span className="text-xs font-medium text-green-700">Total</span>
+                <span className="text-xs font-medium text-green-700">{t('common.total')}</span>
                 <span className="text-base font-bold text-green-700">
                   {formatCurrency(parseFloat(saleForm.kg_sold) * parseFloat(saleForm.price_per_kg))}
                 </span>
               </div>
             )}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Date *</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">{t('common.date')} *</label>
               <input required type="date" value={saleForm.date}
                 onChange={e => setSaleForm(p => ({ ...p, date: e.target.value }))}
                 className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400" />
@@ -1258,13 +1390,49 @@ export default function BatchDetail() {
             {actionError && <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{actionError}</p>}
             <div className="flex gap-3 pt-1">
               <button type="button" onClick={() => setSaleModal(false)}
-                className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition">Cancel</button>
+                className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition">{t('common.cancel')}</button>
               <button type="submit" disabled={saving || vendors.length === 0}
                 className="flex-1 rounded-lg bg-amber-500 hover:bg-amber-600 disabled:opacity-60 px-4 py-2 text-sm font-semibold text-white transition">
-                {saving ? 'Saving…' : 'Save Sale'}
+                {saving ? t('batches.saving') : t('batches.saveSale')}
               </button>
             </div>
           </form>
+        </div>
+      </div>
+    )}
+
+    {/* ── Stock Return Modal ─────────────────────────────────────────────── */}
+    {returnModal && (
+      <StockReturnModal
+        distribution={returnModal}
+        onClose={() => setReturnModal(null)}
+        onSaved={() => { setReturnModal(null); refresh() }}
+      />
+    )}
+
+    {/* ── Post-close Stock Return Prompt ────────────────────────────────── */}
+    {postCloseModal && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+        <div className="w-full max-w-sm bg-white rounded-2xl shadow-xl p-6">
+          <div className="text-center mb-5">
+            <p className="text-4xl mb-3">📦</p>
+            <h2 className="text-lg font-semibold text-gray-800 mb-2">{t('batches.batchClosedLeftover')}</h2>
+            <p className="text-sm text-gray-600">{t('batches.batchClosedLeftoverMsg')}</p>
+          </div>
+          <div className="flex gap-3">
+            <button
+              onClick={() => setPostCloseModal(false)}
+              className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 transition"
+            >
+              {t('batches.noLeftoverStock')}
+            </button>
+            <button
+              onClick={() => { setPostCloseModal(false); navigate(`/farms/${farmId}`) }}
+              className="flex-1 rounded-lg bg-orange-500 hover:bg-orange-600 px-4 py-2 text-sm font-semibold text-white transition"
+            >
+              {t('batches.goToFarmPage')}
+            </button>
+          </div>
         </div>
       </div>
     )}

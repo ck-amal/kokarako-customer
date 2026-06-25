@@ -1,11 +1,10 @@
 import { useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { supabase } from '../lib/supabaseClient'
+import { formatDate } from '../utils/dateFormat'
+import { useAuth } from '../contexts/AuthContext'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function fmtDate(d) {
-  return new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
-}
 
 function fmtQty(n) {
   return Number(n || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })
@@ -28,6 +27,7 @@ const REF_LABELS = {
 // ─── History drawer ───────────────────────────────────────────────────────────
 
 function HistoryDrawer({ item, entries, onClose }) {
+  const { t, i18n } = useTranslation()
   return (
     <div className="fixed inset-0 z-50 flex">
       {/* Backdrop */}
@@ -50,15 +50,15 @@ function HistoryDrawer({ item, entries, onClose }) {
 
         <div className="overflow-y-auto flex-1 px-5 py-4">
           {entries.length === 0 ? (
-            <p className="text-center text-gray-400 py-10 text-sm">No ledger entries found.</p>
+            <p className="text-center text-gray-400 py-10 text-sm">{t('stock.noStockItems')}</p>
           ) : (
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider border-b border-gray-100 pb-2">
-                  <th className="pb-2">Date</th>
-                  <th className="pb-2 text-center">In / Out</th>
-                  <th className="pb-2 text-right">Quantity</th>
-                  <th className="pb-2">Source</th>
+                  <th className="pb-2">{t('common.date')}</th>
+                  <th className="pb-2 text-center">{t('stock.stockIn')} / {t('stock.stockOut')}</th>
+                  <th className="pb-2 text-right">{t('procurement.quantity')}</th>
+                  <th className="pb-2">{t('stock.triggeredBy')}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
@@ -66,11 +66,11 @@ function HistoryDrawer({ item, entries, onClose }) {
                   const ref = REF_LABELS[e.reference_type] || { label: e.reference_type, color: 'text-gray-500' }
                   return (
                     <tr key={e.id} className="hover:bg-gray-50">
-                      <td className="py-2.5 text-gray-500 whitespace-nowrap">{fmtDate(e.date)}</td>
+                      <td className="py-2.5 text-gray-500 whitespace-nowrap">{formatDate(e.date, i18n.language)}</td>
                       <td className="py-2.5 text-center">
                         <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-bold
                           ${e.change_type === 'in' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-600'}`}>
-                          {e.change_type === 'in' ? '▲ IN' : '▼ OUT'}
+                          {e.change_type === 'in' ? `▲ ${t('stock.stockIn')}` : `▼ ${t('stock.stockOut')}`}
                         </span>
                       </td>
                       <td className="py-2.5 text-right font-semibold text-gray-800">
@@ -92,6 +92,8 @@ function HistoryDrawer({ item, entries, onClose }) {
 // ─── Main page ────────────────────────────────────────────────────────────────
 
 export default function Stock() {
+  const { t, i18n } = useTranslation()
+  const { organization, canEdit } = useAuth()
   const [ledger,       setLedger]       = useState([])
   const [reorderMap,   setReorderMap]   = useState({}) // item_name (lowercase) → reorder_level
   const [kgPerUnitMap, setKgPerUnitMap] = useState({}) // item_name (lowercase) → kg_per_unit
@@ -108,8 +110,8 @@ export default function Stock() {
   async function fetchData() {
     setLoading(true)
     const [{ data: ledgerData }, { data: stockData }] = await Promise.all([
-      supabase.from('stock_ledger').select('*').order('date', { ascending: false }),
-      supabase.from('stock').select('id, item_name, reorder_level, kg_per_unit'),
+      supabase.from('stock_ledger').select('*').eq('organization_id', organization?.id).order('date', { ascending: false }),
+      supabase.from('stock').select('id, item_name, reorder_level, kg_per_unit').eq('organization_id', organization?.id),
     ])
 
     setLedger(ledgerData || [])
@@ -135,7 +137,7 @@ export default function Stock() {
     const stockId = stockIdMap[key]
     if (!stockId) return
     setKgSaving(true)
-    await supabase.from('stock').update({ kg_per_unit: parseFloat(kgEditVal) || null }).eq('id', stockId)
+    await supabase.from('stock').update({ kg_per_unit: parseFloat(kgEditVal) || null }).eq('id', stockId).eq('organization_id', organization?.id)
     setKgSaving(false)
     setKgEditItem(null)
     fetchData()
@@ -205,9 +207,9 @@ export default function Stock() {
   }
 
   function statusLabel(item) {
-    if (item.balance <= 0) return { text: 'Empty', cls: 'bg-gray-100 text-gray-500' }
-    if (item.reorderLevel > 0 && item.balance <= item.reorderLevel) return { text: 'Low', cls: 'bg-red-100 text-red-600' }
-    return { text: 'OK', cls: 'bg-green-100 text-green-700' }
+    if (item.balance <= 0) return { text: t('stock.outOfStock'), cls: 'bg-gray-100 text-gray-500' }
+    if (item.reorderLevel > 0 && item.balance <= item.reorderLevel) return { text: t('stock.lowStock'), cls: 'bg-red-100 text-red-600' }
+    return { text: t('stock.inStock'), cls: 'bg-green-100 text-green-700' }
   }
 
   return (
@@ -215,7 +217,7 @@ export default function Stock() {
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-bold text-gray-800">Stock</h1>
+          <h1 className="text-2xl font-bold text-gray-800">{t('stock.title')}</h1>
           <p className="text-sm text-gray-500 mt-0.5">Live inventory — driven by procurement &amp; distributions</p>
         </div>
       </div>
@@ -226,13 +228,13 @@ export default function Stock() {
           {emptyCount > 0 && (
             <div className="flex items-center gap-2 rounded-xl bg-red-50 border border-red-200 px-4 py-2.5 text-sm text-red-700">
               <span className="font-bold">⚠</span>
-              <span><span className="font-semibold">{emptyCount} item{emptyCount > 1 ? 's' : ''}</span> out of stock</span>
+              <span><span className="font-semibold">{emptyCount} item{emptyCount > 1 ? 's' : ''}</span> {t('stock.outOfStock')}</span>
             </div>
           )}
           {lowCount > 0 && (
             <div className="flex items-center gap-2 rounded-xl bg-yellow-50 border border-yellow-200 px-4 py-2.5 text-sm text-yellow-700">
               <span className="font-bold">↓</span>
-              <span><span className="font-semibold">{lowCount} item{lowCount > 1 ? 's' : ''}</span> below reorder level</span>
+              <span><span className="font-semibold">{lowCount} item{lowCount > 1 ? 's' : ''}</span> {t('stock.lowStock')}</span>
             </div>
           )}
         </div>
@@ -242,10 +244,10 @@ export default function Stock() {
       {!loading && items.length > 0 && (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
           {[
-            { label: 'Total Items',  value: items.length,  color: 'text-gray-800'  },
-            { label: 'In Stock',     value: items.filter(i => i.balance > 0 && !(i.reorderLevel > 0 && i.balance <= i.reorderLevel)).length, color: 'text-green-600' },
-            { label: 'Low Stock',    value: lowCount,      color: 'text-red-500'   },
-            { label: 'Out of Stock', value: emptyCount,    color: 'text-gray-400'  },
+            { label: t('stock.currentStock'),  value: items.length,  color: 'text-gray-800'  },
+            { label: t('stock.inStock'),     value: items.filter(i => i.balance > 0 && !(i.reorderLevel > 0 && i.balance <= i.reorderLevel)).length, color: 'text-green-600' },
+            { label: t('stock.lowStock'),    value: lowCount,      color: 'text-red-500'   },
+            { label: t('stock.outOfStock'), value: emptyCount,    color: 'text-gray-400'  },
           ].map(({ label, value, color }) => (
             <div key={label} className="bg-white rounded-xl border border-gray-100 shadow-sm px-4 py-3">
               <p className="text-xs text-gray-500 font-medium">{label}</p>
@@ -259,18 +261,18 @@ export default function Stock() {
       <div className="flex flex-wrap gap-3 mb-4">
         <input
           value={search} onChange={e => setSearch(e.target.value)}
-          placeholder="Search items…"
+          placeholder={`${t('common.search')}…`}
           className="rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 w-48"
         />
         <div className="flex rounded-lg border border-gray-300 overflow-hidden text-sm">
-          {['all', ...allTypes].map(t => (
+          {['all', ...allTypes].map(type => (
             <button
-              key={t}
-              onClick={() => setTypeFilter(t)}
+              key={type}
+              onClick={() => setTypeFilter(type)}
               className={`px-3 py-2 font-medium capitalize transition
-                ${typeFilter === t ? 'bg-amber-500 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
+                ${typeFilter === type ? 'bg-amber-500 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
             >
-              {t}
+              {type === 'all' ? t('common.all') : type}
             </button>
           ))}
         </div>
@@ -286,7 +288,7 @@ export default function Stock() {
           <div className="flex flex-col items-center justify-center py-20 text-gray-400">
             <span className="text-5xl mb-3">📦</span>
             <p className="text-sm font-medium">
-              {items.length === 0 ? 'No stock movements recorded yet' : 'No items match your filters'}
+              {items.length === 0 ? t('stock.noStockItems') : t('common.noData')}
             </p>
             {items.length === 0 && (
               <p className="text-xs mt-1 text-gray-400">Record a procurement to start tracking stock</p>
@@ -297,14 +299,14 @@ export default function Stock() {
             <table className="w-full text-sm min-w-[700px]">
               <thead>
                 <tr className="bg-gray-50 border-b border-gray-100 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                  <th className="px-5 py-3">Item</th>
-                  <th className="px-5 py-3">Type</th>
-                  <th className="px-5 py-3 text-right">Total In</th>
-                  <th className="px-5 py-3 text-right">Total Out</th>
-                  <th className="px-5 py-3 text-right">Balance</th>
-                  <th className="px-5 py-3 text-center">Status</th>
+                  <th className="px-5 py-3">{t('procurement.item')}</th>
+                  <th className="px-5 py-3">{t('procurement.itemType')}</th>
+                  <th className="px-5 py-3 text-right">{t('stock.stockIn')}</th>
+                  <th className="px-5 py-3 text-right">{t('stock.stockOut')}</th>
+                  <th className="px-5 py-3 text-right">{t('stock.currentStock')}</th>
+                  <th className="px-5 py-3 text-center">{t('common.status')}</th>
                   <th className="px-5 py-3 text-right">kg / Unit</th>
-                  <th className="px-5 py-3 text-right">History</th>
+                  <th className="px-5 py-3 text-right">{t('stock.stockHistory')}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
@@ -315,7 +317,7 @@ export default function Stock() {
                       <td className="px-5 py-3.5">
                         <p className="font-semibold text-gray-800">{item.item_name}</p>
                         {item.reorderLevel > 0 && (
-                          <p className="text-xs text-gray-400 mt-0.5">Reorder at {fmtQty(item.reorderLevel)} {item.unit}</p>
+                          <p className="text-xs text-gray-400 mt-0.5">{t('stock.reorderLevel')} {fmtQty(item.reorderLevel)} {item.unit}</p>
                         )}
                       </td>
                       <td className="px-5 py-3.5">
@@ -339,12 +341,18 @@ export default function Stock() {
                       </td>
                       <td className="px-5 py-3.5 text-right">
                         {item.item_type === 'feed' ? (
-                          <button
-                            onClick={() => { setKgEditItem(item); setKgEditVal(item.kgPerUnit != null ? String(item.kgPerUnit) : '') }}
-                            className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition ${item.kgPerUnit != null ? 'border-green-200 text-green-700 hover:bg-green-50' : 'border-amber-200 text-amber-700 hover:bg-amber-50'}`}
-                          >
-                            {item.kgPerUnit != null ? `${item.kgPerUnit} kg` : 'Set ⚠'}
-                          </button>
+                          canEdit ? (
+                            <button
+                              onClick={() => { setKgEditItem(item); setKgEditVal(item.kgPerUnit != null ? String(item.kgPerUnit) : '') }}
+                              className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition ${item.kgPerUnit != null ? 'border-green-200 text-green-700 hover:bg-green-50' : 'border-amber-200 text-amber-700 hover:bg-amber-50'}`}
+                            >
+                              {item.kgPerUnit != null ? `${item.kgPerUnit} kg` : 'Set ⚠'}
+                            </button>
+                          ) : (
+                            <span className="text-xs text-gray-500">
+                              {item.kgPerUnit != null ? `${item.kgPerUnit} kg` : '—'}
+                            </span>
+                          )
                         ) : <span className="text-gray-300 text-xs">—</span>}
                       </td>
                       <td className="px-5 py-3.5 text-right">
@@ -352,7 +360,7 @@ export default function Stock() {
                           onClick={() => openHistory(item)}
                           className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 transition"
                         >
-                          View History
+                          {t('stock.viewHistory')}
                         </button>
                       </td>
                     </tr>
@@ -398,11 +406,11 @@ export default function Stock() {
             <div className="flex gap-3">
               <button onClick={() => setKgEditItem(null)}
                 className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition">
-                Cancel
+                {t('common.cancel')}
               </button>
               <button onClick={saveKgPerUnit} disabled={!kgEditVal || kgSaving}
                 className="flex-1 rounded-lg bg-amber-500 hover:bg-amber-600 disabled:opacity-60 px-4 py-2 text-sm font-semibold text-white transition">
-                {kgSaving ? 'Saving…' : 'Save'}
+                {kgSaving ? `${t('common.save')}…` : t('common.save')}
               </button>
             </div>
           </div>

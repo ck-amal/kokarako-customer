@@ -1,6 +1,7 @@
 import { useEffect, useState, useMemo } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { formatCurrency } from '../utils/format'
+import { useAuth } from '../contexts/AuthContext'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -122,6 +123,7 @@ function BarChart({ revenue, cogs, opex, net }) {
 // ─── Main page ────────────────────────────────────────────────────────────────
 
 export default function PLReport() {
+  const { organization } = useAuth()
   const [farms,       setFarms]       = useState([])
   const [batches,     setBatches]     = useState([])
   const [loading,     setLoading]     = useState(false)
@@ -134,6 +136,7 @@ export default function PLReport() {
   const [sales,           setSales]           = useState([])
   const [procurement,     setProcurement]     = useState([])
   const [farmExp,         setFarmExp]         = useState([])
+  const [farmExpReturns,  setFarmExpReturns]  = useState([])
   const [expenses,        setExpenses]        = useState([])
   const [fcrBatches,      setFcrBatches]      = useState([])
   const [growingFeeLedger,setGrowingFeeLedger]= useState([]) // full accrual — total_fee per closed batch
@@ -144,21 +147,21 @@ export default function PLReport() {
   useEffect(() => {
     const today = new Date().toISOString().slice(0, 10)
     Promise.all([
-      supabase.from('farms').select('id, name').order('name'),
-      supabase.from('batches').select('start_date').eq('status', 'active').order('start_date', { ascending: true }).limit(1),
+      supabase.from('farms').select('id, name').eq('organization_id', organization?.id).order('name'),
+      supabase.from('batches').select('start_date').eq('organization_id', organization?.id).eq('status', 'active').order('start_date', { ascending: true }).limit(1),
     ]).then(([{ data: farmsData }, { data: earliest }]) => {
       setFarms(farmsData || [])
       const start = earliest?.[0]?.start_date ?? monthRange(0).start
       setDateRange({ start, end: today })
     })
-  }, [])
+  }, [organization])
 
   useEffect(() => {
     if (!farmFilter) { setBatches([]); setBatchFilter(''); return }
-    supabase.from('batches').select('id, start_date, status').eq('farm_id', farmFilter).order('start_date', { ascending: false })
+    supabase.from('batches').select('id, start_date, status').eq('organization_id', organization?.id).eq('farm_id', farmFilter).order('start_date', { ascending: false })
       .then(({ data }) => setBatches(data || []))
     setBatchFilter('')
-  }, [farmFilter])
+  }, [farmFilter, organization])
 
   useEffect(() => {
     fetchReport()
@@ -173,38 +176,45 @@ export default function PLReport() {
     if (batchFilter) {
       batchIds = [batchFilter]
     } else if (farmFilter) {
-      const { data: fb } = await supabase.from('batches').select('id').eq('farm_id', farmFilter)
+      const { data: fb } = await supabase.from('batches').select('id').eq('organization_id', organization?.id).eq('farm_id', farmFilter)
       batchIds = (fb || []).map(b => b.id)
     }
 
-    const [{ data: s }, { data: p }, { data: fe }, { data: ex }, { data: soldBatchesInPeriod }] = await Promise.all([
+    const [{ data: s }, { data: p }, { data: fe }, { data: fer }, { data: ex }, { data: soldBatchesInPeriod }] = await Promise.all([
       // Sales
       (() => {
-        let q = supabase.from('sales').select('id, total_amount, date, batch_id, vendors(name)').gte('date', start).lte('date', end)
+        let q = supabase.from('sales').select('id, total_amount, date, batch_id, vendors(name)').eq('organization_id', organization?.id).gte('date', start).lte('date', end)
         if (batchIds) q = q.in('batch_id', batchIds)
         return q
       })(),
       // Procurement (chicks only for COGS)
       (() => {
-        let q = supabase.from('procurement').select('id, item_name, cost, date, type').eq('type', 'chicks').gte('date', start).lte('date', end)
+        let q = supabase.from('procurement').select('id, item_name, cost, date, type').eq('organization_id', organization?.id).eq('type', 'chicks').gte('date', start).lte('date', end)
         return q
       })(),
       // Farm expenses (distributions)
       (() => {
-        let q = supabase.from('farm_expenses').select('id, item_name, item_type, total_cost, date, batch_id, farm_id').gte('date', start).lte('date', end)
+        let q = supabase.from('farm_expenses').select('id, item_name, item_type, total_cost, date, batch_id, farm_id').eq('organization_id', organization?.id).gte('date', start).lte('date', end)
+        if (batchIds) q = q.in('batch_id', batchIds)
+        else if (farmFilter) q = q.eq('farm_id', farmFilter)
+        return q
+      })(),
+      // Farm expense returns (cost credits for stock returned from farms)
+      (() => {
+        let q = supabase.from('farm_expense_returns').select('item_type, total_cost, date, batch_id, farm_id').eq('organization_id', organization?.id).gte('date', start).lte('date', end)
         if (batchIds) q = q.in('batch_id', batchIds)
         else if (farmFilter) q = q.eq('farm_id', farmFilter)
         return q
       })(),
       // Operating/direct expenses
       (() => {
-        let q = supabase.from('expenses').select('id, category, amount, description, date, expense_category_type, batch_id').gte('date', start).lte('date', end)
+        let q = supabase.from('expenses').select('id, category, amount, description, date, expense_category_type, batch_id').eq('organization_id', organization?.id).gte('date', start).lte('date', end)
         if (batchIds) q = q.in('batch_id', batchIds)
         return q
       })(),
       // Batches closed (sold) in this period — filter by sold_at for correct accrual period
       (() => {
-        let q = supabase.from('batches').select('id').eq('status', 'sold').gte('sold_at', start).lte('sold_at', end)
+        let q = supabase.from('batches').select('id').eq('organization_id', organization?.id).eq('status', 'sold').gte('sold_at', start).lte('sold_at', end)
         if (batchIds) q = q.in('id', batchIds)
         return q
       })(),
@@ -217,6 +227,7 @@ export default function PLReport() {
       const { data } = await supabase
         .from('growing_fee_ledger')
         .select('id, batch_id, farm_id, total_fee, total_advances, amount_paid, balance_due, fcr, fcr_tier_description, farms(name), batches(start_date)')
+        .eq('organization_id', organization?.id)
         .in('batch_id', soldBatchIdsInPeriod)
       gfLedger = data || []
     }
@@ -224,6 +235,7 @@ export default function PLReport() {
     // Fetch FCR data for batches in scope that have FCR computed
     let fcrQuery = supabase.from('batches')
       .select('id, start_date, status, fcr, fcr_rating, total_feed_kg, total_sale_kg, farms(name)')
+      .eq('organization_id', organization?.id)
       .not('fcr', 'is', null)
     if (batchIds) fcrQuery = fcrQuery.in('id', batchIds)
     else if (farmFilter) fcrQuery = fcrQuery.eq('farm_id', farmFilter)
@@ -232,6 +244,7 @@ export default function PLReport() {
     setSales(s || [])
     setProcurement(p || [])
     setFarmExp(fe || [])
+    setFarmExpReturns(fer || [])
     setExpenses(ex || [])
     setGrowingFeeLedger(gfLedger)
     setFcrBatches(fcrData || [])
@@ -243,8 +256,16 @@ export default function PLReport() {
   const revenue = useMemo(() => sales.reduce((s, r) => s + Number(r.total_amount), 0), [sales])
 
   const chickCost   = useMemo(() => procurement.reduce((s, r) => s + Number(r.cost), 0), [procurement])
-  const feedCost    = useMemo(() => farmExp.filter(r => r.item_type?.toLowerCase().includes('feed')).reduce((s, r) => s + Number(r.total_cost), 0), [farmExp])
-  const medCost     = useMemo(() => farmExp.filter(r => r.item_type?.toLowerCase().includes('medicine')).reduce((s, r) => s + Number(r.total_cost), 0), [farmExp])
+  const feedCost    = useMemo(() => {
+    const gross  = farmExp.filter(r => r.item_type?.toLowerCase().includes('feed')).reduce((s, r) => s + Number(r.total_cost), 0)
+    const credit = farmExpReturns.filter(r => r.item_type?.toLowerCase().includes('feed')).reduce((s, r) => s + Number(r.total_cost), 0)
+    return Math.max(0, gross - credit)
+  }, [farmExp, farmExpReturns])
+  const medCost     = useMemo(() => {
+    const gross  = farmExp.filter(r => r.item_type?.toLowerCase().includes('medicine')).reduce((s, r) => s + Number(r.total_cost), 0)
+    const credit = farmExpReturns.filter(r => r.item_type?.toLowerCase().includes('medicine')).reduce((s, r) => s + Number(r.total_cost), 0)
+    return Math.max(0, gross - credit)
+  }, [farmExp, farmExpReturns])
   const directExp   = useMemo(() => expenses.filter(e => e.expense_category_type === 'cogs').reduce((s, e) => s + Number(e.amount), 0), [expenses])
   const totalCOGS   = chickCost + feedCost + medCost + directExp
 
@@ -277,7 +298,7 @@ export default function PLReport() {
 
   async function applyActiveBatchesPreset() {
     const today = new Date().toISOString().slice(0, 10)
-    const { data } = await supabase.from('batches').select('start_date').eq('status', 'active').order('start_date', { ascending: true }).limit(1)
+    const { data } = await supabase.from('batches').select('start_date').eq('organization_id', organization?.id).eq('status', 'active').order('start_date', { ascending: true }).limit(1)
     const start = data?.[0]?.start_date ?? monthRange(0).start
     setActivePreset('Active Batches')
     setDateRange({ start, end: today })
