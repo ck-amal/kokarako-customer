@@ -7,7 +7,7 @@ import { useAuth } from '../contexts/AuthContext'
 export default function OrgSetup() {
   const navigate = useNavigate()
   const { t } = useTranslation()
-  const { user, refreshOrg, signOut } = useAuth()
+  const { refreshOrg, signOut } = useAuth()
   const [mode,    setMode]    = useState('') // 'create' | 'join'
   const [token,   setToken]   = useState('')
   const [name,    setName]    = useState('')
@@ -19,21 +19,30 @@ export default function OrgSetup() {
     if (!name.trim()) { setError(t('errors.required')); return }
     setLoading(true); setError('')
 
+    // Read the auth user directly — /setup isn't behind ProtectedRoute, so the
+    // context user may not have loaded yet when this submits.
+    const { data: { user: authUser } } = await supabase.auth.getUser()
+    if (!authUser) { setLoading(false); navigate('/login'); return }
+
+    // Create the organisation (defaults to the Free plan); the plan is chosen next.
     const { error: orgErr } = await supabase.rpc('create_organization', {
       p_name:          name.trim(),
       p_business_name: name.trim(),
-      p_user_id:       user.id,
+      p_user_id:       authUser.id,
     })
     if (orgErr) { setError(orgErr.message); setLoading(false); return }
 
-    // Full reload so AuthContext reinitialises and picks up the new org
-    window.location.href = '/dashboard'
+    // Org created → next step: choose a plan.
+    window.location.href = '/choose-plan'
   }
 
   async function handleJoin(e) {
     e.preventDefault()
     if (!token.trim()) { setError('Enter your invitation token'); return }
     setLoading(true); setError('')
+
+    const { data: { user: authUser } } = await supabase.auth.getUser()
+    if (!authUser) { setLoading(false); navigate('/login'); return }
 
     const { data: inv, error: invErr } = await supabase
       .from('invitations')
@@ -47,7 +56,7 @@ export default function OrgSetup() {
 
     const { error: ouErr } = await supabase
       .from('organization_users')
-      .insert({ organization_id: inv.organization_id, user_id: user.id, role: inv.role })
+      .insert({ organization_id: inv.organization_id, user_id: authUser.id, role: inv.role })
     if (ouErr) { setError(ouErr.message); setLoading(false); return }
 
     await supabase.from('invitations').update({ accepted_at: new Date().toISOString() }).eq('id', inv.id)
@@ -95,6 +104,7 @@ export default function OrgSetup() {
                   placeholder="e.g. ABC Poultry Farm"
                   className="w-full rounded-lg border border-gray-300 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 transition" />
               </div>
+
               {error && <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</p>}
               <div className="flex gap-2">
                 <button type="button" onClick={() => { setMode(''); setError('') }}

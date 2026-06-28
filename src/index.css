@@ -1,8 +1,32 @@
 @import "tailwindcss";
 
+/* Class-based dark mode: `dark:` utilities apply under a .dark ancestor */
+@custom-variant dark (&:where(.dark, .dark *));
+
 :root {
   --font-english: 'Inter', sans-serif;
   --font-malayalam: 'Noto Sans Malayalam', sans-serif;
+
+  /* Semantic theme tokens (light) — used by the inline-styled pages */
+  --bg:          #f9fafb;
+  --surface:     #ffffff;
+  --surface-2:   #f3f4f6;
+  --text:        #1f2937;
+  --text-muted:  #6b7280;
+  --text-faint:  #9ca3af;
+  --border:      #e5e7eb;
+  color-scheme: light;
+}
+
+.dark {
+  --bg:          #0f172a;
+  --surface:     #1e293b;
+  --surface-2:   #334155;
+  --text:        #e2e8f0;
+  --text-muted:  #94a3b8;
+  --text-faint:  #64748b;
+  --border:      #334155;
+  color-scheme: dark;
 }
 
 [lang="ml"] {
@@ -10,3 +34,64 @@
   font-size: 1.05rem;
   line-height: 1.8;
 }
+
+/* Tailwind v4 defaults a bare `border`/`border-b` to currentColor — which is
+   light text in dark mode, showing up as bright lines. Restore a sane default
+   border colour (token-driven) so colourless borders match the theme. Explicit
+   border-* utilities still override this. */
+@layer base {
+  *, ::before, ::after { border-color: var(--border); }
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Dark-mode remap. These rules are UNLAYERED, so they win over Tailwind's
+   layered utilities without !important — flipping the neutral utility classes
+   across the whole app. Accent colours (amber/green/red/blue) are kept, with
+   their faint *-50/-100 tints darkened for contrast.
+   ────────────────────────────────────────────────────────────────────────── */
+.dark body { background-color: var(--bg); color: var(--text); }
+
+/* surfaces */
+.dark .bg-white      { background-color: var(--surface); }
+.dark .bg-gray-50    { background-color: var(--bg); }
+.dark .bg-gray-100   { background-color: var(--surface-2); }
+.dark .bg-gray-200   { background-color: var(--surface-2); }
+
+/* text */
+.dark .text-gray-900,
+.dark .text-gray-800,
+.dark .text-gray-700 { color: var(--text); }
+.dark .text-gray-600,
+.dark .text-gray-500 { color: var(--text-muted); }
+.dark .text-gray-400,
+.dark .text-gray-300 { color: var(--text-faint); }
+
+/* borders + dividers */
+.dark .border-gray-100,
+.dark .border-gray-200,
+.dark .border-gray-300,
+.dark .border-gray-50  { border-color: var(--border); }
+.dark .divide-gray-50  > :not(:last-child),
+.dark .divide-gray-100 > :not(:last-child),
+.dark .divide-gray-200 > :not(:last-child) { border-color: var(--border); }
+
+/* hovers */
+.dark .hover\:bg-gray-50:hover,
+.dark .hover\:bg-gray-100:hover { background-color: var(--surface-2); }
+
+/* form controls */
+.dark input,
+.dark select,
+.dark textarea { background-color: var(--bg); color: var(--text); border-color: var(--border); }
+.dark input::placeholder,
+.dark textarea::placeholder { color: var(--text-faint); }
+
+/* faint accent tints → translucent so they read on dark */
+.dark .bg-amber-50  { background-color: rgba(245,158,11,.12); }
+.dark .bg-green-50  { background-color: rgba(34,197,94,.12); }
+.dark .bg-red-50    { background-color: rgba(239,68,68,.12); }
+.dark .bg-blue-50   { background-color: rgba(59,130,246,.12); }
+.dark .bg-amber-100 { background-color: rgba(245,158,11,.18); }
+.dark .bg-green-100 { background-color: rgba(34,197,94,.18); }
+.dark .bg-red-100   { background-color: rgba(239,68,68,.18); }
+.dark .bg-blue-100  { background-color: rgba(59,130,246,.18); }

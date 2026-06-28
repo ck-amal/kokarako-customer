@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, Link } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
@@ -72,10 +72,10 @@ function GiveAdvanceModal({ farm, onClose, onSaved }) {
   async function handleSubmit(ev) {
     ev.preventDefault()
     setError('')
-    if (!form.batch_id) { setError('No active batch available'); return }
+    if (!form.batch_id) { setError(t('errors.noActiveBatch')); return }
     const amt = parseFloat(form.amount)
-    if (!amt || amt <= 0) { setError('Enter a valid amount'); return }
-    if (!form.account_id) { setError('Select an account'); return }
+    if (!amt || amt <= 0) { setError(t('errors.enterValidAmount')); return }
+    if (!form.account_id) { setError(t('errors.selectAccount')); return }
 
     setSaving(true)
 
@@ -122,7 +122,7 @@ function GiveAdvanceModal({ farm, onClose, onSaved }) {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
       <div className="w-full max-w-lg bg-white rounded-2xl shadow-xl p-6 max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between mb-5">
-          <h2 className="text-lg font-semibold text-gray-800">Growing Fee Advance Payment</h2>
+          <h2 className="text-lg font-semibold text-gray-800">{t('growingFees.advancePaymentTitle')}</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
         </div>
 
@@ -137,7 +137,7 @@ function GiveAdvanceModal({ farm, onClose, onSaved }) {
           </div>
         ) : activeBatches.length === 0 ? (
           <div className="rounded-xl bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-800 mb-4">
-            {t('distributions.noActiveBatch')}. Advances can only be given during an active batch.
+            {t('growingFees.noActiveBatchAdvance')}
           </div>
         ) : (
           <form onSubmit={handleSubmit} className="space-y-4">
@@ -165,10 +165,10 @@ function GiveAdvanceModal({ farm, onClose, onSaved }) {
             {/* Account */}
             {accounts.length > 0 && (
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Pay From Account *</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{t('growingFees.payFromAccountLabel')}</label>
                 <select required value={form.account_id} onChange={set('account_id')}
                   className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-green-400">
-                  <option value="">Select account…</option>
+                  <option value="">{t('growingFees.selectAccount')}</option>
                   {accounts.map(a => (
                     <option key={a.id} value={a.id}>
                       {a.type === 'cash' ? '💵' : a.type === 'bank' ? '🏦' : '📱'} {a.name}
@@ -180,7 +180,7 @@ function GiveAdvanceModal({ farm, onClose, onSaved }) {
 
             {/* Amount */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Amount (₹) *</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">{t('growingFees.amountRs')} *</label>
               <div className="relative">
                 <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm font-medium">₹</span>
                 <input required type="number" min="0.01" step="0.01" value={form.amount} onChange={set('amount')}
@@ -192,32 +192,32 @@ function GiveAdvanceModal({ farm, onClose, onSaved }) {
             {/* Date + Method */}
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Payment Date *</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{t('growingFees.paymentDate')} *</label>
                 <input required type="date" value={form.payment_date} onChange={set('payment_date')}
                   className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-400" />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Payment Method</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{t('growingFees.paymentMethod')}</label>
                 <select value={form.payment_method} onChange={set('payment_method')}
                   className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-green-400">
-                  <option>Cash</option>
-                  <option>Bank Transfer</option>
-                  <option>Cheque</option>
-                  <option>Other</option>
+                  <option>{t('suppliers.methods.cash')}</option>
+                  <option>{t('suppliers.methods.bankTransfer')}</option>
+                  <option>{t('suppliers.methods.cheque')}</option>
+                  <option>{t('suppliers.methods.other')}</option>
                 </select>
               </div>
             </div>
 
             {/* Reference */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Reference Number <span className="text-gray-400 font-normal">(optional)</span></label>
-              <input value={form.reference_number} onChange={set('reference_number')} placeholder="e.g. Cheque no. or UTR"
+              <label className="block text-sm font-medium text-gray-700 mb-1">{t('growingFees.referenceNumber')} <span className="text-gray-400 font-normal">({t('common.optional')})</span></label>
+              <input value={form.reference_number} onChange={set('reference_number')} placeholder={t('growingFees.referenceNumberOptional')}
                 className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-400" />
             </div>
 
             {/* Notes */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">{t('common.notes')} <span className="text-gray-400 font-normal">(optional)</span></label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">{t('common.notes')} <span className="text-gray-400 font-normal">({t('common.optional')})</span></label>
               <textarea rows={2} value={form.notes} onChange={set('notes')}
                 className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-green-400" />
             </div>
@@ -229,7 +229,7 @@ function GiveAdvanceModal({ farm, onClose, onSaved }) {
                 className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition">{t('common.cancel')}</button>
               <button type="submit" disabled={saving}
                 className="flex-1 rounded-lg bg-green-600 hover:bg-green-700 disabled:opacity-60 px-4 py-2 text-sm font-semibold text-white transition">
-                {saving ? t('common.loading') : 'Record Advance'}
+                {saving ? t('common.loading') : t('growingFees.recordAdvanceBtn')}
               </button>
             </div>
           </form>
@@ -248,7 +248,7 @@ function GiveAdvanceModal({ farm, onClose, onSaved }) {
 
 // ─── Farm Create / Edit Modal ─────────────────────────────────────────────────
 
-function FarmModal({ farm, onClose, onSaved }) {
+function FarmModal({ farm, maxFarms, onClose, onSaved }) {
   const { organization } = useAuth()
   const { t } = useTranslation()
   const isEdit = Boolean(farm)
@@ -281,7 +281,15 @@ function FarmModal({ farm, onClose, onSaved }) {
       ? await supabase.from('farms').update(payload).eq('id', farm.id).eq('organization_id', organization?.id)
       : await supabase.from('farms').insert({ ...payload, organization_id: organization?.id })
 
-    if (error) { setError(error.message); setSaving(false) }
+    if (error) {
+      // DB hard-enforces the plan limit; surface a friendly message instead of the raw error.
+      const friendly = error.message?.includes('FARM_LIMIT_REACHED')
+        ? (maxFarms != null
+            ? `Farm limit reached (${maxFarms} / ${maxFarms}). Upgrade your plan to add more.`
+            : 'Farm limit reached. Upgrade your plan to add more farms.')
+        : error.message
+      setError(friendly); setSaving(false)
+    }
     else onSaved()
   }
 
@@ -360,7 +368,7 @@ function DeleteModal({ farm, onClose, onDeleted }) {
         <p className="text-sm text-gray-600 mb-1">
           {t('farms.deleteConfirm')} <span className="font-semibold">{farm.name}</span>?
         </p>
-        <p className="text-xs text-red-500 mb-5">This will fail if the farm has existing batches.</p>
+        <p className="text-xs text-red-500 mb-5">{t('farms.deleteWarning')}</p>
 
         {error && (
           <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 mb-4">{error}</p>
@@ -397,8 +405,8 @@ function FarmCard({ farm, batchInfo, onEdit, onDelete, onAdvance, onClick, canEd
       onClick={onClick}
       className="relative flex items-center gap-4 rounded-xl border px-5 py-4 cursor-pointer transition-all duration-150 hover:shadow-md"
       style={{
-        backgroundColor: hasActive ? '#f9fefb' : '#fff8f8',
-        borderColor:     hasActive ? '#bbf7d0' : '#fecaca',
+        backgroundColor: hasActive ? 'var(--surface)' : 'var(--surface-2)',
+        borderColor:     'var(--border)',
       }}
     >
       {/* Left: main info */}
@@ -487,6 +495,7 @@ export default function Farms() {
 
   const [farms,        setFarms]        = useState([])
   const [farmBatchMap, setFarmBatchMap] = useState({}) // farm_id → { activeBatchCount, liveChicks, nextHarvestDays, totalBatches }
+  const [maxFarms,     setMaxFarms]     = useState(null) // plan limit; null = unlimited
   const [loading,      setLoading]      = useState(true)
   const [modalOpen,    setModalOpen]    = useState(false)
   const [editingFarm,  setEditingFarm]  = useState(null)
@@ -500,12 +509,15 @@ export default function Farms() {
 
   async function fetchData() {
     setLoading(true)
-    const [{ data: farmsData }, { data: batchData }] = await Promise.all([
+    const planKey = organization?.subscription_plan || 'free'
+    const [{ data: farmsData }, { data: batchData }, { data: planData }] = await Promise.all([
       supabase.from('farms').select('*').eq('organization_id', organization?.id).order('name'),
       supabase.from('batches').select('farm_id, chick_count, mortality_count, start_date, status').eq('organization_id', organization?.id),
+      supabase.from('plans').select('max_farms').eq('key', planKey).maybeSingle(),
     ])
 
     setFarms(farmsData || [])
+    setMaxFarms(planData?.max_farms ?? null) // unknown plan / no limit → unlimited
 
     // Build per-farm batch info
     const map = {}
@@ -553,6 +565,10 @@ export default function Farms() {
     return a.name.localeCompare(b.name)
   })
 
+  // ── Plan limit (UX gate; DB hard-enforces via trigger) ───────────────────
+  const farmCount   = farms.length
+  const atFarmLimit = maxFarms != null && farmCount >= maxFarms
+
   return (
     <div>
       {/* Header */}
@@ -562,14 +578,30 @@ export default function Farms() {
           <p className="text-sm text-gray-500 mt-0.5">Manage your farm locations</p>
         </div>
         {canEdit && (
-          <button
-            onClick={() => { setEditingFarm(null); setModalOpen(true) }}
-            className="inline-flex items-center gap-2 rounded-lg bg-amber-500 hover:bg-amber-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition"
-          >
-            <span className="text-base leading-none">+</span> {t('farms.addFarm')}
-          </button>
+          <div className="flex flex-col items-end gap-1">
+            <button
+              onClick={() => { setEditingFarm(null); setModalOpen(true) }}
+              disabled={atFarmLimit}
+              className="inline-flex items-center gap-2 rounded-lg bg-amber-500 hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed px-4 py-2 text-sm font-semibold text-white shadow-sm transition"
+            >
+              <span className="text-base leading-none">+</span> {t('farms.addFarm')}
+            </button>
+            {maxFarms != null && (
+              <span className="text-xs text-gray-400">{farmCount} / {maxFarms} farms used</span>
+            )}
+          </div>
         )}
       </div>
+
+      {/* Plan limit notice */}
+      {canEdit && atFarmLimit && (
+        <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          <span>Farm limit reached ({farmCount} / {maxFarms}). Upgrade your plan to add more.</span>
+          <Link to="/settings/organization" className="font-semibold text-amber-700 underline hover:text-amber-900 whitespace-nowrap">
+            Upgrade plan
+          </Link>
+        </div>
+      )}
 
       {/* Filters */}
       <div className="flex flex-wrap gap-3 mb-6">
@@ -624,7 +656,8 @@ export default function Farms() {
             canEdit && (
               <button
                 onClick={() => { setEditingFarm(null); setModalOpen(true) }}
-                className="mt-4 rounded-lg bg-amber-500 hover:bg-amber-600 px-4 py-2 text-sm font-semibold text-white transition"
+                disabled={atFarmLimit}
+                className="mt-4 rounded-lg bg-amber-500 hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed px-4 py-2 text-sm font-semibold text-white transition"
               >
                 {t('farms.addFarm')}
               </button>
@@ -660,6 +693,7 @@ export default function Farms() {
       {modalOpen && (
         <FarmModal
           farm={editingFarm}
+          maxFarms={maxFarms}
           onClose={() => { setModalOpen(false); setEditingFarm(null) }}
           onSaved={handleSaved}
         />

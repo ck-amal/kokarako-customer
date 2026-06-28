@@ -5,291 +5,225 @@ import { supabase } from '../lib/supabaseClient'
 import { formatCurrency } from '../utils/format'
 import { formatDate } from '../utils/dateFormat'
 import { useAuth } from '../contexts/AuthContext'
-import AuditInfo from '../components/AuditInfo'
+import AttachmentUploader from '../components/AttachmentUploader'
+import AttachmentViewer from '../components/AttachmentViewer'
+import { uploadAttachments, attachmentsByEntity } from '../lib/attachments'
 
-// ─── Record payment modal ─────────────────────────────────────────────────────
+const METHODS = [
+  { k: 'cash',   label: '💵 Cash' },
+  { k: 'online', label: '📱 Online' },
+  { k: 'cheque', label: '🧾 Cheque' },
+]
+const STATUS_STYLE  = { pending: 'bg-amber-100 text-amber-700', verified: 'bg-green-100 text-green-700', rejected: 'bg-red-100 text-red-700' }
+const STATUS_LABEL  = { pending: 'In hand', verified: 'Verified', rejected: 'Rejected' }
 
-function PaymentModal({ vendor, sales, onClose, onSaved }) {
+const today = () => new Date().toISOString().slice(0, 10)
+
+// ─── Record collection modal ──────────────────────────────────────────────────
+function CollectionModal({ editItem, onClose, onSaved }) {
   const { t, i18n } = useTranslation()
   const { organization, user } = useAuth()
   const userName = user?.user_metadata?.full_name || user?.email || 'Unknown'
-  const [form, setForm] = useState({
-    sale_id:     '',
-    amount_paid: '',
-    date:        new Date().toISOString().slice(0, 10),
-    notes:       '',
-    account_id:  '',
-  })
-  const [accounts, setAccounts] = useState([])
+  const isEdit = !!editItem
+  const [vendors, setVendors] = useState([])
+  const [sales, setSales]     = useState([])
+  const [form, setForm] = useState(editItem ? {
+    vendor_id: editItem.vendor_id || '', sale_id: editItem.sale_id || '',
+    amount_paid: String(editItem.amount_paid ?? ''), method: editItem.method || 'cash',
+    date: editItem.date || today(), notes: editItem.notes || '',
+  } : { vendor_id: '', sale_id: '', amount_paid: '', method: 'cash', date: today(), notes: '' })
+  const [files, setFiles]   = useState([])
   const [saving, setSaving] = useState(false)
   const [error, setError]   = useState('')
 
   useEffect(() => {
-    supabase.from('accounts').select('id, name, type').eq('organization_id', organization.id).eq('is_active', true).order('name')
-      .then(({ data }) => {
-        const list = data || []
-        setAccounts(list)
-        const cash = list.find(a => a.type === 'cash')
-        if (cash) setForm(f => ({ ...f, account_id: cash.id }))
-      })
+    supabase.from('vendors').select('id, name').eq('organization_id', organization.id).order('name')
+      .then(({ data }) => setVendors(data || []))
   }, [])
+
+  useEffect(() => {
+    if (!form.vendor_id) { setSales([]); return }
+    supabase.from('sales').select('id, date, total_amount').eq('organization_id', organization.id)
+      .eq('vendor_id', form.vendor_id).order('date', { ascending: false })
+      .then(({ data }) => setSales(data || []))
+  }, [form.vendor_id])
 
   function set(field) { return e => setForm(p => ({ ...p, [field]: e.target.value })) }
 
-  // balance remaining on selected sale
-  const selectedSale = sales.find(s => s.id === form.sale_id)
-  const balanceOnSale = selectedSale
-    ? Number(selectedSale.total_amount) - Number(selectedSale.collected || 0)
-    : null
-
   async function handleSubmit(e) {
     e.preventDefault()
-    if (!form.sale_id) { setError(t('cashCollection.sale')); return }
-    setError('')
-    setSaving(true)
+    if (!form.vendor_id) { setError('Select who paid (vendor)'); return }
+    if (!form.amount_paid || Number(form.amount_paid) <= 0) { setError('Enter a valid amount'); return }
+    setError(''); setSaving(true)
 
-    const remaining = Math.max(
-      0,
-      (balanceOnSale ?? Number(form.amount_paid)) - Number(form.amount_paid)
-    )
-
-    const { data: inserted, error } = await supabase.from('cash_collection').insert({
-      organization_id: organization.id,
-      vendor_id:       vendor.vendor_id,
-      sale_id:         form.sale_id,
-      amount_paid:     Number(form.amount_paid),
-      date:            form.date,
-      balance_due:     remaining,
-      notes:           form.notes.trim() || null,
-      created_by_id:   user?.id,
-      created_by_name: userName,
-    }).select('id').single()
-
-    if (error) { setError(error.message); setSaving(false); return }
-
-    if (form.account_id && inserted) {
-      await supabase.from('transactions').insert({
-        organization_id:  organization.id,
-        account_id:       form.account_id,
-        transaction_type: 'in',
-        category:         'vendor_payment',
-        description:      `Payment from ${vendor.vendor_name}`,
-        amount:           Number(form.amount_paid),
-        transaction_date: form.date,
-        reference_type:   'cash_collection',
-        reference_id:     inserted.id,
-        created_by_id:    user?.id,
-        created_by_name:  userName,
-      })
+    let entityId = editItem?.id
+    if (isEdit) {
+      const { error: updErr } = await supabase.from('cash_collection').update({
+        vendor_id:       form.vendor_id,
+        sale_id:         form.sale_id || null,
+        amount_paid:     Number(form.amount_paid),
+        method:          form.method,
+        date:            form.date,
+        notes:           form.notes.trim() || null,
+        updated_by_id:   user?.id,
+        updated_by_name: userName,
+        updated_at:      new Date().toISOString(),
+      }).eq('id', editItem.id)
+      if (updErr) { setError(updErr.message); setSaving(false); return }
+    } else {
+      const { data: cc, error: insErr } = await supabase.from('cash_collection').insert({
+        organization_id:   organization.id,
+        vendor_id:         form.vendor_id,
+        sale_id:           form.sale_id || null,
+        amount_paid:       Number(form.amount_paid),
+        method:            form.method,
+        status:            'pending',
+        date:              form.date,
+        balance_due:       0,
+        notes:             form.notes.trim() || null,
+        collected_by_id:   user?.id,
+        collected_by_name: userName,
+        created_by_id:     user?.id,
+        created_by_name:   userName,
+      }).select('id').single()
+      if (insErr) { setError(insErr.message); setSaving(false); return }
+      entityId = cc.id
     }
 
+    if (files.length) {
+      try {
+        await uploadAttachments({ organizationId: organization.id, entityType: 'cash_collection', entityId, files, user })
+      } catch (err) {
+        alert('Saved, but the file upload failed: ' + err.message)
+      }
+    }
     onSaved()
   }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
-      <div className="w-full max-w-md bg-white rounded-2xl shadow-xl p-6">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold text-gray-800">{t('cashCollection.recordPayment')}</h2>
+      <div className="w-full max-w-md bg-white rounded-2xl shadow-xl p-6 max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between mb-5">
+          <h2 className="text-lg font-semibold text-gray-800">{isEdit ? 'Edit collection' : 'Record collection'}</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
         </div>
 
-        <p className="text-sm text-gray-500 mb-5">
-          {t('vendors.title')}: <span className="font-semibold text-gray-700">{vendor.vendor_name}</span>
-          &ensp;·&ensp;{t('cashCollection.totalOutstanding')}:{' '}
-          <span className="font-semibold text-red-600">{formatCurrency(vendor.outstanding_balance)}</span>
-        </p>
-
         <form onSubmit={handleSubmit} className="space-y-4">
-
-          {/* Sale selector */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">{t('cashCollection.sale')} *</label>
-            <select
-              required value={form.sale_id} onChange={set('sale_id')}
-              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-amber-400"
-            >
-              <option value="">— select a sale —</option>
-              {sales.map(s => (
-                <option key={s.id} value={s.id}>
-                  {formatDate(s.date, i18n.language)} — {formatCurrency(s.total_amount)}
-                  {Number(s.collected || 0) > 0 ? ` (paid: ${formatCurrency(s.collected)})` : ''}
-                </option>
-              ))}
-            </select>
-            {balanceOnSale !== null && (
-              <p className="text-xs mt-1 text-gray-500">
-                {t('cashCollection.balanceDue')}: <span className="font-semibold text-red-600">{formatCurrency(balanceOnSale)}</span>
-              </p>
-            )}
-          </div>
-
-          {/* Amount */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">{t('cashCollection.amountPaid')} (₹) *</label>
-            <input
-              required type="number" min="0.01" step="0.01"
-              value={form.amount_paid} onChange={set('amount_paid')}
+            <input required type="number" min="0.01" step="0.01" value={form.amount_paid} onChange={set('amount_paid')}
               placeholder="e.g. 5000"
-              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
-            />
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400" />
           </div>
 
-          {/* Remaining preview */}
-          {form.amount_paid && balanceOnSale !== null && (
-            <div className={`rounded-lg px-4 py-2.5 text-sm border ${
-              balanceOnSale - Number(form.amount_paid) <= 0
-                ? 'bg-green-50 border-green-200 text-green-700'
-                : 'bg-amber-50 border-amber-200 text-amber-700'
-            }`}>
-              {balanceOnSale - Number(form.amount_paid) <= 0
-                ? '✓ This fully clears the sale balance'
-                : `Remaining after payment: ${formatCurrency(Math.max(0, balanceOnSale - Number(form.amount_paid)))}`}
-            </div>
-          )}
-
-          {/* Date */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">{t('cashCollection.paymentDate')} *</label>
-            <input
-              required type="date" value={form.date} onChange={set('date')}
-              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
-            />
+            <label className="block text-sm font-medium text-gray-700 mb-1">Method *</label>
+            <div className="flex gap-2">
+              {METHODS.map(m => (
+                <button type="button" key={m.k} onClick={() => setForm(p => ({ ...p, method: m.k }))}
+                  className={`flex-1 rounded-lg border px-3 py-2 text-sm font-medium transition ${
+                    form.method === m.k ? 'border-amber-400 bg-amber-50 text-amber-700' : 'border-gray-300 text-gray-600 hover:bg-gray-50'}`}>
+                  {m.label}
+                </button>
+              ))}
+            </div>
           </div>
 
-          {/* Account */}
-          {accounts.length > 0 && (
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Paid by (vendor) *</label>
+            <select required value={form.vendor_id} onChange={set('vendor_id')}
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-amber-400">
+              <option value="">— select vendor —</option>
+              {vendors.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
+            </select>
+          </div>
+
+          {sales.length > 0 && (
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Deposit to Account</label>
-              <select
-                value={form.account_id} onChange={set('account_id')}
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-amber-400"
-              >
-                <option value="">— don't record in ledger —</option>
-                {accounts.map(a => (
-                  <option key={a.id} value={a.id}>{a.name}</option>
-                ))}
+              <label className="block text-sm font-medium text-gray-700 mb-1">{t('cashCollection.sale')} <span className="text-gray-400 font-normal">({t('common.optional')})</span></label>
+              <select value={form.sale_id} onChange={set('sale_id')}
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-amber-400">
+                <option value="">— not linked to a sale —</option>
+                {sales.map(s => <option key={s.id} value={s.id}>{formatDate(s.date, i18n.language)} — {formatCurrency(s.total_amount)}</option>)}
               </select>
             </div>
           )}
 
-          {/* Notes */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              {t('common.notes')} <span className="text-gray-400 font-normal">({t('common.optional')})</span>
-            </label>
-            <input
-              type="text" value={form.notes} onChange={set('notes')}
-              placeholder="e.g. Cash via hand"
-              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
-            />
+            <label className="block text-sm font-medium text-gray-700 mb-1">{t('cashCollection.paymentDate')} *</label>
+            <input required type="date" value={form.date} onChange={set('date')}
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400" />
           </div>
 
-          {error && (
-            <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</p>
-          )}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">{t('common.notes')} <span className="text-gray-400 font-normal">({t('common.optional')})</span></label>
+            <input type="text" value={form.notes} onChange={set('notes')} placeholder="e.g. UPI ref, cash via hand"
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400" />
+          </div>
+
+          <AttachmentUploader value={files} onChange={setFiles} label={isEdit ? 'Add more files (optional)' : 'Proof / screenshot (optional)'} />
+
+          {error && <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</p>}
 
           <div className="flex gap-3 pt-1">
             <button type="button" onClick={onClose}
-              className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition">
-              {t('common.cancel')}
-            </button>
+              className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition">{t('common.cancel')}</button>
             <button type="submit" disabled={saving}
               className="flex-1 rounded-lg bg-amber-500 hover:bg-amber-600 disabled:opacity-60 px-4 py-2 text-sm font-semibold text-white transition">
-              {saving ? `${t('common.save')}…` : t('cashCollection.recordPayment')}
+              {saving ? `${t('common.save')}…` : (isEdit ? 'Update' : t('common.save'))}
             </button>
           </div>
-
         </form>
       </div>
     </div>
   )
 }
 
-// ─── Payment history drawer ───────────────────────────────────────────────────
+// ─── Verify modal (pick account) ──────────────────────────────────────────────
+function VerifyModal({ item, accounts, onClose, onDone }) {
+  const { user } = useAuth()
+  const userName = user?.user_metadata?.full_name || user?.email || 'Unknown'
+  const [accountId, setAccountId] = useState(() => {
+    const pref = accounts.find(a => a.type === (item.method === 'online' ? 'bank' : 'cash')) || accounts[0]
+    return pref?.id || ''
+  })
+  const [busy, setBusy]   = useState(false)
+  const [error, setError] = useState('')
 
-function HistoryModal({ vendor, onClose }) {
-  const { t, i18n } = useTranslation()
-  const { organization } = useAuth()
-  const [payments, setPayments] = useState([])
-  const [loading, setLoading]   = useState(true)
-
-  useEffect(() => {
-    supabase
-      .from('cash_collection')
-      .select('*, sales(date, total_amount), created_by_name, created_at')
-      .eq('organization_id', organization.id)
-      .eq('vendor_id', vendor.vendor_id)
-      .order('date', { ascending: false })
-      .then(({ data }) => { setPayments(data || []); setLoading(false) })
-  }, [vendor.vendor_id])
+  async function verify() {
+    if (!accountId) { setError('Choose an account'); return }
+    setBusy(true)
+    const { error } = await supabase.rpc('verify_cash_collection', {
+      p_id: item.id, p_account_id: accountId, p_verified_by_name: userName,
+    })
+    setBusy(false)
+    if (error) { setError(error.message); return }
+    onDone()
+  }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
-      <div className="w-full max-w-lg bg-white rounded-2xl shadow-xl p-6 max-h-[85vh] flex flex-col">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold text-gray-800">
-            Payment History — {vendor.vendor_name}
-          </h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 px-4">
+      <div className="w-full max-w-sm bg-white rounded-2xl shadow-xl p-6">
+        <h2 className="text-lg font-semibold text-gray-800">Verify {formatCurrency(item.amount_paid)}</h2>
+        <p className="text-sm text-gray-500 mt-0.5 mb-4">Post to which account?</p>
+        <div className="space-y-2">
+          {accounts.map(a => (
+            <button key={a.id} type="button" onClick={() => setAccountId(a.id)}
+              className={`w-full flex items-center gap-3 rounded-lg border px-3 py-2.5 text-sm transition ${
+                accountId === a.id ? 'border-amber-400 bg-amber-50' : 'border-gray-200 hover:bg-gray-50'}`}>
+              <span className="text-amber-500">{accountId === a.id ? '●' : '○'}</span>
+              <span className="flex-1 text-left font-medium text-gray-800">{a.name}</span>
+              <span className="text-xs text-gray-400 capitalize">{a.type}</span>
+            </button>
+          ))}
         </div>
-
-        {loading ? (
-          <div className="flex items-center justify-center py-10">
-            <div className="h-6 w-6 rounded-full border-4 border-amber-400 border-t-transparent animate-spin" />
-          </div>
-        ) : payments.length === 0 ? (
-          <p className="text-sm text-gray-400 text-center py-8">{t('cashCollection.noOutstanding')}</p>
-        ) : (
-          <div className="overflow-y-auto flex-1">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="bg-gray-50 border-b border-gray-100 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                  <th className="px-4 py-2 text-left">{t('common.date')}</th>
-                  <th className="px-4 py-2 text-right">{t('cashCollection.amountPaid')}</th>
-                  <th className="px-4 py-2 text-right">{t('cashCollection.balanceDue')}</th>
-                  <th className="px-4 py-2 text-left">{t('common.notes')}</th>
-                  <th className="px-2 py-2 text-center">
-                    <svg className="h-3.5 w-3.5 inline text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                    </svg>
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-50">
-                {payments.map(p => (
-                  <tr key={p.id} className="hover:bg-gray-50">
-                    <td className="px-4 py-3 text-gray-600 whitespace-nowrap">{formatDate(p.date, i18n.language)}</td>
-                    <td className="px-4 py-3 text-right font-semibold text-green-700">{formatCurrency(p.amount_paid)}</td>
-                    <td className="px-4 py-3 text-right">
-                      {Number(p.balance_due) > 0
-                        ? <span className="text-red-500 font-semibold">{formatCurrency(p.balance_due)}</span>
-                        : <span className="text-green-600 font-semibold">{t('vendors.collected')}</span>}
-                    </td>
-                    <td className="px-4 py-3 text-gray-400">{p.notes || '—'}</td>
-                    <td className="px-2 py-3 text-center">
-                      <AuditInfo createdByName={p.created_by_name} createdAt={p.created_at} />
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-              <tfoot>
-                <tr className="bg-gray-50 border-t border-gray-200">
-                  <td className="px-4 py-2 text-xs font-semibold text-gray-500 uppercase">{t('common.total')}</td>
-                  <td className="px-4 py-2 text-right font-bold text-gray-800">
-                    {formatCurrency(payments.reduce((s, p) => s + Number(p.amount_paid), 0))}
-                  </td>
-                  <td colSpan={2} />
-                </tr>
-              </tfoot>
-            </table>
-          </div>
-        )}
-
-        <div className="mt-4">
-          <button onClick={onClose}
-            className="w-full rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition">
-            {t('common.close')}
+        {error && <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 mt-3">{error}</p>}
+        <div className="flex gap-3 pt-4">
+          <button type="button" onClick={onClose}
+            className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition">Cancel</button>
+          <button type="button" onClick={verify} disabled={busy}
+            className="flex-1 rounded-lg bg-green-600 hover:bg-green-700 disabled:opacity-60 px-4 py-2 text-sm font-semibold text-white transition">
+            {busy ? 'Verifying…' : 'Verify & post'}
           </button>
         </div>
       </div>
@@ -297,195 +231,253 @@ function HistoryModal({ vendor, onClose }) {
   )
 }
 
-// ─── Main page ────────────────────────────────────────────────────────────────
+// ─── Collection card ──────────────────────────────────────────────────────────
+function CollectionCard({ item, files, showCollector, showActions, canEdit, onView, onEdit, onVerify, onReject }) {
+  const { i18n } = useTranslation()
+  return (
+    <div onClick={onView} className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 cursor-pointer hover:border-amber-200 transition">
+      <div className="flex items-center justify-between">
+        <span className="text-lg font-bold text-gray-800">{formatCurrency(item.amount_paid)}</span>
+        <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${STATUS_STYLE[item.status] || STATUS_STYLE.pending}`}>
+          {STATUS_LABEL[item.status] || item.status}
+        </span>
+      </div>
+      <p className="text-sm font-medium text-gray-700 mt-1.5">{item.vendors?.name || '—'}</p>
+      <div className="flex items-center justify-between mt-1 text-xs text-gray-400">
+        <span className="capitalize">{item.method || 'cash'} · {formatDate(item.date, i18n.language)}{files?.length ? ` · 📎${files.length}` : ''}</span>
+        {showCollector && <span>by {item.collected_by_name || '—'}</span>}
+      </div>
+      {canEdit && item.status === 'pending' && (
+        <div className="mt-3" onClick={e => e.stopPropagation()}>
+          <button onClick={onEdit}
+            className="w-full rounded-lg border border-amber-200 px-3 py-1.5 text-xs font-semibold text-amber-600 hover:bg-amber-50 transition">Edit</button>
+        </div>
+      )}
+      {showActions && item.status === 'pending' && (
+        <div className="flex gap-2 mt-3" onClick={e => e.stopPropagation()}>
+          <button onClick={onReject}
+            className="flex-1 rounded-lg border border-red-200 px-3 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-50 transition">Reject</button>
+          <button onClick={onVerify}
+            className="flex-1 rounded-lg bg-green-600 hover:bg-green-700 px-3 py-1.5 text-xs font-semibold text-white transition">Verify</button>
+        </div>
+      )}
+    </div>
+  )
+}
 
+// ─── Main page ────────────────────────────────────────────────────────────────
 export default function CashCollection() {
-  const { t } = useTranslation()
-  const { organization, canViewFinancials, canEdit } = useAuth()
-  const [balances, setBalances]       = useState([])
-  const [loading, setLoading]         = useState(true)
-  const [payVendor, setPayVendor]     = useState(null)  // vendor row for payment modal
-  const [histVendor, setHistVendor]   = useState(null)  // vendor row for history modal
-  const [vendorSales, setVendorSales] = useState([])    // sales for selected vendor
+  const { t, i18n } = useTranslation()
+  const { organization, user, userRole, canViewFinancials } = useAuth()
+  const myId = user?.id
+  const userName = user?.user_metadata?.full_name || user?.email || 'Unknown'
+  const canVerify  = userRole === 'owner' || userRole === 'accountant'
+  const canCollect = !!userRole && userRole !== 'viewer'
+
+  const [tab, setTab]           = useState('mine')   // mine | verify | receivables
+  const [loading, setLoading]   = useState(true)
+  const [mine, setMine]         = useState([])
+  const [queue, setQueue]       = useState([])
+  const [attByRow, setAttByRow] = useState({})
+  const [accounts, setAccounts] = useState([])
+  const [balances, setBalances] = useState([])
+  const [modalOpen, setModalOpen]   = useState(false)
+  const [editItem, setEditItem]     = useState(null)
+  const [verifyItem, setVerifyItem] = useState(null)
+  const [viewItem, setViewItem]     = useState(null)
 
   async function fetchData() {
     setLoading(true)
-    const { data } = await supabase
-      .from('vendor_balances')
-      .select('*')
-      .eq('organization_id', organization.id)
-      .order('vendor_name')
-    setBalances(data || [])
+    const { data: mineData } = await supabase.from('cash_collection')
+      .select('*, vendors(name)').eq('organization_id', organization.id)
+      .eq('collected_by_id', myId).order('created_at', { ascending: false }).limit(200)
+    const mineRows = mineData || []
+    setMine(mineRows)
+
+    let queueRows = []
+    if (canVerify) {
+      const { data } = await supabase.from('cash_collection')
+        .select('*, vendors(name)').eq('organization_id', organization.id)
+        .eq('status', 'pending').order('created_at', { ascending: true })
+      queueRows = data || []
+      setQueue(queueRows)
+    }
+
+    if (canViewFinancials) {
+      const { data } = await supabase.from('vendor_balances').select('*')
+        .eq('organization_id', organization.id).order('vendor_name')
+      setBalances(data || [])
+    }
+
+    const { data: accs } = await supabase.from('accounts').select('id, name, type')
+      .eq('organization_id', organization.id).eq('is_active', true).order('name')
+    setAccounts(accs || [])
+
+    const ids = [...new Set([...mineRows.map(r => r.id), ...queueRows.map(r => r.id)])]
+    setAttByRow(await attachmentsByEntity('cash_collection', ids, organization.id))
     setLoading(false)
   }
 
   useEffect(() => { fetchData() }, [])
 
-  // Guard — after all hooks
-  if (!canViewFinancials) return <Navigate to="/dashboard" replace />
+  // Guard — viewers (can't collect, can't view financials) have no business here
+  if (!canCollect && !canViewFinancials) return <Navigate to="/dashboard" replace />
 
-  async function openPayment(vendor) {
-    // Fetch this vendor's sales with collected amounts
-    const { data: salesData } = await supabase
-      .from('sales')
-      .select('id, date, total_amount')
-      .eq('organization_id', organization.id)
-      .eq('vendor_id', vendor.vendor_id)
-      .order('date', { ascending: false })
+  const myInHand = mine.filter(c => c.status === 'pending').reduce((s, c) => s + Number(c.amount_paid || 0), 0)
+  const myPending = mine.filter(c => c.status === 'pending').length
 
-    // For each sale, sum what's already been collected
-    const { data: collData } = await supabase
-      .from('cash_collection')
-      .select('sale_id, amount_paid')
-      .eq('organization_id', organization.id)
-      .eq('vendor_id', vendor.vendor_id)
-
-    const collectedBySale = {}
-    for (const c of (collData || [])) {
-      collectedBySale[c.sale_id] = (collectedBySale[c.sale_id] || 0) + Number(c.amount_paid)
-    }
-
-    const salesWithBalance = (salesData || []).map(s => ({
-      ...s,
-      collected: collectedBySale[s.id] || 0,
-    }))
-
-    setVendorSales(salesWithBalance)
-    setPayVendor(vendor)
+  async function reject(item) {
+    if (!window.confirm('Reject this collection? Nothing will be posted; it stays with the collector as unverified.')) return
+    const { error } = await supabase.rpc('reject_cash_collection', { p_id: item.id, p_reason: null, p_by_name: userName })
+    if (error) alert(error.message); else fetchData()
   }
 
   const totalOutstanding = balances.reduce((s, b) => s + Math.max(0, Number(b.outstanding_balance)), 0)
   const totalCollected   = balances.reduce((s, b) => s + Number(b.total_collected), 0)
   const totalSales       = balances.reduce((s, b) => s + Number(b.total_sales), 0)
 
+  const TABS = [
+    { k: 'mine', label: 'My Collections' },
+    ...(canVerify ? [{ k: 'verify', label: `To Verify${queue.length ? ` (${queue.length})` : ''}` }] : []),
+    ...(canViewFinancials ? [{ k: 'receivables', label: 'Receivables' }] : []),
+  ]
+
   return (
     <div>
-      {/* Header */}
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-800">{t('cashCollection.title')}</h1>
-        <p className="text-sm text-gray-500 mt-0.5">Track payments and outstanding balances by vendor</p>
-      </div>
-
-      {/* Summary cards */}
-      {!loading && (
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
-          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm px-5 py-4">
-            <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">{t('vendors.totalSales')}</p>
-            <p className="text-2xl font-bold text-gray-800 mt-1">{formatCurrency(totalSales)}</p>
-          </div>
-          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm px-5 py-4">
-            <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">{t('vendors.collected')}</p>
-            <p className="text-2xl font-bold text-green-600 mt-1">{formatCurrency(totalCollected)}</p>
-          </div>
-          <div className={`rounded-2xl border shadow-sm px-5 py-4 ${
-            totalOutstanding > 0
-              ? 'bg-red-50 border-red-200'
-              : 'bg-white border-gray-100'
-          }`}>
-            <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">{t('cashCollection.totalOutstanding')}</p>
-            <p className={`text-2xl font-bold mt-1 ${totalOutstanding > 0 ? 'text-red-600' : 'text-gray-800'}`}>
-              {formatCurrency(totalOutstanding)}
-            </p>
-          </div>
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-800">{t('cashCollection.title')}</h1>
+          <p className="text-sm text-gray-500 mt-0.5">Record collections, then verify them in to cash/bank</p>
         </div>
-      )}
-
-      {/* Table */}
-      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-        {loading ? (
-          <div className="flex items-center justify-center py-20">
-            <div className="h-8 w-8 rounded-full border-4 border-amber-400 border-t-transparent animate-spin" />
-          </div>
-        ) : balances.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-20 text-gray-400">
-            <span className="text-5xl mb-3">💳</span>
-            <p className="text-sm font-medium">{t('cashCollection.noOutstanding')}</p>
-            <p className="text-xs mt-1">Add vendors and record sales to see balances here</p>
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-          <table className="w-full text-sm min-w-[600px]">
-            <thead>
-              <tr className="bg-gray-50 border-b border-gray-100 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                <th className="px-5 py-3">{t('vendors.title')}</th>
-                <th className="px-5 py-3 text-right">{t('vendors.totalSales')}</th>
-                <th className="px-5 py-3 text-right">{t('vendors.collected')}</th>
-                <th className="px-5 py-3 text-right">{t('vendors.outstanding')}</th>
-                <th className="px-5 py-3 text-right">{t('common.actions')}</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-50">
-              {balances.map(v => {
-                const outstanding = Number(v.outstanding_balance)
-                const isOverdue   = outstanding > 0
-                return (
-                  <tr key={v.vendor_id} className={`transition ${isOverdue ? 'bg-red-50/40 hover:bg-red-50' : 'hover:bg-amber-50/40'}`}>
-                    <td className="px-5 py-4 font-medium text-gray-800">{v.vendor_name}</td>
-                    <td className="px-5 py-4 text-right text-gray-700">{formatCurrency(v.total_sales)}</td>
-                    <td className="px-5 py-4 text-right text-green-700 font-semibold">
-                      {formatCurrency(v.total_collected)}
-                    </td>
-                    <td className="px-5 py-4 text-right">
-                      {isOverdue ? (
-                        <span className="inline-flex items-center gap-1.5 font-bold text-red-600">
-                          <span className="h-1.5 w-1.5 rounded-full bg-red-500 animate-pulse" />
-                          {formatCurrency(outstanding)}
-                        </span>
-                      ) : (
-                        <span className="text-green-600 font-semibold">{t('vendors.collected')}</span>
-                      )}
-                    </td>
-                    <td className="px-5 py-4 text-right">
-                      <div className="inline-flex gap-2">
-                        {canEdit && (
-                          <button
-                            onClick={() => openPayment(v)}
-                            disabled={!isOverdue}
-                            className="rounded-lg border border-amber-200 px-3 py-1.5 text-xs font-medium text-amber-600 hover:bg-amber-50 transition disabled:opacity-30 disabled:cursor-not-allowed"
-                          >
-                            {t('cashCollection.recordPayment')}
-                          </button>
-                        )}
-                        <button
-                          onClick={() => setHistVendor(v)}
-                          className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 transition"
-                        >
-                          History
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-            {/* Footer totals */}
-            <tfoot>
-              <tr className="bg-gray-50 border-t border-gray-200 text-xs font-semibold text-gray-500 uppercase">
-                <td className="px-5 py-3">{t('common.total')}</td>
-                <td className="px-5 py-3 text-right text-gray-800">{formatCurrency(totalSales)}</td>
-                <td className="px-5 py-3 text-right text-green-700">{formatCurrency(totalCollected)}</td>
-                <td className="px-5 py-3 text-right text-red-600">{formatCurrency(totalOutstanding)}</td>
-                <td />
-              </tr>
-            </tfoot>
-          </table>
-          </div>
+        {canCollect && (
+          <button onClick={() => setModalOpen(true)}
+            className="inline-flex items-center gap-2 rounded-lg bg-amber-500 hover:bg-amber-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition">
+            <span className="text-base leading-none">+</span> Record collection
+          </button>
         )}
       </div>
 
-      {/* Modals */}
-      {payVendor && (
-        <PaymentModal
-          vendor={payVendor}
-          sales={vendorSales}
-          onClose={() => { setPayVendor(null); setVendorSales([]) }}
-          onSaved={() => { setPayVendor(null); setVendorSales([]); fetchData() }}
-        />
+      {/* Tabs */}
+      <div className="flex items-center gap-2 mb-5 flex-wrap">
+        {TABS.map(tb => (
+          <button key={tb.k} onClick={() => setTab(tb.k)}
+            className={`rounded-full px-4 py-1.5 text-sm font-semibold transition border ${
+              tab === tb.k ? 'bg-amber-500 text-white border-amber-500' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}>
+            {tb.label}
+          </button>
+        ))}
+      </div>
+
+      {loading ? (
+        <div className="flex items-center justify-center py-20">
+          <div className="h-8 w-8 rounded-full border-4 border-amber-400 border-t-transparent animate-spin" />
+        </div>
+      ) : tab === 'mine' ? (
+        <>
+          <div className="rounded-2xl bg-gray-900 text-white px-6 py-5 mb-5">
+            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Cash in hand</p>
+            <p className="text-3xl font-bold text-amber-400 mt-1">{formatCurrency(myInHand)}</p>
+            <p className="text-xs text-gray-300 mt-1">{myPending} pending · submit at office to get verified</p>
+          </div>
+          {mine.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-16 text-gray-400">
+              <span className="text-5xl mb-3">💳</span><p className="text-sm">No collections yet.</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+              {mine.map(item => (
+                <CollectionCard key={item.id} item={item} files={attByRow[item.id]} canEdit
+                  onView={() => setViewItem(item)} onEdit={() => setEditItem(item)} />
+              ))}
+            </div>
+          )}
+        </>
+      ) : tab === 'verify' ? (
+        queue.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-16 text-gray-400">
+            <span className="text-5xl mb-3">✅</span><p className="text-sm">Nothing to verify.</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {queue.map(item => (
+              <CollectionCard key={item.id} item={item} files={attByRow[item.id]} showCollector showActions
+                onView={() => setViewItem(item)} onVerify={() => setVerifyItem(item)} onReject={() => reject(item)} />
+            ))}
+          </div>
+        )
+      ) : (
+        // Receivables (vendor balances)
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+          {balances.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-16 text-gray-400">
+              <span className="text-5xl mb-3">📊</span><p className="text-sm">{t('cashCollection.noOutstanding')}</p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm min-w-[600px]">
+                <thead>
+                  <tr className="bg-gray-50 border-b border-gray-100 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                    <th className="px-5 py-3">{t('vendors.title')}</th>
+                    <th className="px-5 py-3 text-right">{t('vendors.totalSales')}</th>
+                    <th className="px-5 py-3 text-right">{t('vendors.collected')}</th>
+                    <th className="px-5 py-3 text-right">{t('vendors.outstanding')}</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-50">
+                  {balances.map(v => {
+                    const outstanding = Number(v.outstanding_balance)
+                    return (
+                      <tr key={v.vendor_id} className={outstanding > 0 ? 'bg-red-50/40' : ''}>
+                        <td className="px-5 py-4 font-medium text-gray-800">{v.vendor_name}</td>
+                        <td className="px-5 py-4 text-right text-gray-700">{formatCurrency(v.total_sales)}</td>
+                        <td className="px-5 py-4 text-right text-green-700 font-semibold">{formatCurrency(v.total_collected)}</td>
+                        <td className="px-5 py-4 text-right">
+                          {outstanding > 0
+                            ? <span className="font-bold text-red-600">{formatCurrency(outstanding)}</span>
+                            : <span className="text-green-600 font-semibold">{t('vendors.collected')}</span>}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+                <tfoot>
+                  <tr className="bg-gray-50 border-t border-gray-200 text-xs font-semibold text-gray-500 uppercase">
+                    <td className="px-5 py-3">{t('common.total')}</td>
+                    <td className="px-5 py-3 text-right text-gray-800">{formatCurrency(totalSales)}</td>
+                    <td className="px-5 py-3 text-right text-green-700">{formatCurrency(totalCollected)}</td>
+                    <td className="px-5 py-3 text-right text-red-600">{formatCurrency(totalOutstanding)}</td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          )}
+        </div>
       )}
-      {histVendor && (
-        <HistoryModal
-          vendor={histVendor}
-          onClose={() => setHistVendor(null)}
+
+      {/* Modals */}
+      {(modalOpen || editItem) && (
+        <CollectionModal editItem={editItem}
+          onClose={() => { setModalOpen(false); setEditItem(null) }}
+          onSaved={() => { setModalOpen(false); setEditItem(null); fetchData() }} />
+      )}
+      {verifyItem && <VerifyModal item={verifyItem} accounts={accounts} onClose={() => setVerifyItem(null)} onDone={() => { setVerifyItem(null); fetchData() }} />}
+      {viewItem && (
+        <AttachmentViewer
+          attachments={attByRow[viewItem.id] || []}
+          title={formatCurrency(viewItem.amount_paid)}
+          canDelete={canVerify || (viewItem.collected_by_id === myId && viewItem.status === 'pending')}
+          onClose={() => setViewItem(null)}
+          onDeleted={(a) => setAttByRow(prev => ({ ...prev, [viewItem.id]: (prev[viewItem.id] || []).filter(x => x.id !== a.id) }))}
+          header={
+            <div className="rounded-lg bg-gray-50 border border-gray-100 px-4 py-3 grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+              <div><span className="text-gray-400 text-xs block">{t('vendors.title')}</span>{viewItem.vendors?.name || '—'}</div>
+              <div><span className="text-gray-400 text-xs block">Method</span><span className="capitalize">{viewItem.method || 'cash'}</span></div>
+              <div><span className="text-gray-400 text-xs block">Status</span>{STATUS_LABEL[viewItem.status] || viewItem.status}</div>
+              <div><span className="text-gray-400 text-xs block">{t('common.date')}</span>{formatDate(viewItem.date, i18n.language)}</div>
+              <div><span className="text-gray-400 text-xs block">Collected by</span>{viewItem.collected_by_name || '—'}</div>
+              {viewItem.notes && <div className="col-span-2"><span className="text-gray-400 text-xs block">{t('common.notes')}</span>{viewItem.notes}</div>}
+            </div>
+          }
         />
       )}
     </div>

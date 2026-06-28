@@ -51,22 +51,12 @@ export default function InviteAccept() {
   }, [token])
 
   async function acceptInvitation(inv, userId) {
-    // Check if already a member
-    const { data: existing } = await supabase
-      .from('organization_users')
-      .select('id')
-      .eq('organization_id', inv.organization_id)
-      .eq('user_id', userId)
-      .maybeSingle()
-
-    if (!existing) {
-      const { error: ouErr } = await supabase
-        .from('organization_users')
-        .insert({ organization_id: inv.organization_id, user_id: userId, role: inv.role })
-      if (ouErr) { setError(ouErr.message); return }
-    }
-
-    await supabase.from('invitations').update({ accepted_at: new Date().toISOString() }).eq('id', inv.id)
+    const { data, error: fnErr } = await supabase.rpc('accept_invitation', {
+      p_token: token,
+      p_user_id: userId,
+    })
+    if (fnErr) { setError(fnErr.message); setLoading(false); return }
+    if (data?.error) { setError(data.error); setLoading(false); return }
     await refreshOrg()
     navigate('/dashboard')
   }
@@ -87,13 +77,31 @@ export default function InviteAccept() {
     if (form.password !== form.confirmPw) { setError(t('errors.passwordMismatch')); return }
     setLoading(true); setError('')
 
-    const { data, error: authErr } = await supabase.auth.signUp({
-      email:    invitation.email,
-      password: form.password,
-      options:  { data: { full_name: form.fullName.trim() } },
+    // Create the invited user pre-confirmed + join the org via the edge function
+    // (the invite email already verified ownership), then sign in. Keeps
+    // "Confirm email" ON for public signups without breaking the invite flow.
+    const { data, error: fnErr } = await supabase.functions.invoke('accept-invitation', {
+      body: { token, password: form.password, full_name: form.fullName.trim() },
     })
-    if (authErr) { setError(authErr.message); setLoading(false); return }
-    await acceptInvitation(invitation, data.user.id)
+    if (fnErr) { setError(fnErr.message); setLoading(false); return }
+    if (data?.error) {
+      if (data.code === 'ACCOUNT_EXISTS') {
+        setError('You already have an account for this email — switch to "I have an account" to sign in.')
+        setAuthMode('login')
+      } else {
+        setError(data.error)
+      }
+      setLoading(false)
+      return
+    }
+
+    // User now exists and is confirmed → sign in; AuthContext loads the org
+    const { error: signInErr } = await supabase.auth.signInWithPassword({
+      email: invitation.email, password: form.password,
+    })
+    if (signInErr) { setError(signInErr.message); setLoading(false); return }
+    await refreshOrg()
+    navigate('/dashboard')
   }
 
   if (status === 'loading') return (

@@ -118,7 +118,7 @@ export default function FCRReport() {
   }
 
   return (
-    <div className="space-y-5 max-w-4xl mx-auto">
+    <div className="space-y-5">
       {/* Page header */}
       <div>
         <h1 className="text-2xl font-bold text-gray-800">FCR Report</h1>
@@ -136,7 +136,7 @@ export default function FCRReport() {
           {/* ── Summary cards ─────────────────────────────────────────── */}
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             {[
-              { label: 'Batches',     value: withFCR.length,              bg: '#f8fafc',  color: '#1c1917' },
+              { label: 'Batches',     value: withFCR.length,              bg: '#f8fafc',  color: 'var(--text)' },
               { label: 'Average FCR', value: avgFCR?.toFixed(2) ?? '—',   ...fcrRatingInfo(avgFCR) },
               { label: 'Best FCR',    value: bestFCR?.toFixed(2) ?? '—',  ...fcrRatingInfo(bestFCR) },
               { label: 'Worst FCR',   value: worstFCR?.toFixed(2) ?? '—', ...fcrRatingInfo(worstFCR) },
@@ -213,7 +213,7 @@ export default function FCRReport() {
                 <table className="w-full text-sm min-w-[640px]">
                   <thead>
                     <tr className="text-left text-xs font-semibold uppercase tracking-wider text-gray-500"
-                      style={{ backgroundColor: '#fafaf5', borderBottom: '1px solid #e7e5e0' }}>
+                      style={{ backgroundColor: 'var(--surface-2)', borderBottom: '1px solid var(--border)' }}>
                       <th className="px-5 py-3">Farm</th>
                       <th className="px-5 py-3">Batch Start</th>
                       <th className="px-5 py-3">Sold On</th>
@@ -227,7 +227,7 @@ export default function FCRReport() {
                     {filtered.map((b, i) => {
                       const { label, color, bg } = fcrRatingInfo(b.fcr)
                       return (
-                        <tr key={b.id} style={{ borderBottom: i < filtered.length - 1 ? '1px solid #f5f5f4' : 'none' }}>
+                        <tr key={b.id} style={{ borderBottom: i < filtered.length - 1 ? '1px solid var(--border)' : 'none' }}>
                           <td className="px-5 py-3 font-medium text-gray-800">{b.farms?.name ?? '—'}</td>
                           <td className="px-5 py-3 text-gray-600">{fmtDate(b.start_date)}</td>
                           <td className="px-5 py-3 text-gray-600">{fmtDate(b.sold_at)}</td>

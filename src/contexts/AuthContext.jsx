@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
+import { getSubscriptionState } from '../lib/subscription'
 
 const AuthContext = createContext(null)
 
@@ -20,11 +21,12 @@ export function AuthProvider({ children }) {
       return
     }
 
+    setLoading(true)
     setUser(authUser)
 
     const { data: ouRows } = await supabase
       .from('organization_users')
-      .select('organization_id, role, organizations(id, name, business_name, phone, address, subscription_plan, is_active)')
+      .select('organization_id, role, organizations(id, name, business_name, phone, address, subscription_plan, billing_period, subscription_status, current_period_end, is_active)')
       .eq('user_id', authUser.id)
       .eq('is_active', true)
 
@@ -114,11 +116,15 @@ export function AuthProvider({ children }) {
   // Can manage team and org settings
   const canManageUsers       = isOwner
 
+  // Subscription lifecycle (paid-through date → warn / grace / block)
+  const subscriptionState = getSubscriptionState(organization)
+
   const value = {
     user,
     organization,
     userRole,
     serviceBlocked,
+    subscriptionState,
     loading,
     // role booleans
     isOwner,

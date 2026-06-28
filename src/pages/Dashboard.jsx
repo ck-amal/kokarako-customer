@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { supabase } from '../lib/supabaseClient'
 import { formatCurrency, roundCurrency } from '../utils/format'
 import { useAuth } from '../contexts/AuthContext'
+import SubscriptionBanner from '../components/SubscriptionBanner'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -144,6 +145,7 @@ export default function Dashboard() {
           .from('sales')
           .select('id, date, total_amount, vendors(name), batches(farms(name))')
           .eq('organization_id', organization?.id)
+          .eq('status', 'confirmed')
           .order('date', { ascending: false })
           .limit(5),
 
@@ -160,6 +162,7 @@ export default function Dashboard() {
           .from('sales')
           .select('total_amount')
           .eq('organization_id', organization?.id)
+          .eq('status', 'confirmed')
           .gte('date', start)
           .lte('date', end),
 
@@ -301,6 +304,9 @@ export default function Dashboard() {
           {new Date().toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
         </p>
       </div>
+
+      {/* Subscription notice (ending soon / ended) */}
+      <SubscriptionBanner />
 
       {/* Summary cards */}
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
