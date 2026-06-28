@@ -7,6 +7,7 @@ import Login        from './pages/Login'
 import Signup       from './pages/Signup'
 import OrgSetup     from './pages/OrgSetup'
 import OrgSelector  from './pages/OrgSelector'
+import ChoosePlan   from './pages/ChoosePlan'
 import InviteAccept from './pages/InviteAccept'
 
 // Protected pages
@@ -42,7 +43,7 @@ function AppLayout({ children }) {
       <DesktopSidebar />
       <div className="flex-1 flex flex-col min-w-0">
         <MobileHeader />
-        <main className="flex-1 px-4 py-6 lg:px-8 lg:py-8 max-w-5xl w-full mx-auto">
+        <main className="flex-1 px-4 py-6 lg:px-8 lg:py-8 w-full">
           {children}
         </main>
       </div>
@@ -69,6 +70,7 @@ export default function App() {
         <Route path="/setup"          element={<OrgSetup />} />
         <Route path="/select-org"     element={<OrgSelector />} />
         <Route path="/invite/:token"  element={<InviteAccept />} />
+        <Route path="/choose-plan"    element={<ProtectedRoute><ChoosePlan /></ProtectedRoute>} />
 
         {/* ── Protected ───────────────────────────────────────────────── */}
         <Route path="/dashboard"       element={<P><Dashboard /></P>} />

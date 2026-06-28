@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
 import LanguageSwitcher from '../components/LanguageSwitcher'
+import ThemeToggle from '../components/ThemeToggle'
 
 const ROLE_META = {
   owner:           { label: 'Owner',           color: 'bg-gray-800 text-white' },
@@ -14,7 +16,8 @@ const ROLE_META = {
 
 export default function Profile() {
   const { t } = useTranslation()
-  const { user, organization, userRole } = useAuth()
+  const navigate = useNavigate()
+  const { user, organization, userRole, signOut } = useAuth()
 
   const [fullName,     setFullName]     = useState('')
   const [joinedAt,     setJoinedAt]     = useState('')
@@ -73,6 +76,11 @@ export default function Profile() {
     setPwSuccess(true)
     setCurrentPw(''); setNewPw('')
     setTimeout(() => setPwSuccess(false), 3000)
+  }
+
+  async function handleLogout() {
+    await signOut()
+    navigate('/login')
   }
 
   const roleInfo = ROLE_META[userRole] || { label: userRole, color: 'bg-gray-100 text-gray-600' }
@@ -141,6 +149,13 @@ export default function Profile() {
         <LanguageSwitcher />
       </div>
 
+      {/* Appearance */}
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+        <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wider mb-1">Appearance</h2>
+        <p className="text-sm text-gray-500 mb-4">Choose a light, dark, or system-matched theme.</p>
+        <ThemeToggle />
+      </div>
+
       {/* Org + role info */}
       <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
         <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wider mb-4">{t('profile.organisation')}</h2>
@@ -160,6 +175,16 @@ export default function Profile() {
             </div>
           )}
         </dl>
+      </div>
+
+      {/* Sign out */}
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+        <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wider mb-1">{t('profile.account', { defaultValue: 'Account' })}</h2>
+        <p className="text-sm text-gray-500 mb-4">{t('profile.signOutHint', { defaultValue: 'Sign out of your account on this device.' })}</p>
+        <button onClick={handleLogout}
+          className="flex items-center gap-2 rounded-lg bg-red-50 hover:bg-red-100 border border-red-200 px-5 py-2 text-sm font-semibold text-red-600 transition">
+          <span>🚪</span> {t('auth.logout')}
+        </button>
       </div>
     </div>
   )

@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react'
-import { useParams, Link, useNavigate } from 'react-router-dom'
+import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { supabase } from '../lib/supabaseClient'
 import { ledgerIn, ledgerOut, getChickBalance, getAverageCostPerUnit } from '../lib/stockLedger'
@@ -809,7 +809,7 @@ function SaleModal({ activeBatch, vendors, onClose, onSaved }) {
 
   useEffect(() => {
     if (!activeBatch?.id) return
-    supabase.from('sales').select('chicken_count').eq('batch_id', activeBatch.id).eq('organization_id', organization?.id)
+    supabase.from('sales').select('chicken_count').eq('batch_id', activeBatch.id).eq('organization_id', organization?.id).neq('status', 'rejected')
       .then(({ data }) => setAlreadySold((data || []).reduce((s, r) => s + Number(r.chicken_count || 0), 0)))
   }, [activeBatch?.id])
 
@@ -1217,6 +1217,7 @@ const TAB_KEYS = ['overview', 'batches', 'distributions', 'sales', 'farmStock']
 
 export default function FarmDetail() {
   const { id } = useParams()
+  const [searchParams] = useSearchParams()
   const navigate = useNavigate()
   const { organization, canEdit, canDelete, canRecordOperations, canViewFinancials } = useAuth()
   const { t, i18n } = useTranslation()
@@ -1328,6 +1329,11 @@ export default function FarmDetail() {
   }
 
   useEffect(() => { fetchAll() }, [id])
+
+  // Auto-open the distribution modal when arriving via a "+ Record" link
+  useEffect(() => {
+    if (searchParams.get('record') === 'dist') setDistModal(true)
+  }, [searchParams])
 
   function refresh() { setLoading(true); fetchAll() }
 
@@ -1458,22 +1464,22 @@ export default function FarmDetail() {
       </div>
 
       {/* ─── Farm Identity Header (always visible) ──────────────────────── */}
-      <div style={{ backgroundColor: '#fffffe', borderColor: '#e7e5e0' }} className="rounded-2xl border shadow-sm p-6 max-w-[900px] mx-auto w-full">
+      <div style={{ backgroundColor: 'var(--surface)', borderColor: 'var(--border)' }} className="rounded-2xl border shadow-sm p-6 w-full">
         <div className="flex items-start justify-between gap-4">
           <div className="flex items-center gap-4">
             <div style={{ backgroundColor: '#f0fdf4' }} className="w-14 h-14 rounded-2xl flex items-center justify-center text-3xl flex-shrink-0">
               🌾
             </div>
             <div>
-              <h1 style={{ color: '#1c1917' }} className="text-2xl font-bold">{farm.name}</h1>
-              <div style={{ color: '#78716c' }} className="flex flex-wrap gap-x-5 gap-y-1 mt-1.5 text-sm">
+              <h1 style={{ color: 'var(--text)' }} className="text-2xl font-bold">{farm.name}</h1>
+              <div style={{ color: 'var(--text-muted)' }} className="flex flex-wrap gap-x-5 gap-y-1 mt-1.5 text-sm">
                 {farm.location     && <span>📍 {farm.location}</span>}
                 <span>🐔 {t('farms.birdCapacity', { count: Number(farm.capacity).toLocaleString('en-IN') })}</span>
                 {farm.phone_number && <span>📞 {farm.phone_number}</span>}
               </div>
               {(farm.owner_name || farm.owner_phone) && (
-                <div className="mt-2 pt-2 border-t border-gray-100 flex flex-wrap gap-x-4 gap-y-0.5 text-sm" style={{ color: '#78716c' }}>
-                  <span className="font-medium" style={{ color: '#1c1917' }}>{t('farms.managedBy')}</span>
+                <div className="mt-2 pt-2 border-t border-gray-100 flex flex-wrap gap-x-4 gap-y-0.5 text-sm" style={{ color: 'var(--text-muted)' }}>
+                  <span className="font-medium" style={{ color: 'var(--text)' }}>{t('farms.managedBy')}</span>
                   {farm.owner_name  && <span>{farm.owner_name}</span>}
                   {farm.owner_phone && <a href={`tel:${farm.owner_phone}`} className="hover:text-amber-600 transition">📞 {farm.owner_phone}</a>}
                   {farm.owner_address && <span>· {farm.owner_address}</span>}
@@ -1484,7 +1490,7 @@ export default function FarmDetail() {
           {canEdit && (
             <button
               onClick={() => setEditModal(true)}
-              style={{ borderColor: '#e7e5e0', color: '#78716c' }}
+              style={{ borderColor: 'var(--border)', color: 'var(--text-muted)' }}
               className="flex-shrink-0 rounded-lg border px-4 py-2 text-sm font-medium hover:bg-stone-50 transition"
             >
               {t('common.edit')}
@@ -1494,7 +1500,7 @@ export default function FarmDetail() {
       </div>
 
       {/* ─── Tab Bar ────────────────────────────────────────────────────── */}
-      <div style={{ borderColor: '#e7e5e0', backgroundColor: '#fffffe' }} className="border-b rounded-t-xl max-w-[900px] mx-auto w-full -mb-px">
+      <div style={{ borderColor: 'var(--border)', backgroundColor: 'var(--surface)' }} className="border-b rounded-t-xl w-full -mb-px">
         <div className="flex">
           {TAB_KEYS.map(tabKey => (
             <button
@@ -1503,7 +1509,7 @@ export default function FarmDetail() {
               className="px-5 py-3 text-sm font-semibold border-b-2 transition"
               style={{
                 borderColor: activeTab === tabKey ? '#15803d' : 'transparent',
-                color: activeTab === tabKey ? '#15803d' : '#78716c',
+                color: activeTab === tabKey ? '#15803d' : 'var(--text-muted)',
               }}
             >
               {t(`farms.tabs.${tabKey}`)}
@@ -1516,14 +1522,14 @@ export default function FarmDetail() {
 
       {/* OVERVIEW TAB */}
       {activeTab === 'overview' && (
-        <div className="space-y-4 max-w-[900px] mx-auto w-full">
+        <div className="space-y-4 w-full">
           <style>{`@keyframes ovFadeUp{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}`}</style>
 
           {/* ── 1. Capacity Status Bar ─────────────────────────────────── */}
-          <div style={{ backgroundColor: '#fffffe', borderColor: '#e7e5e0' }} className="rounded-xl border shadow-sm p-5">
+          <div style={{ backgroundColor: 'var(--surface)', borderColor: 'var(--border)' }} className="rounded-xl border shadow-sm p-5">
             <div className="flex items-center justify-between mb-3">
-              <span style={{ color: '#1c1917' }} className="text-sm font-semibold">{t('farms.farmCapacity')}</span>
-              <span style={{ color: '#78716c' }} className="text-sm">
+              <span style={{ color: 'var(--text)' }} className="text-sm font-semibold">{t('farms.farmCapacity')}</span>
+              <span style={{ color: 'var(--text-muted)' }} className="text-sm">
                 {chicksAlive.toLocaleString('en-IN')} / {Number(farm.capacity).toLocaleString('en-IN')} birds
               </span>
             </div>
@@ -1535,41 +1541,41 @@ export default function FarmDetail() {
               />
             </div>
             <div className="flex justify-between mt-2">
-              <span style={{ color: '#78716c' }} className="text-xs">
+              <span style={{ color: 'var(--text-muted)' }} className="text-xs">
                 {t('farms.occupiedPct', { pct: farm.capacity > 0 ? Math.round((chicksAlive / farm.capacity) * 100) : 0 })}
               </span>
-              <span style={{ color: '#78716c' }} className="text-xs">
+              <span style={{ color: 'var(--text-muted)' }} className="text-xs">
                 {t('farms.spotsRemaining', { count: remainingCapacity.toLocaleString('en-IN') })}
               </span>
             </div>
           </div>
 
           {/* ── 2. Batch Stats ─────────────────────────────────────────── */}
-          <div style={{ backgroundColor: '#fffffe', borderColor: '#e7e5e0' }} className="rounded-xl border shadow-sm p-5">
-            <h3 style={{ color: '#1c1917' }} className="text-sm font-semibold mb-4">{t('farms.batchOverview')}</h3>
+          <div style={{ backgroundColor: 'var(--surface)', borderColor: 'var(--border)' }} className="rounded-xl border shadow-sm p-5">
+            <h3 style={{ color: 'var(--text)' }} className="text-sm font-semibold mb-4">{t('farms.batchOverview')}</h3>
             <div className="grid grid-cols-2 gap-3">
               <div style={{ backgroundColor: '#f0fdf4' }} className="text-center p-4 rounded-xl">
                 <p style={{ color: '#15803d' }} className="text-3xl font-extrabold">{activeBatchCount}</p>
-                <p style={{ color: '#78716c' }} className="text-xs mt-1.5 font-medium">{t('farms.activeBatches')}</p>
+                <p style={{ color: 'var(--text-muted)' }} className="text-xs mt-1.5 font-medium">{t('farms.activeBatches')}</p>
               </div>
-              <div style={{ backgroundColor: '#fafaf5', borderColor: '#e7e5e0' }} className="text-center p-4 rounded-xl border">
-                <p style={{ color: '#1c1917' }} className="text-3xl font-extrabold">{batches.length}</p>
-                <p style={{ color: '#78716c' }} className="text-xs mt-1.5 font-medium">{t('farms.totalBatches')}</p>
+              <div style={{ backgroundColor: 'var(--surface-2)', borderColor: 'var(--border)' }} className="text-center p-4 rounded-xl border">
+                <p style={{ color: 'var(--text)' }} className="text-3xl font-extrabold">{batches.length}</p>
+                <p style={{ color: 'var(--text-muted)' }} className="text-xs mt-1.5 font-medium">{t('farms.totalBatches')}</p>
               </div>
               <div style={{ backgroundColor: '#fef2f2' }} className="text-center p-4 rounded-xl">
                 <p style={{ color: '#dc2626' }} className="text-3xl font-extrabold">{totalMortality.toLocaleString('en-IN')}</p>
-                <p style={{ color: '#78716c' }} className="text-xs mt-1.5 font-medium">{t('farms.totalMortality')}</p>
+                <p style={{ color: 'var(--text-muted)' }} className="text-xs mt-1.5 font-medium">{t('farms.totalMortality')}</p>
               </div>
               {(() => {
                 const fcrBatches = batches.filter(b => b.fcr != null)
                 const avgFCR = fcrBatches.length > 0 ? fcrBatches.reduce((s, b) => s + Number(b.fcr), 0) / fcrBatches.length : null
                 const bestFCR = fcrBatches.length > 0 ? Math.min(...fcrBatches.map(b => Number(b.fcr))) : null
-                const color = avgFCR == null ? '#78716c' : avgFCR <= 1.8 ? '#15803d' : avgFCR <= 2.1 ? '#2563eb' : avgFCR <= 2.5 ? '#d97706' : '#dc2626'
-                const bg    = avgFCR == null ? '#fafaf5' : avgFCR <= 1.8 ? '#f0fdf4' : avgFCR <= 2.1 ? '#eff6ff' : avgFCR <= 2.5 ? '#fffbeb' : '#fef2f2'
+                const color = avgFCR == null ? 'var(--text-muted)' : avgFCR <= 1.8 ? '#15803d' : avgFCR <= 2.1 ? '#2563eb' : avgFCR <= 2.5 ? '#d97706' : '#dc2626'
+                const bg    = avgFCR == null ? 'var(--surface-2)' : avgFCR <= 1.8 ? '#f0fdf4' : avgFCR <= 2.1 ? '#eff6ff' : avgFCR <= 2.5 ? '#fffbeb' : '#fef2f2'
                 return (
                   <div style={{ backgroundColor: bg }} className="text-center p-4 rounded-xl">
                     <p style={{ color }} className="text-3xl font-extrabold">{avgFCR != null ? avgFCR.toFixed(2) : '—'}</p>
-                    <p style={{ color: '#78716c' }} className="text-xs mt-1.5 font-medium">{t('farms.avgFcr')}{bestFCR != null ? ` · Best: ${bestFCR.toFixed(2)}` : ''}</p>
+                    <p style={{ color: 'var(--text-muted)' }} className="text-xs mt-1.5 font-medium">{t('farms.avgFcr')}{bestFCR != null ? ` · Best: ${bestFCR.toFixed(2)}` : ''}</p>
                   </div>
                 )
               })()}
@@ -1577,12 +1583,12 @@ export default function FarmDetail() {
                 const minDays = activeBatchesList.length > 0
                   ? Math.min(...activeBatchesList.map(b => 45 - daysElapsed(b.start_date)))
                   : null
-                const bg = minDays === null ? '#fafaf5' : minDays < 0 ? '#fef2f2' : minDays <= 7 ? '#fffbeb' : '#f0fdf4'
-                const col = minDays === null ? '#78716c' : minDays < 0 ? '#dc2626' : minDays <= 7 ? '#d97706' : '#15803d'
+                const bg = minDays === null ? 'var(--surface-2)' : minDays < 0 ? '#fef2f2' : minDays <= 7 ? '#fffbeb' : '#f0fdf4'
+                const col = minDays === null ? 'var(--text-muted)' : minDays < 0 ? '#dc2626' : minDays <= 7 ? '#d97706' : '#15803d'
                 return (
                   <div style={{ backgroundColor: bg }} className="text-center p-4 rounded-xl">
                     <p style={{ color: col }} className="text-3xl font-extrabold">{daysToHarvest}</p>
-                    <p style={{ color: '#78716c' }} className="text-xs mt-1.5 font-medium">{t('farms.daysToHarvestLabel')}</p>
+                    <p style={{ color: 'var(--text-muted)' }} className="text-xs mt-1.5 font-medium">{t('farms.daysToHarvestLabel')}</p>
                   </div>
                 )
               })()}
@@ -1591,8 +1597,8 @@ export default function FarmDetail() {
 
           {/* ── 3. Financial Summary ───────────────────────────────────── */}
           {canViewFinancials && (
-            <div style={{ backgroundColor: '#fffffe', borderColor: '#e7e5e0' }} className="rounded-xl border shadow-sm p-5">
-              <h3 style={{ color: '#1c1917' }} className="text-sm font-semibold mb-4">{t('farms.financialSummary')}</h3>
+            <div style={{ backgroundColor: 'var(--surface)', borderColor: 'var(--border)' }} className="rounded-xl border shadow-sm p-5">
+              <h3 style={{ color: 'var(--text)' }} className="text-sm font-semibold mb-4">{t('farms.financialSummary')}</h3>
 
               {/* Stacked bar */}
               <div style={{ height: 20, backgroundColor: '#f0f0f0', borderRadius: 8, overflow: 'hidden', marginBottom: 10 }}>
@@ -1608,7 +1614,7 @@ export default function FarmDetail() {
               </div>
 
               {/* Legend */}
-              <div className="flex flex-wrap gap-3 mb-4 text-xs" style={{ color: '#78716c' }}>
+              <div className="flex flex-wrap gap-3 mb-4 text-xs" style={{ color: 'var(--text-muted)' }}>
                 {[
                   { color: '#fca5a5', label: t('batches.chickCost') },
                   { color: '#fdba74', label: t('batches.feedCost') },
@@ -1639,9 +1645,9 @@ export default function FarmDetail() {
                   return rows.map((row, i) => (
                     <div key={row.label}
                       className="flex justify-between items-center py-2"
-                      style={{ borderBottom: i < rows.length - 1 ? '1px solid #f5f5f4' : 'none' }}
+                      style={{ borderBottom: i < rows.length - 1 ? '1px solid var(--border)' : 'none' }}
                     >
-                      <span style={{ color: '#78716c', fontWeight: row.bold ? 600 : 400 }} className="text-sm">{row.label}</span>
+                      <span style={{ color: 'var(--text-muted)', fontWeight: row.bold ? 600 : 400 }} className="text-sm">{row.label}</span>
                       <span style={{ color: row.color, fontWeight: row.bold ? 800 : 600 }} className="text-sm">{row.value}</span>
                     </div>
                   ))
@@ -1660,9 +1666,9 @@ export default function FarmDetail() {
 
             if (!hasActiveBatch && growingFeeLedger.length === 0) return null
             return (
-              <div style={{ backgroundColor: '#fffffe', borderColor: outstanding > 0 ? '#fca5a5' : '#e7e5e0' }} className="rounded-xl border shadow-sm p-5">
+              <div style={{ backgroundColor: 'var(--surface)', borderColor: outstanding > 0 ? '#fca5a5' : 'var(--border)' }} className="rounded-xl border shadow-sm p-5">
                 <div className="flex items-center justify-between mb-3">
-                  <h3 style={{ color: '#1c1917' }} className="text-sm font-semibold">{t('farms.growingFeeSection')}</h3>
+                  <h3 style={{ color: 'var(--text)' }} className="text-sm font-semibold">{t('farms.growingFeeSection')}</h3>
                   {outstanding > 0 && (
                     <span className="text-xs font-semibold rounded-full px-2.5 py-0.5 bg-red-100 text-red-600">
                       {t('farms.outstandingAmt', { amount: formatCurrency(outstanding) })}
@@ -1675,15 +1681,15 @@ export default function FarmDetail() {
                 {growingFeeLedger.length > 0 && (
                   <div className="space-y-2 text-sm mb-3">
                     <div className="flex justify-between">
-                      <span style={{ color: '#78716c' }}>{t('farms.totalFeeAccrued')}</span>
-                      <span className="font-semibold" style={{ color: '#1c1917' }}>{formatCurrency(totalFee)}</span>
+                      <span style={{ color: 'var(--text-muted)' }}>{t('farms.totalFeeAccrued')}</span>
+                      <span className="font-semibold" style={{ color: 'var(--text)' }}>{formatCurrency(totalFee)}</span>
                     </div>
                     <div className="flex justify-between">
-                      <span style={{ color: '#78716c' }}>{t('farms.totalPaid')}</span>
+                      <span style={{ color: 'var(--text-muted)' }}>{t('farms.totalPaid')}</span>
                       <span className="font-semibold text-green-700">{formatCurrency(totalPaid)}</span>
                     </div>
                     <div className="flex justify-between pt-1 border-t border-gray-100">
-                      <span style={{ color: '#78716c' }}>{t('farms.balanceDue')}</span>
+                      <span style={{ color: 'var(--text-muted)' }}>{t('farms.balanceDue')}</span>
                       <span className="font-bold" style={{ color: outstanding > 0 ? '#dc2626' : '#15803d' }}>
                         {formatCurrency(outstanding)}
                       </span>
@@ -1692,7 +1698,7 @@ export default function FarmDetail() {
                 )}
                 {hasActiveBatch && activeAdvTotal > 0 && (
                   <div className="text-sm mb-3 bg-amber-50 rounded-lg px-3 py-2 border border-amber-100">
-                    <span style={{ color: '#78716c' }}>{t('farms.advancesActiveBatches')} </span>
+                    <span style={{ color: 'var(--text-muted)' }}>{t('farms.advancesActiveBatches')} </span>
                     <span className="font-semibold text-amber-700">{formatCurrency(activeAdvTotal)}</span>
                   </div>
                 )}
@@ -1716,10 +1722,10 @@ export default function FarmDetail() {
           })()}
 
           {/* ── 4. Recent Activity ─────────────────────────────────────── */}
-          <div style={{ backgroundColor: '#fffffe', borderColor: '#e7e5e0' }} className="rounded-xl border shadow-sm p-5">
-            <h3 style={{ color: '#1c1917' }} className="text-sm font-semibold mb-4">{t('farms.recentActivity')}</h3>
+          <div style={{ backgroundColor: 'var(--surface)', borderColor: 'var(--border)' }} className="rounded-xl border shadow-sm p-5">
+            <h3 style={{ color: 'var(--text)' }} className="text-sm font-semibold mb-4">{t('farms.recentActivity')}</h3>
             {events.length === 0 ? (
-              <p style={{ color: '#78716c' }} className="text-sm text-center py-6">{t('farms.noActivity')}</p>
+              <p style={{ color: 'var(--text-muted)' }} className="text-sm text-center py-6">{t('farms.noActivity')}</p>
             ) : (
               <div>
                 {events.map((ev, i) => {
@@ -1734,7 +1740,7 @@ export default function FarmDetail() {
                       key={i}
                       className="flex items-start gap-3 pb-3 last:pb-0"
                       style={{
-                        borderBottom: i < events.length - 1 ? '1px solid #f5f5f4' : 'none',
+                        borderBottom: i < events.length - 1 ? '1px solid var(--border)' : 'none',
                         animation: `ovFadeUp 0.4s ease-out ${i * 70}ms both`,
                       }}
                     >
@@ -1745,12 +1751,12 @@ export default function FarmDetail() {
                         {cfg.emoji}
                       </div>
                       <div className="flex-1 min-w-0">
-                        <p style={{ color: '#1c1917' }} className="text-sm font-medium">{ev.label}</p>
-                        <p style={{ color: '#78716c' }} className="text-xs mt-0.5">{fmtDate(ev.date)}</p>
+                        <p style={{ color: 'var(--text)' }} className="text-sm font-medium">{ev.label}</p>
+                        <p style={{ color: 'var(--text-muted)' }} className="text-xs mt-0.5">{fmtDate(ev.date)}</p>
                       </div>
                       <span
                         className="text-xs font-semibold px-2 py-0.5 rounded-full flex-shrink-0 mt-1"
-                        style={{ backgroundColor: cfg.bg, color: '#44403c' }}
+                        style={{ backgroundColor: cfg.bg, color: 'var(--text)' }}
                       >
                         {cfg.label}
                       </span>
@@ -1943,7 +1949,7 @@ export default function FarmDetail() {
                             const statusBg    = fee.status === 'paid' ? '#f0fdf4'  : fee.status === 'partial' ? '#fffbeb'  : '#fef2f2'
                             return (
                               <div className="text-right">
-                                <div className="text-xs font-semibold" style={{ color: '#1c1917' }}>
+                                <div className="text-xs font-semibold" style={{ color: 'var(--text)' }}>
                                   ₹{Number(fee.total_fee).toLocaleString('en-IN', { minimumFractionDigits: 0 })}
                                 </div>
                                 <span className="inline-flex mt-0.5 rounded-full px-1.5 py-0.5 text-xs font-semibold capitalize" style={{ backgroundColor: statusBg, color: statusColor }}>
@@ -2147,7 +2153,7 @@ export default function FarmDetail() {
 
       {/* FARM STOCK TAB */}
       {activeTab === 'farmStock' && (
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden max-w-[900px] mx-auto w-full">
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden w-full">
           <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
             <div>
               <h2 className="text-base font-semibold text-gray-800">Stock at Farm</h2>

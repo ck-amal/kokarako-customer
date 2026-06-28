@@ -113,6 +113,7 @@ export default function BatchReport() {
         .select('*, vendors(name)')
         .eq('organization_id', organization?.id)
         .eq('batch_id', id)
+        .eq('status', 'confirmed')
         .order('date')
 
       // 4. All expenses linked to this batch
@@ -187,7 +188,7 @@ export default function BatchReport() {
   const isProfitable = grossProfit >= 0
 
   return (
-    <div className="space-y-7 max-w-4xl mx-auto">
+    <div className="space-y-7">
 
       {/* Back + header */}
       <div>

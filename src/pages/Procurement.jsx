@@ -7,6 +7,9 @@ import { formatCurrency, roundCurrency } from '../utils/format'
 import { formatDate } from '../utils/dateFormat'
 import { useAuth } from '../contexts/AuthContext'
 import AuditInfo from '../components/AuditInfo'
+import AttachmentUploader from '../components/AttachmentUploader'
+import { uploadAttachments, attachmentsByEntity } from '../lib/attachments'
+import AttachmentViewer from '../components/AttachmentViewer'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -85,28 +88,35 @@ function ProcurementModal({ onClose, onSaved }) {
   const { organization, user } = useAuth()
   const userName = user?.user_metadata?.full_name || user?.email || 'Unknown'
   const [itemTypes, setItemTypes]   = useState([])
-  const [items, setItems]           = useState([])
-  const [allItems, setAllItems]     = useState([])
   const [suppliers, setSuppliers]   = useState([])
   const [accounts, setAccounts]     = useState([])
   const [supplierOutstanding, setSupplierOutstanding] = useState(null)
-  const [form, setForm] = useState({
-    item_type_id: '',
-    item_id: '',
-    quantity: '',
-    cost_per_unit: '',
-    cost: '',
+  const newLine = () => ({ item_type_id: '', item_id: '', quantity: '', cost_per_unit: '', cost: '', items: [] })
+  const [lines, setLines] = useState([newLine()])
+  const [header, setHeader] = useState({
     supplier_id: '',
     date: new Date().toISOString().slice(0, 10),
     notes: '',
     pay_now:    false,
     account_id: '',
   })
-  const [selectedItem, setSelectedItem] = useState(null)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [pendingFiles, setPendingFiles] = useState([])
 
-  // On mount: load item types, items, and suppliers
+  // Fetch active catalog items for a given type
+  async function fetchItems(typeId) {
+    if (!typeId) return []
+    const { data } = await supabase
+      .from('items')
+      .select('id, name, unit, item_type_id')
+      .eq('item_type_id', typeId)
+      .eq('is_active', true)
+      .order('name')
+    return data || []
+  }
+
+  // On mount: load item types, suppliers, accounts; seed the first line
   useEffect(() => {
     async function loadInitial() {
       const [{ data: types }, { data: sups }, { data: accs }] = await Promise.all([
@@ -119,49 +129,53 @@ function ProcurementModal({ onClose, onSaved }) {
       const accList = accs || []
       setAccounts(accList)
       const cash = accList.find(a => a.type === 'cash')
-      if (cash) setForm(f => ({ ...f, account_id: cash.id }))
+      if (cash) setHeader(h => ({ ...h, account_id: cash.id }))
       if (types?.length) {
-        setForm(f => ({ ...f, item_type_id: types[0].id }))
-        const { data: initialItems } = await supabase
-          .from('items')
-          .select('id, name, unit, item_type_id')
-          .eq('item_type_id', types[0].id)
-          .eq('is_active', true)
-          .order('name')
-        setItems(initialItems || [])
-        setAllItems(initialItems || [])
+        const initialItems = await fetchItems(types[0].id)
+        setLines([{ item_type_id: types[0].id, item_id: initialItems[0]?.id || '', quantity: '', cost_per_unit: '', cost: '', items: initialItems }])
       }
     }
     loadInitial()
   }, [])
 
-  // When item_type_id changes: reload items for that type
-  async function handleTypeChange(newTypeId) {
-    setForm(f => ({ ...f, item_type_id: newTypeId, item_id: '', cost_per_unit: '', cost: '' }))
-    setSelectedItem(null)
-    if (!newTypeId) {
-      setItems([])
-      return
-    }
-    const { data } = await supabase
-      .from('items')
-      .select('id, name, unit, item_type_id')
-      .eq('item_type_id', newTypeId)
-      .eq('is_active', true)
-      .order('name')
-    setItems(data || [])
+  function updateLine(i, patch) {
+    setLines(prev => prev.map((ln, idx) => (idx === i ? { ...ln, ...patch } : ln)))
   }
 
-  // When item_id changes: find item in local list
-  function handleItemChange(newItemId) {
-    const item = items.find(i => i.id === newItemId)
-    setSelectedItem(item || null)
-    setForm(f => ({ ...f, item_id: newItemId }))
+  // When a line's item type changes: reload its catalog items
+  async function handleLineTypeChange(i, typeId) {
+    updateLine(i, { item_type_id: typeId, item_id: '', cost_per_unit: '', cost: '', items: [] })
+    const items = await fetchItems(typeId)
+    updateLine(i, { items, item_id: items[0]?.id || '' })
+  }
+
+  // Per-line field setter with auto-calc for quantity / cost_per_unit
+  function setLineField(i, field, value) {
+    setLines(prev => prev.map((ln, idx) => {
+      if (idx !== i) return ln
+      const next = { ...ln, [field]: value }
+      if (field === 'quantity' || field === 'cost_per_unit') {
+        const qty = parseFloat(field === 'quantity' ? value : ln.quantity) || 0
+        const cpu = parseFloat(field === 'cost_per_unit' ? value : ln.cost_per_unit) || 0
+        next.cost = qty && cpu ? String(roundCurrency(qty * cpu)) : next.cost
+      }
+      return next
+    }))
+  }
+
+  async function addLine() {
+    const typeId = itemTypes[0]?.id || ''
+    const items = typeId ? await fetchItems(typeId) : []
+    setLines(prev => [...prev, { item_type_id: typeId, item_id: items[0]?.id || '', quantity: '', cost_per_unit: '', cost: '', items }])
+  }
+
+  function removeLine(i) {
+    setLines(prev => (prev.length <= 1 ? prev : prev.filter((_, idx) => idx !== i)))
   }
 
   // When supplier changes: fetch their outstanding balance
   async function handleSupplierChange(supplierId) {
-    setForm(f => ({ ...f, supplier_id: supplierId }))
+    setHeader(h => ({ ...h, supplier_id: supplierId }))
     if (!supplierId) { setSupplierOutstanding(null); return }
     const [{ data: procs }, { data: pays }] = await Promise.all([
       supabase.from('procurement').select('cost').eq('supplier_id', supplierId),
@@ -172,91 +186,105 @@ function ProcurementModal({ onClose, onSaved }) {
     setSupplierOutstanding(Math.max(0, totalCost - totalPaid))
   }
 
-  // Generic field setter with auto-calculate for quantity/cost_per_unit
-  function set(field) {
-    return e => {
-      const value = e.target.value
-      setForm(prev => {
-        const next = { ...prev, [field]: value }
-        if (field === 'quantity' || field === 'cost_per_unit') {
-          const qty = parseFloat(field === 'quantity' ? value : prev.quantity) || 0
-          const cpu = parseFloat(field === 'cost_per_unit' ? value : prev.cost_per_unit) || 0
-          next.cost = qty && cpu ? String(roundCurrency(qty * cpu)) : prev.cost
-        }
-        return next
-      })
-    }
-  }
+  const grandTotal = lines.reduce((s, ln) => s + (parseFloat(ln.cost) || 0), 0)
 
   async function handleSubmit(e) {
     e.preventDefault()
     setError('')
-    if (!form.item_type_id) { setError(t('procurement.selectItemType')); return }
-    if (!form.item_id) { setError(t('procurement.selectItem')); return }
-    if (!selectedItem) { setError(t('errors.required')); return }
-    if (!form.supplier_id) { setError(t('procurement.selectSupplier')); return }
-    setSaving(true)
+    if (!header.supplier_id) { setError(t('procurement.selectSupplier')); return }
 
-    const qty = Number(form.quantity)
-    const cpu = parseFloat(form.cost_per_unit) || (qty > 0 ? roundCurrency(Number(form.cost) / qty) : 0)
-
-    const { data: inserted, error: insertErr } = await supabase.from('procurement').insert({
-      organization_id: organization?.id,
-      type:          itemTypes.find(t => t.id === form.item_type_id)?.name?.toLowerCase() ?? 'other',
-      item_name:     selectedItem.name,
-      item_id:       form.item_id,
-      quantity:      qty,
-      unit:          selectedItem.unit,
-      cost:          Number(form.cost),
-      cost_per_unit: cpu,
-      supplier_id:   form.supplier_id || null,
-      date:          form.date,
-      notes:         form.notes.trim() || null,
-      created_by_id:   user?.id,
-      created_by_name: userName,
-    }).select('id').single()
-
-    if (insertErr) { setError(insertErr.message); setSaving(false); return }
-
-    // Auto-record payment transaction if "Pay now" is checked
-    if (form.pay_now && form.account_id) {
-      await supabase.from('transactions').insert({
-        organization_id:  organization?.id,
-        account_id:       form.account_id,
-        transaction_type: 'out',
-        category:         'procurement',
-        description:      `Purchase — ${selectedItem.name}`,
-        amount:           Number(form.cost),
-        transaction_date: form.date,
-        reference_type:   'procurement',
-        reference_id:     inserted.id,
-        created_by_id:   user?.id,
-        created_by_name: userName,
-      })
+    // Validate + prepare every line before writing anything
+    const prepared = []
+    for (const ln of lines) {
+      if (!ln.item_type_id) { setError(t('procurement.selectItemType')); return }
+      if (!ln.item_id) { setError(t('procurement.selectItem')); return }
+      const item = ln.items.find(it => it.id === ln.item_id)
+      if (!item) { setError(t('errors.required')); return }
+      const qty = Number(ln.quantity)
+      if (!qty || qty <= 0) { setError(`${t('procurement.quantity')} *`); return }
+      const cost = Number(ln.cost)
+      if (!cost || cost < 0) { setError(`${t('procurement.totalCost')} *`); return }
+      const cpu = parseFloat(ln.cost_per_unit) || (qty > 0 ? roundCurrency(cost / qty) : 0)
+      const typeName = itemTypes.find(it => it.id === ln.item_type_id)?.name?.toLowerCase() ?? 'other'
+      prepared.push({ item, item_id: ln.item_id, qty, cost, cpu, typeName })
     }
 
-    // Write to stock ledger
-    await ledgerIn({
-      itemName:       selectedItem.name,
-      itemType:       itemTypes.find(t => t.id === form.item_type_id)?.name?.toLowerCase() ?? 'other',
-      quantity:       qty,
-      unit:           selectedItem.unit,
-      referenceType:  'procurement',
-      referenceId:    inserted.id,
-      date:           form.date,
-      organizationId: organization?.id,
-    })
+    setSaving(true)
+    let firstProcurementId = null
+    // One procurement row per line (keeping stock + ledger in sync each time)
+    for (const p of prepared) {
+      const { data: inserted, error: insertErr } = await supabase.from('procurement').insert({
+        organization_id: organization?.id,
+        type:          p.typeName,
+        item_name:     p.item.name,
+        item_id:       p.item_id,
+        quantity:      p.qty,
+        unit:          p.item.unit,
+        cost:          p.cost,
+        cost_per_unit: p.cpu,
+        supplier_id:   header.supplier_id || null,
+        date:          header.date,
+        notes:         header.notes.trim() || null,
+        created_by_id:   user?.id,
+        created_by_name: userName,
+      }).select('id').single()
 
-    await addToStock(selectedItem.name, qty, selectedItem.unit, cpu, organization?.id)
+      if (insertErr) { setError(insertErr.message); setSaving(false); return }
+      if (!firstProcurementId) firstProcurementId = inserted.id
+
+      // Auto-record payment transaction if "Pay now" is checked
+      if (header.pay_now && header.account_id) {
+        await supabase.from('transactions').insert({
+          organization_id:  organization?.id,
+          account_id:       header.account_id,
+          transaction_type: 'out',
+          category:         'procurement',
+          description:      `Purchase — ${p.item.name}`,
+          amount:           p.cost,
+          transaction_date: header.date,
+          reference_type:   'procurement',
+          reference_id:     inserted.id,
+          created_by_id:   user?.id,
+          created_by_name: userName,
+        })
+      }
+
+      // Stock ledger + stock cache
+      await ledgerIn({
+        itemName:       p.item.name,
+        itemType:       p.typeName,
+        quantity:       p.qty,
+        unit:           p.item.unit,
+        referenceType:  'procurement',
+        referenceId:    inserted.id,
+        date:           header.date,
+        organizationId: organization?.id,
+      })
+      await addToStock(p.item.name, p.qty, p.item.unit, p.cpu, organization?.id)
+    }
+
+    // Attach uploaded bills/files to the purchase (its first line)
+    if (pendingFiles.length && firstProcurementId) {
+      try {
+        await uploadAttachments({
+          organizationId: organization?.id,
+          entityType:     'procurement',
+          entityId:       firstProcurementId,
+          files:          pendingFiles,
+          user,
+        })
+      } catch (err) {
+        console.error('Attachment upload failed', err)
+        alert('Purchase saved, but the file upload failed: ' + err.message)
+      }
+    }
 
     onSaved()
   }
 
-  const totalPreview = parseFloat(form.cost) || 0
-
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
-      <div className="w-full max-w-lg bg-white rounded-2xl shadow-xl p-6 max-h-[90vh] overflow-y-auto">
+      <div className="w-full max-w-2xl bg-white rounded-2xl shadow-xl p-6 max-h-[90vh] overflow-y-auto">
 
         <div className="flex items-center justify-between mb-5">
           <h2 className="text-lg font-semibold text-gray-800">{t('procurement.addPurchase')}</h2>
@@ -265,132 +293,146 @@ function ProcurementModal({ onClose, onSaved }) {
 
         <form onSubmit={handleSubmit} className="space-y-4">
 
-          {/* Item Type */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">{t('procurement.itemType')} *</label>
-            <select
-              required
-              value={form.item_type_id}
-              onChange={e => handleTypeChange(e.target.value)}
-              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-amber-400"
-            >
-              <option value="">{t('procurement.selectItemType')}…</option>
-              {itemTypes.map(t => (
-                <option key={t.id} value={t.id}>{t.name}</option>
-              ))}
-            </select>
-          </div>
-
-          {/* Item */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">{t('procurement.item')} *</label>
-            <select
-              required
-              value={form.item_id}
-              onChange={e => handleItemChange(e.target.value)}
-              disabled={!form.item_type_id}
-              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-amber-400 disabled:bg-gray-50 disabled:text-gray-400"
-            >
-              <option value="">
-                {form.item_type_id ? `${t('procurement.selectItem')}…` : `${t('procurement.selectItemType')} ${t('common.required').toLowerCase()}`}
-              </option>
-              {items.map(i => (
-                <option key={i.id} value={i.id}>{i.name} ({i.unit})</option>
-              ))}
-            </select>
-          </div>
-
-          {/* Unit — read-only badge */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">{t('procurement.unit')}</label>
-            <span className="inline-flex items-center rounded-lg bg-gray-100 border border-gray-200 px-3 py-2 text-sm text-gray-600 font-medium min-w-[80px]">
-              {selectedItem?.unit ?? '—'}
-            </span>
-          </div>
-
-          {/* Quantity + Cost per unit */}
-          <div className="grid grid-cols-2 gap-3">
+          {/* Supplier + Date (shared across the purchase) */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">{t('procurement.quantity')} *</label>
-              <input
-                required type="number" min="0.01" step="0.01"
-                value={form.quantity} onChange={set('quantity')}
-                placeholder="e.g. 100"
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
-              />
+              <label className="block text-sm font-medium text-gray-700 mb-1">{t('procurement.supplier')} *</label>
+              <select
+                value={header.supplier_id}
+                onChange={e => handleSupplierChange(e.target.value)}
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-amber-400"
+              >
+                <option value="">— {t('procurement.selectSupplier')} —</option>
+                {suppliers.map(s => (
+                  <option key={s.id} value={s.id}>
+                    {s.name}{s.business_name ? ` — ${s.business_name}` : ''}
+                  </option>
+                ))}
+              </select>
+              {supplierOutstanding !== null && header.supplier_id && (
+                <p className={`text-xs mt-1 font-medium ${supplierOutstanding > 0 ? 'text-red-600' : 'text-green-600'}`}>
+                  Current outstanding: {formatCurrency(supplierOutstanding)}
+                </p>
+              )}
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">{t('procurement.costPerUnit')} (₹)</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">{t('common.date')} *</label>
               <input
-                type="number" min="0" step="0.01"
-                value={form.cost_per_unit} onChange={set('cost_per_unit')}
-                placeholder="e.g. 28.50"
+                required type="date"
+                value={header.date} onChange={e => setHeader(h => ({ ...h, date: e.target.value }))}
                 className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
               />
             </div>
           </div>
 
-          {/* Total Cost */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">{t('procurement.totalCost')} (₹) *</label>
-            <input
-              required type="number" min="0" step="0.01"
-              value={form.cost} onChange={set('cost')}
-              placeholder="Auto-calculated"
-              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
-            />
+          {/* Item lines */}
+          <div className="space-y-3">
+            {lines.map((ln, i) => {
+              const item = ln.items.find(it => it.id === ln.item_id)
+              return (
+                <div key={i} className="rounded-lg border border-gray-200 p-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">{t('procurement.item')} {i + 1}</span>
+                    {lines.length > 1 && (
+                      <button type="button" onClick={() => removeLine(i)}
+                        className="text-xs font-medium text-gray-400 hover:text-red-600">
+                        {t('common.remove', { defaultValue: 'Remove' })}
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3 mb-3">
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">{t('procurement.itemType')} *</label>
+                      <select
+                        value={ln.item_type_id}
+                        onChange={e => handleLineTypeChange(i, e.target.value)}
+                        className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-amber-400"
+                      >
+                        <option value="">{t('procurement.selectItemType')}…</option>
+                        {itemTypes.map(tp => (
+                          <option key={tp.id} value={tp.id}>{tp.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">{t('procurement.item')} *</label>
+                      <select
+                        value={ln.item_id}
+                        onChange={e => updateLine(i, { item_id: e.target.value })}
+                        disabled={!ln.item_type_id}
+                        className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-amber-400 disabled:bg-gray-50 disabled:text-gray-400"
+                      >
+                        <option value="">{t('procurement.selectItem')}…</option>
+                        {ln.items.map(it => (
+                          <option key={it.id} value={it.id}>{it.name} ({it.unit})</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-3">
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">
+                        {t('procurement.quantity')}{item ? ` (${item.unit})` : ''} *
+                      </label>
+                      <input
+                        type="number" min="0.01" step="0.01"
+                        value={ln.quantity} onChange={e => setLineField(i, 'quantity', e.target.value)}
+                        placeholder="e.g. 100"
+                        className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">{t('procurement.costPerUnit')} (₹)</label>
+                      <input
+                        type="number" min="0" step="0.01"
+                        value={ln.cost_per_unit} onChange={e => setLineField(i, 'cost_per_unit', e.target.value)}
+                        placeholder="e.g. 28.50"
+                        className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">{t('procurement.totalCost')} (₹) *</label>
+                      <input
+                        type="number" min="0" step="0.01"
+                        value={ln.cost} onChange={e => setLineField(i, 'cost', e.target.value)}
+                        placeholder="Auto"
+                        className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )
+            })}
+
+            <button type="button" onClick={addLine}
+              className="w-full rounded-lg border border-dashed border-amber-300 px-4 py-2 text-sm font-semibold text-amber-600 hover:bg-amber-50 transition">
+              + {t('procurement.addItem', { defaultValue: 'Add another item' })}
+            </button>
           </div>
 
-          {/* Total preview pill */}
-          {totalPreview > 0 && (
-            <div className="flex items-center gap-2 rounded-lg bg-amber-50 border border-amber-200 px-4 py-2.5">
-              <span className="text-xs text-amber-700 font-medium">{t('common.total')}:</span>
-              <span className="text-sm font-bold text-amber-700">{formatCurrency(totalPreview)}</span>
+          {/* Grand total */}
+          {grandTotal > 0 && (
+            <div className="flex items-center justify-between rounded-lg bg-amber-50 border border-amber-200 px-4 py-2.5">
+              <span className="text-xs text-amber-700 font-medium uppercase tracking-wide">{t('common.total')}</span>
+              <span className="text-base font-bold text-amber-700">{formatCurrency(grandTotal)}</span>
             </div>
           )}
-
-          {/* Supplier */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">{t('procurement.supplier')}</label>
-            <select
-              value={form.supplier_id}
-              onChange={e => handleSupplierChange(e.target.value)}
-              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-amber-400"
-            >
-              <option value="">— {t('procurement.selectSupplier')} —</option>
-              {suppliers.map(s => (
-                <option key={s.id} value={s.id}>
-                  {s.name}{s.business_name ? ` — ${s.business_name}` : ''}
-                </option>
-              ))}
-            </select>
-            {supplierOutstanding !== null && form.supplier_id && (
-              <p className={`text-xs mt-1 font-medium ${supplierOutstanding > 0 ? 'text-red-600' : 'text-green-600'}`}>
-                Current outstanding: {formatCurrency(supplierOutstanding)}
-              </p>
-            )}
-          </div>
-
-          {/* Date */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">{t('common.date')} *</label>
-            <input
-              required type="date"
-              value={form.date} onChange={set('date')}
-              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
-            />
-          </div>
 
           {/* Notes */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">{t('common.notes')} <span className="text-gray-400 font-normal">({t('common.optional')})</span></label>
             <textarea
               rows={2}
-              value={form.notes} onChange={set('notes')}
+              value={header.notes} onChange={e => setHeader(h => ({ ...h, notes: e.target.value }))}
               placeholder="Any additional details…"
               className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-amber-400"
             />
           </div>
+
+          {/* Bill / Invoice / files */}
+          <AttachmentUploader value={pendingFiles} onChange={setPendingFiles} label="Bill / Invoice (optional)" />
 
           {/* Pay now */}
           {accounts.length > 0 && (
@@ -398,23 +440,23 @@ function ProcurementModal({ onClose, onSaved }) {
               <label className="flex items-center gap-3 cursor-pointer">
                 <input
                   type="checkbox"
-                  checked={form.pay_now}
-                  onChange={e => setForm(f => ({ ...f, pay_now: e.target.checked }))}
+                  checked={header.pay_now}
+                  onChange={e => setHeader(h => ({ ...h, pay_now: e.target.checked }))}
                   className="h-4 w-4 rounded border-gray-300 accent-amber-500"
                 />
                 <div>
                   <span className="text-sm font-medium text-gray-700">{t('procurement.payNow')}</span>
-                  {!form.pay_now && (
+                  {!header.pay_now && (
                     <p className="text-xs text-gray-400 mt-0.5">{t('procurement.payLater')}</p>
                   )}
                 </div>
               </label>
-              {form.pay_now && (
+              {header.pay_now && (
                 <div>
                   <label className="block text-xs font-medium text-gray-600 mb-1">Pay from Account</label>
                   <select
-                    value={form.account_id}
-                    onChange={set('account_id')}
+                    value={header.account_id}
+                    onChange={e => setHeader(h => ({ ...h, account_id: e.target.value }))}
                     className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-amber-400"
                   >
                     <option value="">— select account —</option>
@@ -462,6 +504,11 @@ export default function Procurement() {
   const [loading, setLoading]       = useState(true)
   const [modalOpen, setModalOpen]   = useState(false)
   const [typeFilter, setTypeFilter] = useState('all')
+  const [dateFrom,   setDateFrom]   = useState(currentMonthRange().start) // 1st of this month
+  const [dateTo,     setDateTo]     = useState(new Date().toISOString().slice(0, 10)) // today
+  const [page,       setPage]       = useState(1)
+  const [attByRow,   setAttByRow]   = useState({})
+  const [viewRowId,  setViewRowId]  = useState(null)
 
   async function fetchData() {
     setLoading(true)
@@ -469,18 +516,32 @@ export default function Procurement() {
       supabase.from('procurement').select('*, suppliers(name), created_by_name, created_at, updated_by_name, updated_at').eq('organization_id', organization?.id).order('date', { ascending: false }),
       supabase.from('item_types').select('id, name'),
     ])
-    setRecords(batchData || [])
+    const rows = batchData || []
+    setRecords(rows)
     setItemTypes(typesData || [])
+    setAttByRow(await attachmentsByEntity('procurement', rows.map(r => r.id), organization?.id))
     setLoading(false)
   }
 
   useEffect(() => { fetchData() }, [])
 
-  const visible = typeFilter === 'all'
-    ? records
-    : records.filter(r => r.type === typeFilter)
+  // Reset to the first page whenever a filter changes
+  useEffect(() => { setPage(1) }, [typeFilter, dateFrom, dateTo])
+
+  const visible = records.filter(r => {
+    if (typeFilter !== 'all' && r.type !== typeFilter) return false
+    if (dateFrom && r.date < dateFrom) return false
+    if (dateTo   && r.date > dateTo)   return false
+    return true
+  })
 
   const grandTotal = records.reduce((sum, r) => sum + Number(r.cost), 0)
+
+  const PAGE_SIZE   = 15
+  const totalPages  = Math.max(1, Math.ceil(visible.length / PAGE_SIZE))
+  const currentPage = Math.min(page, totalPages)
+  const paged       = visible.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE)
+  const viewRow     = viewRowId ? records.find(r => r.id === viewRowId) : null
 
   return (
     <div>
@@ -532,6 +593,32 @@ export default function Procurement() {
 
       {/* Summary bar */}
       {!loading && <SummaryBar records={records} />}
+
+      {/* Date range filter */}
+      <div className="flex flex-wrap items-end gap-3 mb-4">
+        <div>
+          <label className="block text-xs font-medium text-gray-500 mb-1">{t('common.from', { defaultValue: 'From' })}</label>
+          <input
+            type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
+            className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
+          />
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-gray-500 mb-1">{t('common.to', { defaultValue: 'To' })}</label>
+          <input
+            type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
+            className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
+          />
+        </div>
+        {(dateFrom || dateTo) && (
+          <button
+            onClick={() => { setDateFrom(''); setDateTo('') }}
+            className="text-xs font-medium text-amber-600 hover:text-amber-700 pb-2"
+          >
+            {t('common.clear', { defaultValue: 'Clear' })}
+          </button>
+        )}
+      </div>
 
       {/* Type filter pills */}
       <div className="flex items-center gap-2 mb-4 flex-wrap">
@@ -586,8 +673,8 @@ export default function Procurement() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
-                {visible.map(r => (
-                  <tr key={r.id} className="hover:bg-amber-50/40 transition">
+                {paged.map(r => (
+                  <tr key={r.id} onClick={() => setViewRowId(r.id)} className="hover:bg-amber-50/40 transition cursor-pointer">
                     <td className="px-5 py-3.5">
                       <TypeBadge type={r.item_type_name?.toLowerCase() ?? r.type} />
                     </td>
@@ -622,9 +709,81 @@ export default function Procurement() {
                 {formatCurrency(visible.reduce((s, r) => s + Number(r.cost), 0))}
               </span>
             </div>
+
+            {/* Pagination */}
+            {totalPages > 1 && (
+              <div className="flex items-center justify-between gap-3 px-5 py-3 border-t border-gray-100 bg-white">
+                <span className="text-xs text-gray-500">
+                  {`${(currentPage - 1) * PAGE_SIZE + 1}–${Math.min(currentPage * PAGE_SIZE, visible.length)} of ${visible.length}`}
+                </span>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setPage(currentPage - 1)}
+                    disabled={currentPage <= 1}
+                    className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    {t('common.previous', { defaultValue: 'Previous' })}
+                  </button>
+                  <span className="text-xs text-gray-500">{`${currentPage} / ${totalPages}`}</span>
+                  <button
+                    onClick={() => setPage(currentPage + 1)}
+                    disabled={currentPage >= totalPages}
+                    className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    {t('common.next', { defaultValue: 'Next' })}
+                  </button>
+                </div>
+              </div>
+            )}
           </>
         )}
       </div>
+
+      {viewRow && (
+        <AttachmentViewer
+          attachments={attByRow[viewRowId] || []}
+          title={viewRow.item_name}
+          header={
+            <div className="rounded-lg bg-gray-50 border border-gray-100 px-4 py-3 grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-2 text-sm">
+              <div>
+                <span className="text-gray-400 text-xs block mb-0.5">{t('procurement.itemType')}</span>
+                <TypeBadge type={viewRow.item_type_name?.toLowerCase() ?? viewRow.type} />
+              </div>
+              <div>
+                <span className="text-gray-400 text-xs block mb-0.5">{t('procurement.quantity')}</span>
+                {Number(viewRow.quantity).toLocaleString('en-IN')} {viewRow.unit}
+              </div>
+              <div>
+                <span className="text-gray-400 text-xs block mb-0.5">{t('procurement.totalCost')}</span>
+                <span className="font-semibold text-gray-800">{formatCurrency(viewRow.cost)}</span>
+              </div>
+              <div>
+                <span className="text-gray-400 text-xs block mb-0.5">{t('procurement.supplier')}</span>
+                {viewRow.suppliers?.name || '—'}
+              </div>
+              <div>
+                <span className="text-gray-400 text-xs block mb-0.5">{t('common.date')}</span>
+                {formatDate(viewRow.date, i18n.language)}
+              </div>
+              {viewRow.cost_per_unit != null && (
+                <div>
+                  <span className="text-gray-400 text-xs block mb-0.5">{t('procurement.costPerUnit')}</span>
+                  {formatCurrency(viewRow.cost_per_unit)}
+                </div>
+              )}
+              {viewRow.notes && (
+                <div className="col-span-2 sm:col-span-3">
+                  <span className="text-gray-400 text-xs block mb-0.5">{t('common.notes')}</span>
+                  {viewRow.notes}
+                </div>
+              )}
+            </div>
+          }
+          canDelete={canEdit}
+          onClose={() => setViewRowId(null)}
+          onDeleted={(a) => setAttByRow(prev => ({ ...prev, [viewRowId]: (prev[viewRowId] || []).filter(x => x.id !== a.id) }))}
+        />
+      )}
 
       {modalOpen && (
         <ProcurementModal

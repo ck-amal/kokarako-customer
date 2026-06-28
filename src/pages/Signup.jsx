@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { supabase } from '../lib/supabaseClient'
 
@@ -32,62 +32,36 @@ function PasswordStrength({ password }) {
 }
 
 export default function Signup() {
-  const navigate = useNavigate()
   const { t } = useTranslation()
-  const [form, setForm] = useState({
-    fullName:     '',
-    email:        '',
-    password:     '',
-    confirmPw:    '',
-    businessName: '',
-    phone:        '',
-  })
-  const [error,        setError]        = useState('')
-  const [loading,      setLoading]      = useState(false)
-  const [emailSent,    setEmailSent]    = useState(false)
+  const [form, setForm] = useState({ fullName: '', email: '', password: '', confirmPw: '' })
+  const [error,     setError]     = useState('')
+  const [loading,   setLoading]   = useState(false)
+  const [emailSent, setEmailSent] = useState(false)
 
   function set(f) { return e => setForm(p => ({ ...p, [f]: e.target.value })) }
 
   async function handleSubmit(e) {
     e.preventDefault()
     setError('')
-
     if (form.password.length < 8) { setError(t('errors.minPassword')); return }
     if (form.password !== form.confirmPw) { setError(t('errors.passwordMismatch')); return }
-    if (!form.businessName.trim()) { setError(t('errors.required')); return }
 
     setLoading(true)
 
-    // 1. Create Supabase auth user
+    // Create the account only — the organisation + plan are set up in the next steps.
     const { data: authData, error: authErr } = await supabase.auth.signUp({
       email:    form.email.trim(),
       password: form.password,
       options:  { data: { full_name: form.fullName.trim() } },
     })
     if (authErr) { setError(authErr.message); setLoading(false); return }
+    if (!authData.user) { setError('Signup failed — please try again'); setLoading(false); return }
 
-    const userId = authData.user?.id
-    if (!userId) { setError('Signup failed — please try again'); setLoading(false); return }
+    // Email confirmation required → no session yet. Show "check your email".
+    if (!authData.session) { setEmailSent(true); setLoading(false); return }
 
-    // If email confirmation is required, session will be null
-    // Show "check your email" and skip org creation (it will happen after verify)
-    if (!authData.session) {
-      setEmailSent(true)
-      setLoading(false)
-      return
-    }
-
-    // 2. Create organization + set caller as owner (SECURITY DEFINER bypasses RLS bootstrap)
-    const { error: orgErr } = await supabase.rpc('create_organization', {
-      p_name:          form.businessName.trim(),
-      p_business_name: form.businessName.trim(),
-      p_phone:         form.phone.trim() || null,
-      p_user_id:       userId,
-    })
-    if (orgErr) { setError(orgErr.message); setLoading(false); return }
-
-    // Full reload so AuthContext reinitialises and picks up the new org
-    window.location.href = '/dashboard'
+    // Signed in but no organisation yet → go create one (then pick a plan).
+    window.location.href = '/setup'
   }
 
   if (emailSent) {
@@ -103,7 +77,7 @@ export default function Signup() {
             Click the link to verify your account, then come back to sign in.
           </p>
           <p className="text-xs text-gray-400">
-            After verifying, you'll be asked to set up your organisation.
+            After verifying, you'll set up your organisation and choose a plan.
           </p>
           <Link to="/login" className="mt-6 inline-block text-sm text-amber-600 hover:text-amber-700 font-medium">
             {t('common.back')} {t('auth.login')}
@@ -122,19 +96,11 @@ export default function Signup() {
             <span className="text-3xl">🐔</span>
           </div>
           <h1 className="text-2xl font-bold text-gray-800">{t('auth.createAccount')}</h1>
-          <p className="text-sm text-gray-500 mt-1">Set up your poultry management workspace</p>
+          <p className="text-sm text-gray-500 mt-1">Step 1 of 3 — create your account</p>
         </div>
 
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-8">
           <form onSubmit={handleSubmit} className="space-y-4">
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1.5">{t('auth.businessName')} *</label>
-              <input required type="text" value={form.businessName} onChange={set('businessName')}
-                placeholder="e.g. ABC Poultry Farm"
-                className="w-full rounded-lg border border-gray-300 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 transition" />
-              <p className="text-xs text-gray-400 mt-1">This becomes your organisation name</p>
-            </div>
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1.5">{t('auth.fullName')} *</label>
@@ -147,13 +113,6 @@ export default function Signup() {
               <label className="block text-sm font-medium text-gray-700 mb-1.5">{t('auth.email')} *</label>
               <input required type="email" autoComplete="email" value={form.email} onChange={set('email')}
                 placeholder={t('auth.emailPlaceholder')}
-                className="w-full rounded-lg border border-gray-300 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 transition" />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1.5">{t('common.phone')} ({t('common.optional')})</label>
-              <input type="tel" value={form.phone} onChange={set('phone')}
-                placeholder="+91 98765 43210"
                 className="w-full rounded-lg border border-gray-300 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 transition" />
             </div>
 

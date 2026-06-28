@@ -1,8 +1,7 @@
 import { useState, useEffect } from 'react'
-import { NavLink, useNavigate, useLocation } from 'react-router-dom'
+import { NavLink, useLocation } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useAuth } from '../contexts/AuthContext'
-import LanguageSwitcher from './LanguageSwitcher'
 
 // ─── All possible nav items with role requirements ────────────────────────────
 
@@ -81,15 +80,9 @@ function RoleBanner({ userRole }) {
 // ─── Desktop sidebar ──────────────────────────────────────────────────────────
 
 export function DesktopSidebar() {
-  const navigate = useNavigate()
   const { t } = useTranslation()
-  const { signOut, organization, userRole } = useAuth()
+  const { organization, userRole } = useAuth()
   const navItems = useFilteredNav(userRole)
-
-  async function handleLogout() {
-    await signOut()
-    navigate('/login')
-  }
 
   return (
     <aside className="hidden lg:flex flex-col w-56 shrink-0 bg-white border-r border-gray-100 min-h-screen sticky top-0 h-screen">
@@ -120,19 +113,6 @@ export function DesktopSidebar() {
         ))}
       </nav>
 
-      {/* Footer: Logout + Language switcher */}
-      <div className="px-3 py-4 border-t border-gray-100 space-y-2">
-        <button
-          onClick={handleLogout}
-          className="flex items-center gap-3 w-full px-3 py-2.5 rounded-xl text-sm font-medium text-gray-500 hover:bg-red-50 hover:text-red-600 transition-all"
-        >
-          <span className="text-base w-5 text-center">🚪</span>
-          <span>{t('auth.logout')}</span>
-        </button>
-        <div className="flex justify-center">
-          <LanguageSwitcher compact />
-        </div>
-      </div>
     </aside>
   )
 }
@@ -141,10 +121,9 @@ export function DesktopSidebar() {
 
 export function MobileHeader() {
   const [open, setOpen]   = useState(false)
-  const navigate          = useNavigate()
   const location          = useLocation()
   const { t } = useTranslation()
-  const { signOut, organization, userRole } = useAuth()
+  const { organization, userRole } = useAuth()
   const navItems = useFilteredNav(userRole)
 
   useEffect(() => { setOpen(false) }, [location.pathname])
@@ -152,11 +131,6 @@ export function MobileHeader() {
     document.body.style.overflow = open ? 'hidden' : ''
     return () => { document.body.style.overflow = '' }
   }, [open])
-
-  async function handleLogout() {
-    await signOut()
-    navigate('/login')
-  }
 
   const currentPage = ALL_NAV.find(n => location.pathname.startsWith(n.to))?.labelKey ?? null
 
@@ -201,16 +175,6 @@ export function MobileHeader() {
           ))}
         </nav>
 
-        <div className="px-3 py-4 border-t border-gray-100 space-y-2">
-          <button onClick={handleLogout}
-            className="flex items-center gap-3 w-full px-3 py-2.5 rounded-xl text-sm font-medium text-gray-500 hover:bg-red-50 hover:text-red-600 transition-all">
-            <span className="text-base w-5 text-center">🚪</span>
-            <span>{t('auth.logout')}</span>
-          </button>
-          <div className="flex justify-center">
-            <LanguageSwitcher compact />
-          </div>
-        </div>
       </div>
     </>
   )

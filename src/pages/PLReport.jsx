@@ -183,7 +183,7 @@ export default function PLReport() {
     const [{ data: s }, { data: p }, { data: fe }, { data: fer }, { data: ex }, { data: soldBatchesInPeriod }] = await Promise.all([
       // Sales
       (() => {
-        let q = supabase.from('sales').select('id, total_amount, date, batch_id, vendors(name)').eq('organization_id', organization?.id).gte('date', start).lte('date', end)
+        let q = supabase.from('sales').select('id, total_amount, date, batch_id, vendors(name)').eq('organization_id', organization?.id).eq('status', 'confirmed').gte('date', start).lte('date', end)
         if (batchIds) q = q.in('batch_id', batchIds)
         return q
       })(),

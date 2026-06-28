@@ -11,6 +11,9 @@ function batchLabel(batch, i18nLanguage) {
   return `${batch.farms?.name ?? 'Farm'} — ${formatDate(batch.start_date, i18nLanguage)} (${batch.chick_count?.toLocaleString()} chicks)`
 }
 
+const STATUS_STYLE = { pending: 'bg-amber-100 text-amber-700', confirmed: 'bg-green-100 text-green-700', rejected: 'bg-red-100 text-red-700' }
+const STATUS_LABEL = { pending: 'Pending', confirmed: 'Confirmed', rejected: 'Rejected' }
+
 // ─── Record Sale Modal ────────────────────────────────────────────────────────
 
 function SaleModal({ batches, vendors, onClose, onSaved }) {
@@ -39,6 +42,7 @@ function SaleModal({ batches, vendors, onClose, onSaved }) {
       .from('sales')
       .select('chicken_count')
       .eq('batch_id', form.batch_id)
+      .neq('status', 'rejected')
       .then(({ data }) => {
         setAlreadySold((data || []).reduce((s, r) => s + Number(r.chicken_count || 0), 0))
         setLoadingBatch(false)
@@ -223,7 +227,9 @@ function SaleModal({ batches, vendors, onClose, onSaved }) {
 
 export default function Sales() {
   const { t, i18n } = useTranslation()
-  const { organization, canRecordOperations } = useAuth()
+  const { organization, user, userRole, canRecordOperations } = useAuth()
+  const userName = user?.user_metadata?.full_name || user?.email || 'Unknown'
+  const canConfirm = ['owner', 'manager', 'accountant'].includes(userRole)
   const [sales, setSales]       = useState([])
   const [batches, setBatches]   = useState([])   // active only for modal
   const [vendors, setVendors]   = useState([])
@@ -263,12 +269,22 @@ export default function Sales() {
 
   useEffect(() => { fetchData() }, [])
 
-  // Revenue this month
+  async function confirmSale(s) {
+    const { error } = await supabase.rpc('confirm_sale', { p_id: s.id, p_by_name: userName })
+    if (error) alert(error.message); else fetchData()
+  }
+  async function rejectSale(s) {
+    if (!window.confirm('Reject this sale? It will not count anywhere.')) return
+    const { error } = await supabase.rpc('reject_sale', { p_id: s.id, p_reason: null, p_by_name: userName })
+    if (error) alert(error.message); else fetchData()
+  }
+
+  // Revenue this month (confirmed only)
   const now = new Date()
   const thisMonthRevenue = sales
     .filter(s => {
       const d = new Date(s.date)
-      return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth()
+      return s.status === 'confirmed' && d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth()
     })
     .reduce((sum, s) => sum + Number(s.total_amount || 0), 0)
 
@@ -327,6 +343,7 @@ export default function Sales() {
                 <th className="px-5 py-3 text-right">{t('sales.kgSold')}</th>
                 <th className="px-5 py-3 text-right">{t('sales.pricePerKg')}</th>
                 <th className="px-5 py-3 text-right">{t('common.total')}</th>
+                <th className="px-5 py-3 text-center">Status</th>
                 <th className="w-8 px-5 py-3">
                   <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5 text-gray-400" viewBox="0 0 20 20" fill="currentColor">
                     <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clipRule="evenodd" />
@@ -356,6 +373,19 @@ export default function Sales() {
                   <td className="px-5 py-4 text-right font-semibold text-gray-800">
                     {formatCurrency(s.total_amount)}
                   </td>
+                  <td className="px-5 py-4 text-center">
+                    <span className={`inline-block rounded-full px-2.5 py-0.5 text-xs font-semibold ${STATUS_STYLE[s.status] || STATUS_STYLE.pending}`}>
+                      {STATUS_LABEL[s.status] || s.status}
+                    </span>
+                    {canConfirm && s.status === 'pending' && (
+                      <div className="flex gap-1.5 justify-center mt-2">
+                        <button onClick={() => rejectSale(s)}
+                          className="rounded-md border border-red-200 px-2 py-1 text-[11px] font-semibold text-red-600 hover:bg-red-50 transition">Reject</button>
+                        <button onClick={() => confirmSale(s)}
+                          className="rounded-md bg-green-600 hover:bg-green-700 px-2 py-1 text-[11px] font-semibold text-white transition">Confirm</button>
+                      </div>
+                    )}
+                  </td>
                   <td className="px-5 py-4">
                     <AuditInfo createdByName={s.created_by_name} createdAt={s.created_at} updatedByName={s.updated_by_name} updatedAt={s.updated_at} />
                   </td>
@@ -364,12 +394,13 @@ export default function Sales() {
             </tbody>
             <tfoot>
               <tr className="bg-gray-50 border-t border-gray-200">
-                <td colSpan={7} className="px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider text-right">
-                  {t('common.total')}
+                <td colSpan={6} className="px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider text-right">
+                  {t('common.total')} (confirmed)
                 </td>
                 <td className="px-5 py-3 text-right font-bold text-gray-800">
-                  {formatCurrency(sales.reduce((sum, s) => sum + Number(s.total_amount || 0), 0))}
+                  {formatCurrency(sales.filter(s => s.status === 'confirmed').reduce((sum, s) => sum + Number(s.total_amount || 0), 0))}
                 </td>
+                <td colSpan={2} />
               </tr>
             </tfoot>
           </table>
