@@ -41,7 +41,7 @@ export default function Login() {
           <div className="inline-flex items-center justify-center h-16 w-16 rounded-2xl bg-amber-500 shadow-lg mb-4">
             <span className="text-3xl">🐔</span>
           </div>
-          <h1 className="text-2xl font-bold text-gray-800">Poultry Manager</h1>
+          <h1 className="text-2xl font-bold text-gray-800">Kokarako</h1>
           <p className="text-sm text-gray-500 mt-1">{t('auth.signInToAccount')}</p>
         </div>
 

@@ -44,7 +44,7 @@ export async function subscribeToPlan({ supabase, organization, user, planKey, b
     const rzp = new window.Razorpay({
       key:             data.key_id,
       subscription_id: data.subscription_id,
-      name:            organization?.name || 'Poultry Manager',
+      name:            organization?.name || 'Kokarako',
       description:     `${planKey} plan (${billing})`,
       prefill:         { email: user?.email || '' },
       theme:           { color: '#f59e0b' },

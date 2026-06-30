@@ -52,7 +52,10 @@ export default function Signup() {
     const { data: authData, error: authErr } = await supabase.auth.signUp({
       email:    form.email.trim(),
       password: form.password,
-      options:  { data: { full_name: form.fullName.trim() } },
+      options:  {
+        data: { full_name: form.fullName.trim() },
+        emailRedirectTo: `${window.location.origin}/setup`,
+      },
     })
     if (authErr) { setError(authErr.message); setLoading(false); return }
     if (!authData.user) { setError('Signup failed — please try again'); setLoading(false); return }

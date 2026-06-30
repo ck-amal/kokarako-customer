@@ -33,7 +33,7 @@ Deno.serve(async (req: Request) => {
     }
 
     const inviteLink = `${app_url}/invite/${inv.token}`
-    const orgName = (inv.organizations as any)?.name || 'Poultry Manager'
+    const orgName = (inv.organizations as any)?.name || 'Kokarako'
     const role = inv.role.replace('_', ' ').replace(/\b\w/g, (c: string) => c.toUpperCase())
     const expiresDate = new Date(inv.expires_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
 
@@ -54,7 +54,7 @@ Deno.serve(async (req: Request) => {
       <p style="color: rgba(255,255,255,0.9); margin: 8px 0 0; font-size: 16px; font-weight: 600;">${orgName}</p>
     </div>
     <div style="padding: 32px;">
-      <p style="color: #374151; font-size: 15px; margin: 0 0 8px;">You've been invited as a <strong>${role}</strong> on Poultry Manager.</p>
+      <p style="color: #374151; font-size: 15px; margin: 0 0 8px;">You've been invited as a <strong>${role}</strong> on Kokarako.</p>
       <p style="color: #6b7280; font-size: 13px; margin: 0 0 28px;">This invitation expires on ${expiresDate}.</p>
       <a href="${inviteLink}" style="display: block; background: #f59e0b; color: white; text-decoration: none; text-align: center; padding: 14px 24px; border-radius: 10px; font-weight: 700; font-size: 15px;">Accept Invitation</a>
       <p style="color: #9ca3af; font-size: 12px; margin: 20px 0 0; word-break: break-all;">Or copy this link: ${inviteLink}</p>
@@ -70,9 +70,9 @@ Deno.serve(async (req: Request) => {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        from: 'Poultry Manager <noreply@kokarako.com>',
+        from: 'Kokarako <noreply@kokarako.com>',
         to: [inv.email],
-        subject: `You're invited to join ${orgName} on Poultry Manager`,
+        subject: `You're invited to join ${orgName} on Kokarako`,
         html: emailHtml,
       }),
     })

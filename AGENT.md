@@ -1,4 +1,4 @@
-# AGENT.md — Poultry Manager Project Memory
+# AGENT.md — Kokarako Project Memory
 
 > **Session update rule:** At the end of every session, before finishing,
 > always update this file with:
@@ -15,7 +15,7 @@
 
 | Field              | Value |
 |--------------------|-------|
-| **Project Name**   | Poultry Manager |
+| **Project Name**   | Kokarako |
 | **Purpose**        | Web app to manage a poultry farming business — flocks, procurement, sales, cash collection, expenses, and stock |
 | **Hosting**        | Vercel (web app) + separate Vercel project for admin panel |
 | **Supabase URL**   | https://meebbwdaxszoyarssutm.supabase.co |
@@ -273,6 +273,41 @@ src/
 ---
 
 ## Sessions Log
+
+### Session 29 — UI polish (full-width + dark-mode line fix), subscription lifecycle, multi-org invite fix, docs + redesign plan
+
+**Continuation of Session 28. WEB unless noted; web builds stayed green throughout.**
+
+1. **Full-width layouts** — content was capped/centered. Removed `max-w-5xl mx-auto` from the shared `<main>` in `src/App.jsx` (every page fills width). Removed per-page caps too: `FarmDetail.jsx` (4× `max-w-[900px] mx-auto` → `w-full` on identity header, tab bar, tab content, farm-stock card), `BatchDetail.jsx` (`space-y-5 max-w-[900px] mx-auto` → `space-y-5`), `BatchReport.jsx` + `FCRReport.jsx` (`max-w-4xl mx-auto` removed). Modals keep `max-w-md/sm/lg`; `ChoosePlan` intentionally stays centered.
+
+2. **Dark-mode "bright line after first row, everywhere" fix (Tailwind v4 gotchas in `src/index.css`):**
+   - v4 defaults a bare `border`/`border-b` (no colour class) to `currentColor` → bright in dark mode. Fix: `@layer base { *, ::before, ::after { border-color: var(--border); } }` (restores v3-style default; explicit `border-*` utilities still win).
+   - The dark divide override used the **v3** selector `:not([hidden]) ~ :not([hidden])`, but v4 compiles divides as `:where(.divide-gray-X > :not(:last-child))` → the override matched nothing and dividers kept light gray-50. Fix: `.dark .divide-gray-50/100/200 > :not(:last-child) { border-color: var(--border); }`. (Diagnosed by grepping the built `dist/assets/*.css`.)
+
+3. **Subscription lifecycle (web) — warn → grace → block, driven by `organizations.current_period_end`:**
+   - NEW `src/lib/subscription.js` — `getSubscriptionState(org, now)` (`WARN_DAYS=7`, `GRACE_DAYS=7`) → `{hasSubscription, periodEnd, daysLeft, endingSoon, ended, inGrace, blocked, graceDaysLeft, plan}`; null `current_period_end` ⇒ `hasSubscription:false`, never blocked (free/never-subscribed safe); `blocked` once `now ≥ periodEnd + 7d`. + `formatSubDate`.
+   - NEW `src/components/SubscriptionBanner.jsx` — dashboard banner: amber "ends in N days" (endingSoon) / red "ended — service stops in N days" (inGrace); owner Renew → `/choose-plan`.
+   - `src/contexts/AuthContext.jsx` — org SELECT now also fetches `billing_period, subscription_status, current_period_end`; exposes `subscriptionState`.
+   - `src/components/ProtectedRoute.jsx` — `subscriptionState.blocked` ⇒ full-screen **"Subscription expired"** renew gate (session kept; only `/choose-plan` passes through; non-owners told to ask the owner).
+   - `src/pages/Dashboard.jsx` — renders `<SubscriptionBanner/>`. `src/pages/OrgSettings.jsx` — subscription card always shows a billing line ("Renews on / Subscription ended on `<date>` · billed `<period>`", else "Renewal date will appear after your first billing charge" + status chip) + amber/red warning boxes with Renew.
+   - No webhook change needed — `razorpay-webhook` already stamps `current_period_end` per charge; pay via `/choose-plan` → `refreshOrg()` → recompute → unblocked.
+
+4. **Multi-org invite for an EXISTING email (employee leaves org A → joins org B, same email):**
+   - App already supports multi-org membership (many `organization_users` rows); "resigning" = old org owner toggles `is_active=false` (reversible; login/account kept).
+   - **GAP:** web `InviteAccept.jsx` + mobile `InviteAcceptScreen.js` call `supabase.rpc('accept_invitation', {p_token, p_user_id})` but that RPC was **never in migrations** (only RLS insert policy 022) → existing-email accept path would fail.
+   - NEW `supabase/migrations/029_accept_invitation_rpc.sql` — SECURITY DEFINER `accept_invitation(p_token text, p_user_id uuid)`: validates token (valid/unused/unexpired), requires `auth.email()` = invite email (can't claim another's invite), INSERTs or re-activates the membership for the new org (other-org memberships untouched), marks accepted; `GRANT … TO authenticated`. Fixes web + mobile. **USER TODO: run 029.**
+
+5. **Docs (project root `/Poultry Farm/`):**
+   - NEW `APP_GUIDE.html` — self-contained app guide & QA reference (12 Mermaid flowcharts incl. onboarding, procurement→stock→distribution, sales-confirmation, cash-verification, subscription lifecycle, ER model; roles×permissions matrix; 17 per-feature test checklists; print-to-PDF; Mermaid via CDN).
+   - NEW `PREMIUM_REDESIGN_PLAN.md` — agreed plan for the premium UI/UX refresh (web+mobile; direction from a free AI tool — v0.dev/Stitch; foundation-first via Tailwind v4 `@theme` + tokens + font, then shared `components/ui/` primitives, then batched per-screen pass). Scan confirmed NO shared UI primitives exist — every page repeats the same inline class signatures (the lever for a cheap central re-skin).
+
+6. **Data-reset SQL (delivered as a query, not committed):** wipe operational data, keep config. Option A org-scoped `DO` block (`growing_fee_payments` scoped via `farm_id`); Option B `TRUNCATE … RESTART IDENTITY CASCADE`. **Kept:** items, item_types, growing_fee_config, plans, organizations, organization_users, invitations, subscription_events. **Wiped:** farms, batches, distributions, sales, cash_collection, procurement, stock/farm_stock/stock_ledger/stock_returns, expenses/farm_expenses/farm_expense_returns, transactions, accounts, growing_fee_ledger/advances/payments, supplier_payments, attachments, vendors, suppliers. (Views `vendor_balances`/`batch_summary`/`low_stock_alerts` auto-recompute.)
+
+**USER TODO (run on `khbuypzugydxvejjcoam`):** earlier pending — `fix_accounting_columns.sql`, `026_attachments.sql`, `027_cash_collection_verification.sql`, `028_sales_confirmation.sql` — PLUS NEW **`029_accept_invitation_rpc.sql`**. (025 already applied; subscription columns exist.)
+
+**Next session task:** await the user's v0.dev / Google-Stitch design direction, then execute `PREMIUM_REDESIGN_PLAN.md` starting at Phase B (web foundation: Tailwind `@theme` + refined tokens + font in `src/index.css` / `index.html`).
+
+---
 
 ### Session 28 — Mobile Feature Parity (Auth Foundation + Settings/Profile + Reports + Stock Returns)
 

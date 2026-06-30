@@ -1,5 +1,5 @@
 -- ============================================================
---  Poultry Manager — Full Database Schema
+--  Kokarako — Full Database Schema
 --  Run this in Supabase SQL Editor (Dashboard → SQL Editor → New query)
 -- ============================================================
 

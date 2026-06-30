@@ -38,7 +38,7 @@ export default function ProtectedRoute({ children, requireRole }) {
               ? "Your organisation's access has been temporarily suspended. Please contact support to resolve this."
               : "Your organisation's service has been cancelled. Please contact support."}
           </p>
-          <p className="text-sm font-medium text-amber-600">support@poultrymanager.com</p>
+          <p className="text-sm font-medium text-amber-600">support@kokarako.com</p>
         </div>
       </div>
     )
