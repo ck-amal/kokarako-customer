@@ -94,9 +94,9 @@ export function DesktopSidebar() {
           </div>
           <div className="min-w-0">
             <span className="font-bold text-gray-800 text-sm leading-tight block truncate">
-              {organization?.name || 'Poultry Manager'}
+              {organization?.name || 'Kokarako'}
             </span>
-            <span className="text-xs text-gray-400 leading-tight block">Poultry Manager</span>
+            <span className="text-xs text-gray-400 leading-tight block">Kokarako</span>
           </div>
         </div>
       </div>
@@ -140,7 +140,7 @@ export function MobileHeader() {
         <div className="flex items-center gap-2.5">
           <div className="h-7 w-7 rounded-lg bg-amber-500 flex items-center justify-center text-sm">🐔</div>
           <span className="font-semibold text-gray-800 text-sm">
-            {currentPage ? t(currentPage) : 'Poultry Manager'}
+            {currentPage ? t(currentPage) : 'Kokarako'}
           </span>
         </div>
         <button onClick={() => setOpen(true)} className="p-2 rounded-lg hover:bg-gray-100 transition" aria-label="Open menu">
@@ -158,7 +158,7 @@ export function MobileHeader() {
         <div className="px-4 py-4 border-b border-gray-100 flex items-center justify-between">
           <div className="flex items-center gap-2.5">
             <div className="h-8 w-8 rounded-lg bg-amber-500 flex items-center justify-center text-white text-base">🐔</div>
-            <span className="font-bold text-gray-800 text-sm truncate max-w-[140px]">{organization?.name || 'Poultry Manager'}</span>
+            <span className="font-bold text-gray-800 text-sm truncate max-w-[140px]">{organization?.name || 'Kokarako'}</span>
           </div>
           <button onClick={() => setOpen(false)} className="p-1.5 rounded-lg hover:bg-gray-100 transition text-gray-400 hover:text-gray-600">
             <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>

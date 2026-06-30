@@ -23,7 +23,7 @@ export default function Navbar() {
 
   return (
     <nav className="bg-amber-500 text-white px-6 py-3 shadow flex items-center gap-6">
-      <span className="text-base font-bold tracking-tight mr-2">🐔 Poultry Manager</span>
+      <span className="text-base font-bold tracking-tight mr-2">🐔 Kokarako</span>
 
       <div className="flex items-center gap-1 flex-1">
         {links.map(({ to, label }) => (
