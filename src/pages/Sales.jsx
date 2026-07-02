@@ -13,59 +13,53 @@ function batchLabel(batch, i18nLanguage) {
   return `${batch.farms?.name ?? 'Farm'} — ${formatDate(batch.start_date, i18nLanguage)} (${batch.chick_count?.toLocaleString()} chicks)`
 }
 
-const STATUS_STYLE = { pending: 'bg-amber-100 text-amber-700', confirmed: 'bg-green-100 text-green-700', rejected: 'bg-red-100 text-red-700' }
-const STATUS_LABEL = { pending: 'Pending', confirmed: 'Confirmed', rejected: 'Rejected' }
+const STATUS_STYLE = { pending: 'bg-amber-100 text-amber-700', confirmed: 'bg-green-100 text-green-700' }
+const STATUS_LABEL = { pending: 'Pending', confirmed: 'Confirmed' }
 
-// ─── Record Sale Modal ────────────────────────────────────────────────────────
+// ─── Add / Edit Sale Modal ────────────────────────────────────────────────────
 
-function SaleModal({ batches, vendors, onClose, onSaved }) {
+function SaleModal({ batches, vendors, onClose, onSaved, sale = null }) {
+  const isEdit = !!sale
   const { t, i18n } = useTranslation()
   const { organization, user } = useAuth()
   const userName = user?.user_metadata?.full_name || user?.email || 'Unknown'
   const [form, setForm] = useState({
-    batch_id:       batches[0]?.id ?? '',
-    vendor_id:      vendors[0]?.id ?? '',
-    chicken_count:  '',
-    kg_sold:        '',
-    price_per_kg:   '',
-    date:           new Date().toISOString().slice(0, 10),
-    notes:          '',
+    batch_id:      isEdit ? sale.batch_id              : batches[0]?.id ?? '',
+    vendor_id:     isEdit ? sale.vendor_id             : vendors[0]?.id ?? '',
+    chicken_count: isEdit ? String(sale.chicken_count ?? '') : '',
+    kg_sold:       isEdit ? String(sale.kg_sold ?? '')       : '',
+    price_per_kg:  isEdit ? String(sale.price_per_kg ?? '')  : '',
+    date:          isEdit ? sale.date                        : new Date().toISOString().slice(0, 10),
+    notes:         isEdit ? (sale.notes ?? '')               : '',
   })
   const [saving,       setSaving]       = useState(false)
   const [error,        setError]        = useState('')
   const [alreadySold,  setAlreadySold]  = useState(0)
   const [loadingBatch, setLoadingBatch] = useState(false)
 
-  // Fetch already-sold count for selected batch
   useEffect(() => {
     if (!form.batch_id) return
     setLoadingBatch(true)
-    supabase
-      .from('sales')
-      .select('chicken_count')
-      .eq('batch_id', form.batch_id)
-      .neq('status', 'rejected')
-      .then(({ data }) => {
-        setAlreadySold((data || []).reduce((s, r) => s + Number(r.chicken_count || 0), 0))
-        setLoadingBatch(false)
-      })
+    let q = supabase.from('sales').select('chicken_count').eq('batch_id', form.batch_id).neq('status', 'rejected')
+    if (isEdit) q = q.neq('id', sale.id)  // exclude self so count validates correctly
+    q.then(({ data }) => {
+      setAlreadySold((data || []).reduce((s, r) => s + Number(r.chicken_count || 0), 0))
+      setLoadingBatch(false)
+    })
   }, [form.batch_id])
 
-  const selectedBatch  = batches.find(b => b.id === form.batch_id)
-  const batchLive      = selectedBatch
+  const selectedBatch   = batches.find(b => b.id === form.batch_id)
+  const batchLive       = selectedBatch
     ? Math.max(0, Number(selectedBatch.chick_count || 0) - Number(selectedBatch.mortality_count || 0))
     : 0
-  const available      = Math.max(0, batchLive - alreadySold)
+  const available       = Math.max(0, batchLive - alreadySold)
   const chickensEntered = parseInt(form.chicken_count) || 0
 
-  function set(field) {
-    return e => setForm(prev => ({ ...prev, [field]: e.target.value }))
-  }
+  function set(field) { return e => setForm(prev => ({ ...prev, [field]: e.target.value })) }
 
-  const total =
-    form.kg_sold && form.price_per_kg
-      ? (parseFloat(form.kg_sold) * parseFloat(form.price_per_kg)).toFixed(2)
-      : null
+  const total = form.kg_sold && form.price_per_kg
+    ? (parseFloat(form.kg_sold) * parseFloat(form.price_per_kg)).toFixed(2)
+    : null
 
   async function handleSubmit(e) {
     e.preventDefault()
@@ -73,24 +67,40 @@ function SaleModal({ batches, vendors, onClose, onSaved }) {
     const count = parseInt(form.chicken_count)
     if (!count || count <= 0) { setError('Enter number of chickens'); return }
     if (count > available) {
-      setError(`Only ${available.toLocaleString('en-IN')} birds available in this batch (${batchLive.toLocaleString('en-IN')} live − ${alreadySold.toLocaleString('en-IN')} already sold)`)
+      setError(`Only ${available.toLocaleString('en-IN')} birds available (${batchLive.toLocaleString('en-IN')} live − ${alreadySold.toLocaleString('en-IN')} already sold)`)
       return
     }
     setSaving(true)
-    const { error } = await supabase.from('sales').insert({
-      organization_id: organization?.id,
-      batch_id:      form.batch_id,
-      vendor_id:     form.vendor_id,
-      chicken_count: count,
-      kg_sold:       parseFloat(form.kg_sold),
-      price_per_kg:  parseFloat(form.price_per_kg),
-      date:          form.date,
-      notes:         form.notes.trim() || null,
-      created_by_id:   user?.id,
-      created_by_name: userName,
-    })
-    if (error) { setError(error.message); setSaving(false) }
-    else        { onSaved() }
+    let dbError
+    if (isEdit) {
+      const { error } = await supabase.from('sales').update({
+        vendor_id:       form.vendor_id,
+        chicken_count:   count,
+        kg_sold:         parseFloat(form.kg_sold),
+        price_per_kg:    parseFloat(form.price_per_kg),
+        date:            form.date,
+        notes:           form.notes.trim() || null,
+        updated_by_id:   user?.id,
+        updated_by_name: userName,
+      }).eq('id', sale.id)
+      dbError = error
+    } else {
+      const { error } = await supabase.from('sales').insert({
+        organization_id: organization?.id,
+        batch_id:        form.batch_id,
+        vendor_id:       form.vendor_id,
+        chicken_count:   count,
+        kg_sold:         parseFloat(form.kg_sold),
+        price_per_kg:    parseFloat(form.price_per_kg),
+        date:            form.date,
+        notes:           form.notes.trim() || null,
+        created_by_id:   user?.id,
+        created_by_name: userName,
+      })
+      dbError = error
+    }
+    if (dbError) { setError(dbError.message); setSaving(false) }
+    else          { onSaved() }
   }
 
   const inputCls = "w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
@@ -99,15 +109,15 @@ function SaleModal({ batches, vendors, onClose, onSaved }) {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
       <div className="w-full max-w-lg bg-white rounded-2xl shadow-xl p-6">
         <div className="flex items-center justify-between mb-5">
-          <h2 className="text-lg font-semibold text-gray-800">{t('sales.recordSale')}</h2>
+          <h2 className="text-lg font-semibold text-gray-800">{isEdit ? 'Edit Sale' : t('sales.recordSale')}</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
         </div>
 
-        {batches.length === 0 ? (
+        {!isEdit && batches.length === 0 ? (
           <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-4 py-3">
             No active batches. Start a batch first before recording a sale.
           </p>
-        ) : vendors.length === 0 ? (
+        ) : !isEdit && vendors.length === 0 ? (
           <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-4 py-3">
             No vendors found. Add a vendor first.
           </p>
@@ -116,11 +126,17 @@ function SaleModal({ batches, vendors, onClose, onSaved }) {
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">{t('sales.batch')} *</label>
-              <select required value={form.batch_id} onChange={set('batch_id')} className={inputCls}>
-                {batches.map(b => (
-                  <option key={b.id} value={b.id}>{batchLabel(b, i18n.language)}</option>
-                ))}
-              </select>
+              {isEdit ? (
+                <p className="text-sm text-gray-700 px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg">
+                  {batchLabel(batches.find(b => b.id === form.batch_id) ?? sale.batches, i18n.language)}
+                </p>
+              ) : (
+                <select required value={form.batch_id} onChange={set('batch_id')} className={inputCls}>
+                  {batches.map(b => (
+                    <option key={b.id} value={b.id}>{batchLabel(b, i18n.language)}</option>
+                  ))}
+                </select>
+              )}
             </div>
 
             <div>
@@ -138,13 +154,10 @@ function SaleModal({ batches, vendors, onClose, onSaved }) {
                 <input
                   required type="number" min="1" step="1"
                   value={form.chicken_count} onChange={set('chicken_count')}
-                  placeholder="e.g. 500"
-                  className={inputCls}
+                  placeholder="e.g. 500" className={inputCls}
                 />
                 {selectedBatch && !loadingBatch && (
-                  <p className={`text-xs mt-1 font-medium ${
-                    chickensEntered > available ? 'text-red-600' : 'text-gray-400'
-                  }`}>
+                  <p className={`text-xs mt-1 font-medium ${chickensEntered > available ? 'text-red-600' : 'text-gray-400'}`}>
                     {chickensEntered > available
                       ? `⚠ Exceeds available (${available.toLocaleString('en-IN')})`
                       : `Available: ${available.toLocaleString('en-IN')} birds`}
@@ -156,8 +169,7 @@ function SaleModal({ batches, vendors, onClose, onSaved }) {
                 <input
                   required type="number" min="0.01" step="0.01"
                   value={form.kg_sold} onChange={set('kg_sold')}
-                  placeholder="e.g. 120.5"
-                  className={inputCls}
+                  placeholder="e.g. 120.5" className={inputCls}
                 />
               </div>
               <div>
@@ -165,13 +177,11 @@ function SaleModal({ batches, vendors, onClose, onSaved }) {
                 <input
                   required type="number" min="0.01" step="0.01"
                   value={form.price_per_kg} onChange={set('price_per_kg')}
-                  placeholder="e.g. 95"
-                  className={inputCls}
+                  placeholder="e.g. 95" className={inputCls}
                 />
               </div>
             </div>
 
-            {/* Auto-calculated total */}
             <div className={`rounded-xl px-4 py-3 flex items-center justify-between ${
               total ? 'bg-green-50 border border-green-200' : 'bg-gray-50 border border-gray-100'
             }`}>
@@ -183,20 +193,14 @@ function SaleModal({ batches, vendors, onClose, onSaved }) {
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">{t('common.date')} *</label>
-              <input
-                required type="date"
-                value={form.date} onChange={set('date')}
-                className={inputCls}
-              />
+              <input required type="date" value={form.date} onChange={set('date')} className={inputCls} />
             </div>
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">{t('common.notes')}</label>
               <input
-                type="text"
-                value={form.notes} onChange={set('notes')}
-                placeholder={t('common.optional')}
-                className={inputCls}
+                type="text" value={form.notes} onChange={set('notes')}
+                placeholder={t('common.optional')} className={inputCls}
               />
             </div>
 
@@ -205,17 +209,13 @@ function SaleModal({ batches, vendors, onClose, onSaved }) {
             )}
 
             <div className="flex gap-3 pt-1">
-              <button
-                type="button" onClick={onClose}
-                className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition"
-              >
+              <button type="button" onClick={onClose}
+                className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition">
                 {t('common.cancel')}
               </button>
-              <button
-                type="submit" disabled={saving}
-                className="flex-1 rounded-lg bg-amber-500 hover:bg-amber-600 disabled:opacity-60 px-4 py-2 text-sm font-semibold text-white transition"
-              >
-                {saving ? `${t('common.save')}…` : t('sales.recordSale')}
+              <button type="submit" disabled={saving}
+                className="flex-1 rounded-lg bg-amber-500 hover:bg-amber-600 disabled:opacity-60 px-4 py-2 text-sm font-semibold text-white transition">
+                {saving ? `${t('common.save')}…` : isEdit ? 'Save Changes' : t('sales.recordSale')}
               </button>
             </div>
           </form>
@@ -233,12 +233,13 @@ export default function Sales() {
   const { currentStep, stepDone } = useOnboarding()
   const navigate = useNavigate()
   const userName = user?.user_metadata?.full_name || user?.email || 'Unknown'
-  const canConfirm = ['owner', 'manager', 'accountant'].includes(userRole)
-  const [sales, setSales]       = useState([])
-  const [batches, setBatches]   = useState([])   // active only for modal
-  const [vendors, setVendors]   = useState([])
-  const [loading, setLoading]   = useState(true)
-  const [showModal, setShowModal] = useState(false)
+  const canManage = ['owner', 'manager', 'accountant'].includes(userRole)
+  const [sales, setSales]           = useState([])
+  const [batches, setBatches]       = useState([])
+  const [vendors, setVendors]       = useState([])
+  const [loading, setLoading]       = useState(true)
+  const [showModal, setShowModal]   = useState(false)
+  const [editingSale, setEditingSale] = useState(null)
 
   async function fetchData() {
     setLoading(true)
@@ -249,7 +250,7 @@ export default function Sales() {
     ] = await Promise.all([
       supabase
         .from('sales')
-        .select('*, batches(start_date, chick_count, farms(name)), vendors(name), created_by_name, created_at, updated_by_name, updated_at')
+        .select('*, batches(start_date, chick_count, farms(name)), vendors(name), created_by_name, created_at, updated_by_name, updated_at, confirmed_by_name, confirmed_at')
         .eq('organization_id', organization?.id)
         .order('date', { ascending: false })
         .order('created_at', { ascending: false }),
@@ -277,9 +278,9 @@ export default function Sales() {
     const { error } = await supabase.rpc('confirm_sale', { p_id: s.id, p_by_name: userName })
     if (error) alert(error.message); else fetchData()
   }
-  async function rejectSale(s) {
-    if (!window.confirm('Reject this sale? It will not count anywhere.')) return
-    const { error } = await supabase.rpc('reject_sale', { p_id: s.id, p_reason: null, p_by_name: userName })
+  async function deleteSale(s) {
+    if (!window.confirm('Delete this sale? This cannot be undone.')) return
+    const { error } = await supabase.from('sales').delete().eq('id', s.id)
     if (error) alert(error.message); else fetchData()
   }
 
@@ -390,17 +391,21 @@ export default function Sales() {
                     <span className={`inline-block rounded-full px-2.5 py-0.5 text-xs font-semibold ${STATUS_STYLE[s.status] || STATUS_STYLE.pending}`}>
                       {STATUS_LABEL[s.status] || s.status}
                     </span>
-                    {canConfirm && s.status === 'pending' && (
-                      <div className="flex gap-1.5 justify-center mt-2">
-                        <button onClick={() => rejectSale(s)}
-                          className="rounded-md border border-red-200 px-2 py-1 text-[11px] font-semibold text-red-600 hover:bg-red-50 transition">Reject</button>
-                        <button onClick={() => confirmSale(s)}
-                          className="rounded-md bg-green-600 hover:bg-green-700 px-2 py-1 text-[11px] font-semibold text-white transition">Confirm</button>
+                    {canManage && (
+                      <div className="flex gap-1.5 justify-center mt-2 flex-wrap">
+                        {s.status === 'pending' && (
+                          <button onClick={() => confirmSale(s)}
+                            className="rounded-md bg-green-600 hover:bg-green-700 px-2 py-1 text-[11px] font-semibold text-white transition">Confirm</button>
+                        )}
+                        <button onClick={() => setEditingSale(s)}
+                          className="rounded-md border border-amber-300 px-2 py-1 text-[11px] font-semibold text-amber-700 hover:bg-amber-50 transition">Edit</button>
+                        <button onClick={() => deleteSale(s)}
+                          className="rounded-md border border-red-200 px-2 py-1 text-[11px] font-semibold text-red-600 hover:bg-red-50 transition">Delete</button>
                       </div>
                     )}
                   </td>
                   <td className="px-5 py-4">
-                    <AuditInfo createdByName={s.created_by_name} createdAt={s.created_at} updatedByName={s.updated_by_name} updatedAt={s.updated_at} />
+                    <AuditInfo createdByName={s.created_by_name} createdAt={s.created_at} updatedByName={s.updated_by_name} updatedAt={s.updated_at} confirmedByName={s.confirmed_by_name} confirmedAt={s.confirmed_at} />
                   </td>
                 </tr>
               ))}
@@ -421,13 +426,24 @@ export default function Sales() {
         )}
       </div>
 
-      {/* Modal */}
+      {/* Add Modal */}
       {showModal && (
         <SaleModal
           batches={batches}
           vendors={vendors}
           onClose={() => setShowModal(false)}
           onSaved={() => { setShowModal(false); fetchData(); if (currentStep?.id === 'sale') stepDone('sale') }}
+        />
+      )}
+
+      {/* Edit Modal */}
+      {editingSale && (
+        <SaleModal
+          batches={batches}
+          vendors={vendors}
+          sale={editingSale}
+          onClose={() => setEditingSale(null)}
+          onSaved={() => { setEditingSale(null); fetchData() }}
         />
       )}
     </div>
