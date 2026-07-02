@@ -3,6 +3,7 @@ import { Navigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
+import { useOnboarding } from '../contexts/OnboardingContext'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -365,6 +366,7 @@ function TierLadder({ tiers }) {
 export default function GrowingFeeSettings() {
   const { organization, userRole } = useAuth()
   const { t } = useTranslation()
+  const { currentStep, stepDone } = useOnboarding()
   const [tiers, setTiers] = useState([])
   const [loading, setLoading] = useState(true)
   const [pageError, setPageError] = useState('')
@@ -441,6 +443,7 @@ export default function GrowingFeeSettings() {
     }
     setModal(null)
     await loadTiers()
+    if (currentStep?.id === 'fee_config') stepDone('fee_config')
   }
 
   // ── Delete ────────────────────────────────────────────────────────────────
@@ -540,6 +543,7 @@ export default function GrowingFeeSettings() {
           </p>
         </div>
         <button
+          data-tour="fee_config"
           onClick={openAdd}
           className="inline-flex items-center gap-1.5 rounded-xl px-4 py-2 text-sm font-semibold text-white shadow-sm transition shrink-0"
           style={{ backgroundColor: '#f59e0b' }}

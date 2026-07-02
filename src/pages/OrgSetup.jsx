@@ -26,9 +26,8 @@ export default function OrgSetup() {
 
     // Create the organisation (defaults to the Free plan); the plan is chosen next.
     const { error: orgErr } = await supabase.rpc('create_organization', {
-      p_name:          name.trim(),
-      p_business_name: name.trim(),
-      p_user_id:       authUser.id,
+      p_name:    name.trim(),
+      p_user_id: authUser.id,
     })
     if (orgErr) { setError(orgErr.message); setLoading(false); return }
 

@@ -3,32 +3,27 @@ import { Navigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
+import { useOnboarding } from '../contexts/OnboardingContext'
 
 // ─── Confirm Modal ────────────────────────────────────────────────────────────
 
 function ConfirmModal({ title, message, onClose, onConfirm, destructive = true, confirmLabel }) {
   const { t } = useTranslation()
-  const label = confirmLabel || t('common.confirm')
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
       <div className="w-full max-w-sm bg-white rounded-2xl shadow-xl p-6">
         <h2 className="text-lg font-semibold text-gray-800 mb-2">{title}</h2>
         <p className="text-sm text-gray-600 mb-6 leading-relaxed">{message}</p>
         <div className="flex gap-3">
-          <button
-            onClick={onClose}
-            className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition"
-          >
+          <button onClick={onClose} className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition">
             {t('common.cancel')}
           </button>
           <button
             onClick={onConfirm}
             className="flex-1 rounded-lg px-4 py-2 text-sm font-semibold text-white transition"
             style={{ backgroundColor: destructive ? '#ef4444' : '#f59e0b' }}
-            onMouseEnter={e => { e.currentTarget.style.backgroundColor = destructive ? '#dc2626' : '#d97706' }}
-            onMouseLeave={e => { e.currentTarget.style.backgroundColor = destructive ? '#ef4444' : '#f59e0b' }}
           >
-            {label}
+            {confirmLabel || t('common.confirm')}
           </button>
         </div>
       </div>
@@ -36,225 +31,225 @@ function ConfirmModal({ title, message, onClose, onConfirm, destructive = true, 
   )
 }
 
-// ─── Toggle Switch ────────────────────────────────────────────────────────────
+// ─── Toggle ───────────────────────────────────────────────────────────────────
 
 function Toggle({ checked, onChange }) {
   return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      onClick={() => onChange(!checked)}
+    <button type="button" role="switch" aria-checked={checked} onClick={() => onChange(!checked)}
       className="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none"
-      style={{ backgroundColor: checked ? '#10b981' : '#d1d5db' }}
-    >
-      <span
-        className="pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow transition duration-200"
-        style={{ transform: checked ? 'translateX(16px)' : 'translateX(0)' }}
-      />
+      style={{ backgroundColor: checked ? '#10b981' : '#d1d5db' }}>
+      <span className="pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow transition duration-200"
+        style={{ transform: checked ? 'translateX(16px)' : 'translateX(0)' }} />
     </button>
   )
 }
+
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+const UNIT_OPTIONS = [
+  { value: 'KG',     label: 'KG'     },
+  { value: 'ml',     label: 'ml'     },
+  { value: 'Bag',    label: 'Bag'    },
+  { value: 'Bottle', label: 'Bottle' },
+  { value: 'Number', label: 'Number' },
+]
+
+const BLANK_ITEM = { name: '', unit: '', description: '', is_active: true, kg_per_unit: '', ml_per_unit: '' }
 
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function CatalogSettings() {
   const { t } = useTranslation()
   const { organization, canEdit } = useAuth()
+  const { currentStep, stepDone } = useOnboarding()
+
+  const orgId = organization?.id
+
+  // All data
   const [itemTypes, setItemTypes] = useState([])
-  const [selectedTypeId, setSelectedTypeId] = useState(null)
-  const [items, setItems] = useState([])
-  const [itemCounts, setItemCounts] = useState({})
+  const [allItems, setAllItems] = useState({})   // { typeId: [item, ...] }
   const [loading, setLoading] = useState(true)
-  const [itemsLoading, setItemsLoading] = useState(false)
 
-  // Add/edit type form: null = hidden, {} = add mode, {id,...} = edit mode
-  const [typeForm, setTypeForm] = useState(null)
-  const [typeFormData, setTypeFormData] = useState({ name: '', description: '' })
-  const [typeFormError, setTypeFormError] = useState('')
+  // Add-type form (shown inline at top as a new card)
+  const [addTypeOpen, setAddTypeOpen] = useState(false)
+  const [addTypeData, setAddTypeData] = useState({ name: '', description: '' })
+  const [addTypeError, setAddTypeError] = useState('')
+  const [addTypeSaving, setAddTypeSaving] = useState(false)
+  // Pending items collected before the type is saved
+  const [addTypeItems, setAddTypeItems] = useState([])
+  const [addTypeItemForm, setAddTypeItemForm] = useState(false)
+  const [addTypeItemData, setAddTypeItemData] = useState(BLANK_ITEM)
+  const [addTypeItemError, setAddTypeItemError] = useState('')
 
-  // Add/edit item form: null = hidden, {} = add mode, {id,...} = edit mode
-  const [itemForm, setItemForm] = useState(null)
-  const [itemFormData, setItemFormData] = useState({ name: '', unit: '', description: '', is_active: true, kg_per_unit: '' })
+  // Which card is in edit mode
+  const [editingTypeId, setEditingTypeId] = useState(null)
+  // Draft for the type name being edited inside the card
+  const [typeNameDraft, setTypeNameDraft] = useState('')
+  const [typeDescDraft, setTypeDescDraft] = useState('')
+  const [typeNameError, setTypeNameError] = useState('')
+  const [typeNameSaving, setTypeNameSaving] = useState(false)
+
+  // Item form (add or edit), belongs to a specific card
+  const [itemForm, setItemForm] = useState(null)   // { mode: 'add'|'edit', typeId, itemId? }
+  const [itemFormData, setItemFormData] = useState(BLANK_ITEM)
   const [itemFormError, setItemFormError] = useState('')
+  const [itemSaving, setItemSaving] = useState(false)
 
   // Confirm modal
   const [confirmModal, setConfirmModal] = useState(null)
 
-  // Saving states
-  const [saving, setSaving] = useState(false)
-  const [deactivateMsg, setDeactivateMsg] = useState('')
+  // ── Load all types + items ────────────────────────────────────────────────
 
-  // ── Load item types + counts ──────────────────────────────────────────────
-
-  const loadTypes = useCallback(async (keepSelection = false) => {
+  const loadAll = useCallback(async () => {
+    if (!orgId) return
     setLoading(true)
-    const { data: types } = await supabase
-      .from('item_types')
-      .select('id, name, description, created_at')
-      .eq('organization_id', organization?.id)
-      .order('name')
-
-    const { data: countRows } = await supabase
-      .from('items')
-      .select('item_type_id')
-      .eq('organization_id', organization?.id)
-
-    const counts = {}
-    ;(countRows || []).forEach(r => {
-      counts[r.item_type_id] = (counts[r.item_type_id] || 0) + 1
+    const [{ data: types }, { data: items }] = await Promise.all([
+      supabase.from('item_types').select('id, name, description').eq('organization_id', orgId).order('name'),
+      supabase.from('items').select('id, item_type_id, name, unit, description, is_active, kg_per_unit, ml_per_unit').eq('organization_id', orgId).order('name'),
+    ])
+    const grouped = {}
+    ;(items || []).forEach(it => {
+      if (!grouped[it.item_type_id]) grouped[it.item_type_id] = []
+      grouped[it.item_type_id].push(it)
     })
-
     setItemTypes(types || [])
-    setItemCounts(counts)
-
-    if (!keepSelection) {
-      const first = types?.[0]?.id ?? null
-      setSelectedTypeId(prev => {
-        const nextId = prev !== null && (types || []).some(t => t.id === prev) ? prev : first
-        return nextId
-      })
-    }
-
+    setAllItems(grouped)
     setLoading(false)
-  }, [])
+  }, [orgId])
 
-  // ── Load items for selected type ──────────────────────────────────────────
+  useEffect(() => { loadAll() }, [loadAll])
 
-  const loadItems = useCallback(async (typeId) => {
-    if (!typeId) { setItems([]); return }
-    setItemsLoading(true)
-    const { data } = await supabase
-      .from('items')
-      .select('id, item_type_id, name, unit, description, is_active, kg_per_unit, created_at')
-      .eq('organization_id', organization?.id)
-      .eq('item_type_id', typeId)
-      .order('name')
-    // Sort: active first, then inactive
-    const sorted = (data || []).sort((a, b) => {
-      if (a.is_active === b.is_active) return a.name.localeCompare(b.name)
-      return a.is_active ? -1 : 1
-    })
-    setItems(sorted)
-    setItemsLoading(false)
-  }, [])
-
-  useEffect(() => { loadTypes() }, [loadTypes])
-
-  useEffect(() => {
-    if (selectedTypeId) loadItems(selectedTypeId)
-    else setItems([])
-  }, [selectedTypeId, loadItems])
-
-  // Guard — canEdit only (owner/manager), after all hooks
   if (!canEdit) return <Navigate to="/dashboard" replace />
 
-  // ── Type form helpers ─────────────────────────────────────────────────────
+  // ── Add type ──────────────────────────────────────────────────────────────
 
-  function openAddType() {
-    setTypeForm({ mode: 'add' })
-    setTypeFormData({ name: '', description: '' })
-    setTypeFormError('')
+  function openAddTypeCard() {
+    setAddTypeOpen(true)
+    setAddTypeData({ name: '', description: '' })
+    setAddTypeError('')
+    setAddTypeItems([])
+    setAddTypeItemForm(false)
+    setAddTypeItemData(BLANK_ITEM)
+    setAddTypeItemError('')
   }
 
-  function openEditType(type, e) {
-    e.stopPropagation()
-    setTypeForm({ mode: 'edit', id: type.id })
-    setTypeFormData({ name: type.name, description: type.description || '' })
-    setTypeFormError('')
-  }
-
-  function cancelTypeForm() {
-    setTypeForm(null)
-    setTypeFormError('')
-  }
-
-  async function handleSaveType(e) {
+  function handleAddPendingItem(e) {
     e.preventDefault()
-    setTypeFormError('')
-    if (!typeFormData.name.trim()) {
-      setTypeFormError(t('errors.required'))
-      return
-    }
-    setSaving(true)
-    const payload = {
-      name: typeFormData.name.trim(),
-      description: typeFormData.description.trim() || null,
-    }
-    let error
-    if (typeForm.mode === 'edit') {
-      ;({ error } = await supabase.from('item_types').update(payload).eq('id', typeForm.id))
-    } else {
-      ;({ error } = await supabase.from('item_types').insert({ ...payload, organization_id: organization?.id }))
-    }
-    setSaving(false)
-    if (error) {
-      setTypeFormError(error.message)
-      return
-    }
-    setTypeForm(null)
-    await loadTypes(true)
+    setAddTypeItemError('')
+    if (!addTypeItemData.name.trim()) { setAddTypeItemError('Item name is required'); return }
+    if (!addTypeItemData.unit) { setAddTypeItemError('Please select a unit'); return }
+    if (addTypeItemData.unit === 'Bag' && !addTypeItemData.kg_per_unit) { setAddTypeItemError('Please enter KG per bag'); return }
+    if (addTypeItemData.unit === 'Bottle' && !addTypeItemData.ml_per_unit) { setAddTypeItemError('Please enter ml per bottle'); return }
+    setAddTypeItems(prev => [...prev, { ...addTypeItemData, _id: Date.now() }])
+    setAddTypeItemData(BLANK_ITEM)
+    setAddTypeItemForm(false)
   }
 
-  // ── Delete type logic ─────────────────────────────────────────────────────
-
-  async function handleDeleteType(type, e) {
-    e.stopPropagation()
-    const count = itemCounts[type.id] || 0
-
-    if (count > 0) {
-      setConfirmModal({
-        title: t('catalog.editItemType'),
-        message: `This type has ${count} item${count !== 1 ? 's' : ''}. Deleting it will deactivate all associated items. Existing procurement records will not be affected.`,
-        confirmLabel: t('common.delete'),
-        destructive: true,
-        onConfirm: async () => {
-          setConfirmModal(null)
-          // Deactivate all items of this type
-          await supabase.from('items').update({ is_active: false }).eq('item_type_id', type.id)
-          // Delete the type
-          await supabase.from('item_types').delete().eq('id', type.id)
-          setSelectedTypeId(prev => (prev === type.id ? null : prev))
-          await loadTypes(false)
-        },
-      })
-    } else {
-      setConfirmModal({
-        title: t('catalog.editItemType'),
-        message: t('common.noData'),
-        confirmLabel: t('common.delete'),
-        destructive: true,
-        onConfirm: async () => {
-          setConfirmModal(null)
-          await supabase.from('item_types').delete().eq('id', type.id)
-          setSelectedTypeId(prev => (prev === type.id ? null : prev))
-          await loadTypes(false)
-        },
-      })
-    }
+  function removePendingItem(id) {
+    setAddTypeItems(prev => prev.filter(i => i._id !== id))
   }
 
-  // ── Item form helpers ─────────────────────────────────────────────────────
+  async function handleAddType(e) {
+    e.preventDefault()
+    setAddTypeError('')
+    if (!addTypeData.name.trim()) { setAddTypeError(t('errors.required')); return }
+    setAddTypeSaving(true)
+    const { data: typeRow, error } = await supabase
+      .from('item_types')
+      .insert({ name: addTypeData.name.trim(), description: addTypeData.description.trim() || null, organization_id: orgId })
+      .select('id')
+      .single()
+    if (error) { setAddTypeError(error.message); setAddTypeSaving(false); return }
+    if (addTypeItems.length > 0) {
+      await supabase.from('items').insert(
+        addTypeItems.map(it => ({
+          name: it.name.trim(),
+          unit: it.unit,
+          description: it.description.trim() || null,
+          is_active: it.is_active,
+          kg_per_unit: it.unit === 'Bag' && it.kg_per_unit ? parseFloat(it.kg_per_unit) : null,
+          ml_per_unit: it.unit === 'Bottle' && it.ml_per_unit ? parseFloat(it.ml_per_unit) : null,
+          item_type_id: typeRow.id,
+          organization_id: orgId,
+        }))
+      )
+    }
+    setAddTypeSaving(false)
+    setAddTypeOpen(false)
+    await loadAll()
+    if (currentStep?.id === 'catalog') stepDone('catalog')
+  }
 
-  function openAddItem() {
-    setItemForm({ mode: 'add' })
-    setItemFormData({ name: '', unit: '', description: '', is_active: true, kg_per_unit: '' })
+  // ── Edit type name (inside card) ──────────────────────────────────────────
+
+  function enterEditMode(type) {
+    setEditingTypeId(type.id)
+    setTypeNameDraft(type.name)
+    setTypeDescDraft(type.description || '')
+    setTypeNameError('')
+    setItemForm(null)
+  }
+
+  function exitEditMode() {
+    setEditingTypeId(null)
+    setTypeNameError('')
+  }
+
+  async function handleSaveTypeName(typeId) {
+    setTypeNameError('')
+    if (!typeNameDraft.trim()) { setTypeNameError(t('errors.required')); return }
+    setTypeNameSaving(true)
+    const { error } = await supabase.from('item_types').update({
+      name: typeNameDraft.trim(),
+      description: typeDescDraft.trim() || null,
+    }).eq('id', typeId)
+    setTypeNameSaving(false)
+    if (error) { setTypeNameError(error.message); return }
+    await loadAll()
+  }
+
+  // ── Delete type ───────────────────────────────────────────────────────────
+
+  function handleDeleteType(type) {
+    const count = (allItems[type.id] || []).length
+    setConfirmModal({
+      title: 'Delete Item Type',
+      message: count > 0
+        ? `This type has ${count} item${count !== 1 ? 's' : ''}. Deleting it will deactivate all associated items.`
+        : `Delete "${type.name}"?`,
+      confirmLabel: t('common.delete'),
+      destructive: true,
+      onConfirm: async () => {
+        setConfirmModal(null)
+        if (count > 0) await supabase.from('items').update({ is_active: false }).eq('item_type_id', type.id)
+        await supabase.from('item_types').delete().eq('id', type.id)
+        if (editingTypeId === type.id) exitEditMode()
+        await loadAll()
+      },
+    })
+  }
+
+  // ── Add item ──────────────────────────────────────────────────────────────
+
+  function openAddItem(typeId) {
+    setItemForm({ mode: 'add', typeId })
+    setItemFormData(BLANK_ITEM)
     setItemFormError('')
-    setDeactivateMsg('')
   }
 
-  function openEditItem(item, e) {
-    e.stopPropagation()
-    setItemForm({ mode: 'edit', id: item.id })
+  // ── Edit item ─────────────────────────────────────────────────────────────
+
+  function openEditItem(item) {
+    setItemForm({ mode: 'edit', typeId: item.item_type_id, itemId: item.id })
     setItemFormData({
       name: item.name,
       unit: item.unit,
       description: item.description || '',
       is_active: item.is_active,
       kg_per_unit: item.kg_per_unit != null ? String(item.kg_per_unit) : '',
+      ml_per_unit: item.ml_per_unit != null ? String(item.ml_per_unit) : '',
     })
     setItemFormError('')
-    setDeactivateMsg('')
   }
 
   function cancelItemForm() {
@@ -262,99 +257,67 @@ export default function CatalogSettings() {
     setItemFormError('')
   }
 
-  async function handleSaveItem(e) {
+  async function handleSaveItem(e, typeId) {
     e.preventDefault()
     setItemFormError('')
-    if (!itemFormData.name.trim()) {
-      setItemFormError(t('errors.required'))
-      return
-    }
-    if (!itemFormData.unit.trim()) {
-      setItemFormError(t('errors.required'))
-      return
-    }
-    const isFeed = selectedType?.name?.toLowerCase().includes('feed')
-    if (isFeed && !itemFormData.kg_per_unit) {
-      setItemFormError(t('errors.required'))
-      return
-    }
-    setSaving(true)
+    if (!itemFormData.name.trim()) { setItemFormError(t('errors.required')); return }
+    if (!itemFormData.unit) { setItemFormError('Please select a unit'); return }
+    if (itemFormData.unit === 'Bag' && !itemFormData.kg_per_unit) { setItemFormError('Please enter KG per bag'); return }
+    if (itemFormData.unit === 'Bottle' && !itemFormData.ml_per_unit) { setItemFormError('Please enter ml per bottle'); return }
+    setItemSaving(true)
     const payload = {
       name: itemFormData.name.trim(),
-      unit: itemFormData.unit.trim(),
+      unit: itemFormData.unit,
       description: itemFormData.description.trim() || null,
       is_active: itemFormData.is_active,
-      kg_per_unit: isFeed && itemFormData.kg_per_unit ? parseFloat(itemFormData.kg_per_unit) : null,
+      kg_per_unit: itemFormData.unit === 'Bag' && itemFormData.kg_per_unit ? parseFloat(itemFormData.kg_per_unit) : null,
+      ml_per_unit: itemFormData.unit === 'Bottle' && itemFormData.ml_per_unit ? parseFloat(itemFormData.ml_per_unit) : null,
     }
     let error
     if (itemForm.mode === 'edit') {
-      ;({ error } = await supabase.from('items').update(payload).eq('id', itemForm.id))
+      ;({ error } = await supabase.from('items').update(payload).eq('id', itemForm.itemId))
     } else {
-      ;({ error } = await supabase.from('items').insert({ ...payload, item_type_id: selectedTypeId, organization_id: organization?.id }))
+      ;({ error } = await supabase.from('items').insert({ ...payload, item_type_id: typeId, organization_id: orgId }))
     }
-    setSaving(false)
-    if (error) {
-      setItemFormError(error.message)
-      return
-    }
+    setItemSaving(false)
+    if (error) { setItemFormError(error.message); return }
     setItemForm(null)
-    await Promise.all([loadItems(selectedTypeId), loadTypes(true)])
+    await loadAll()
   }
 
-  // ── Inline active toggle for items ────────────────────────────────────────
+  // ── Toggle item active ────────────────────────────────────────────────────
 
-  async function handleToggleItemActive(item) {
+  async function handleToggleActive(item) {
     await supabase.from('items').update({ is_active: !item.is_active }).eq('id', item.id)
-    await Promise.all([loadItems(selectedTypeId), loadTypes(true)])
+    await loadAll()
   }
 
-  // ── Delete item logic ─────────────────────────────────────────────────────
+  // ── Delete item ───────────────────────────────────────────────────────────
 
-  async function handleDeleteItem(item, e) {
-    e.stopPropagation()
-    setDeactivateMsg('')
-
-    // Check if used in procurement or distributions
+  async function handleDeleteItem(item) {
     const [{ count: procCount }, { count: distCount }] = await Promise.all([
       supabase.from('procurement').select('id', { count: 'exact', head: true }).eq('item_id', item.id),
       supabase.from('distributions').select('id', { count: 'exact', head: true }).eq('item_id', item.id),
     ])
-
     const isUsed = (procCount || 0) > 0 || (distCount || 0) > 0
-
-    if (isUsed) {
-      setConfirmModal({
-        title: t('catalog.editItem'),
-        message: 'This item has existing records (procurement or distributions). It will be deactivated instead of deleted. Continue?',
-        confirmLabel: t('team.deactivate'),
-        destructive: false,
-        onConfirm: async () => {
-          setConfirmModal(null)
+    setConfirmModal({
+      title: isUsed ? 'Deactivate Item' : 'Delete Item',
+      message: isUsed
+        ? `"${item.name}" has existing records and will be deactivated instead of deleted.`
+        : `Delete "${item.name}"?`,
+      confirmLabel: isUsed ? t('team.deactivate') : t('common.delete'),
+      destructive: !isUsed,
+      onConfirm: async () => {
+        setConfirmModal(null)
+        if (isUsed) {
           await supabase.from('items').update({ is_active: false }).eq('id', item.id)
-          setDeactivateMsg('This item has existing records. It has been deactivated instead of deleted.')
-          await Promise.all([loadItems(selectedTypeId), loadTypes(true)])
-        },
-      })
-    } else {
-      setConfirmModal({
-        title: t('catalog.editItem'),
-        message: `${t('common.delete')} "${item.name}"?`,
-        confirmLabel: t('common.delete'),
-        destructive: true,
-        onConfirm: async () => {
-          setConfirmModal(null)
+        } else {
           await supabase.from('items').delete().eq('id', item.id)
-          await Promise.all([loadItems(selectedTypeId), loadTypes(true)])
-        },
-      })
-    }
+        }
+        await loadAll()
+      },
+    })
   }
-
-  // ── Derived state ─────────────────────────────────────────────────────────
-
-  const selectedType = itemTypes.find(t => t.id === selectedTypeId) ?? null
-  const activeItems = items.filter(i => i.is_active)
-  const inactiveItems = items.filter(i => !i.is_active)
 
   // ─────────────────────────────────────────────────────────────────────────
   // Render
@@ -363,11 +326,19 @@ export default function CatalogSettings() {
   return (
     <div>
       {/* Page header */}
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-800">{t('catalog.title')}</h1>
-        <p className="text-sm text-gray-500 mt-0.5">
-          Manage item types and items for procurement &amp; distributions
-        </p>
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-800">{t('catalog.title')}</h1>
+          <p className="text-sm text-gray-500 mt-0.5">Manage item types and items for procurement &amp; distributions</p>
+        </div>
+        <button
+          data-tour="catalog"
+          onClick={openAddTypeCard}
+          disabled={addTypeOpen}
+          className="inline-flex items-center gap-2 rounded-xl bg-amber-500 hover:bg-amber-600 disabled:opacity-50 px-4 py-2 text-sm font-semibold text-white shadow-sm transition"
+        >
+          + {t('catalog.addItemType')}
+        </button>
       </div>
 
       {loading ? (
@@ -375,248 +346,143 @@ export default function CatalogSettings() {
           <div className="h-9 w-9 rounded-full border-4 border-amber-400 border-t-transparent animate-spin" />
         </div>
       ) : (
-        <div className="grid gap-5" style={{ gridTemplateColumns: '1fr', alignItems: 'start' }}>
-          {/* Two-panel grid on large screens */}
-          <div
-            className="grid gap-5"
-            style={{ gridTemplateColumns: 'minmax(0,280px) minmax(0,1fr)' }}
-          >
-            {/* ── LEFT PANEL: Item Types ────────────────────────────────── */}
-            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden flex flex-col">
-              {/* Panel header */}
-              <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
-                <h2 className="text-sm font-semibold text-gray-700">{t('catalog.itemTypes')}</h2>
-                <button
-                  onClick={openAddType}
-                  disabled={typeForm !== null}
-                  className="inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs font-semibold text-white transition disabled:opacity-40"
-                  style={{ backgroundColor: '#f59e0b' }}
-                  onMouseEnter={e => { if (!e.currentTarget.disabled) e.currentTarget.style.backgroundColor = '#d97706' }}
-                  onMouseLeave={e => { e.currentTarget.style.backgroundColor = '#f59e0b' }}
-                >
-                  <span className="text-sm leading-none">+</span> {t('catalog.addItemType')}
-                </button>
+        <div className="space-y-4 max-w-3xl">
+
+          {/* ── Add Type card (inline) ─────────────────────────────────── */}
+          {addTypeOpen && (
+            <div className="bg-white rounded-2xl border-2 border-amber-300 shadow-sm overflow-hidden">
+              {/* Type name section */}
+              <div className="px-5 py-3 bg-amber-50 border-b border-amber-200">
+                <span className="text-sm font-semibold text-amber-700">New Item Type</span>
               </div>
-
-              {/* Add type inline form */}
-              {typeForm?.mode === 'add' && (
-                <div className="px-4 py-3 border-b border-amber-100" style={{ backgroundColor: '#fffbeb' }}>
-                  <TypeForm
-                    formData={typeFormData}
-                    setFormData={setTypeFormData}
-                    error={typeFormError}
-                    saving={saving}
-                    onSave={handleSaveType}
-                    onCancel={cancelTypeForm}
-                    isEdit={false}
-                  />
-                </div>
-              )}
-
-              {/* Types list */}
-              <div className="flex-1 overflow-y-auto divide-y divide-gray-50">
-                {itemTypes.length === 0 && typeForm?.mode !== 'add' ? (
-                  <div className="flex flex-col items-center justify-center py-12 text-gray-400 px-4 text-center">
-                    <p className="text-sm font-medium">{t('catalog.noItemTypes')}</p>
-                    <p className="text-xs mt-1">{t('common.add')}.</p>
+              <form onSubmit={handleAddType}>
+                <div className="px-5 py-4 space-y-3 border-b border-gray-100">
+                  <div className="grid grid-cols-2 gap-3">
+                    <input
+                      autoFocus required type="text"
+                      placeholder="Type name *  (e.g. Feed, Medicine)"
+                      value={addTypeData.name}
+                      onChange={e => setAddTypeData(p => ({ ...p, name: e.target.value }))}
+                      className="col-span-2 sm:col-span-1 w-full rounded-xl border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
+                    />
+                    <input
+                      type="text" placeholder="Description (optional)"
+                      value={addTypeData.description}
+                      onChange={e => setAddTypeData(p => ({ ...p, description: e.target.value }))}
+                      className="col-span-2 sm:col-span-1 w-full rounded-xl border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
+                    />
                   </div>
-                ) : (
-                  itemTypes.map(type => {
-                    const isSelected = type.id === selectedTypeId
-                    const count = itemCounts[type.id] || 0
-                    const isEditing = typeForm?.mode === 'edit' && typeForm.id === type.id
+                </div>
 
-                    return (
-                      <div key={type.id}>
-                        {isEditing ? (
-                          <div
-                            className="px-4 py-3"
-                            style={{ backgroundColor: '#fffbeb', borderLeft: '4px solid #f59e0b' }}
-                          >
-                            <TypeForm
-                              formData={typeFormData}
-                              setFormData={setTypeFormData}
-                              error={typeFormError}
-                              saving={saving}
-                              onSave={handleSaveType}
-                              onCancel={cancelTypeForm}
-                              isEdit={true}
-                            />
-                          </div>
-                        ) : (
-                          <div
-                            className="flex items-start gap-2 px-4 py-3 cursor-pointer transition hover:bg-amber-50/60"
-                            style={
-                              isSelected
-                                ? { backgroundColor: '#fffbeb', borderLeft: '4px solid #f59e0b' }
-                                : { borderLeft: '4px solid transparent' }
-                            }
-                            onClick={() => {
-                              setSelectedTypeId(type.id)
-                              setItemForm(null)
-                              setDeactivateMsg('')
-                            }}
-                          >
-                            <div className="flex-1 min-w-0">
-                              <p className="text-sm font-semibold text-gray-800 truncate">{type.name}</p>
-                              {type.description && (
-                                <p className="text-xs text-gray-500 mt-0.5 truncate">{type.description}</p>
-                              )}
-                            </div>
-                            <div className="flex items-center gap-1 shrink-0 mt-0.5">
-                              <span
-                                className="rounded-full px-2 py-0.5 text-xs font-medium text-gray-500"
-                                style={{ backgroundColor: '#f3f4f6' }}
-                              >
-                                {count}
-                              </span>
-                              <button
-                                onClick={e => openEditType(type, e)}
-                                className="p-1 rounded hover:bg-amber-100 text-gray-400 hover:text-amber-600 transition text-sm leading-none"
-                                title="Edit"
-                              >
-                                ✏️
-                              </button>
-                              <button
-                                onClick={e => handleDeleteType(type, e)}
-                                className="p-1 rounded hover:bg-red-50 text-gray-400 hover:text-red-500 transition text-sm leading-none"
-                                title="Delete"
-                              >
-                                🗑️
-                              </button>
-                            </div>
-                          </div>
+                {/* Items section */}
+                <div className="ml-5 border-l-2 border-amber-100">
+                  {/* Pending items list */}
+                  {addTypeItems.map((it, idx) => (
+                    <div key={it._id} className="flex items-center gap-3 px-4 py-2.5 border-b border-gray-50 hover:bg-gray-50">
+                      <div className="flex-1 flex items-center gap-2 flex-wrap">
+                        <span className="text-sm font-medium text-gray-700">{it.name}</span>
+                        <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-500">{it.unit}</span>
+                        {it.unit === 'Bag' && it.kg_per_unit && (
+                          <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-xs text-emerald-700">{it.kg_per_unit} kg/bag</span>
+                        )}
+                        {it.unit === 'Bottle' && it.ml_per_unit && (
+                          <span className="rounded-full bg-blue-50 px-2 py-0.5 text-xs text-blue-600">{it.ml_per_unit} ml/bottle</span>
                         )}
                       </div>
-                    )
-                  })
-                )}
-              </div>
-            </div>
+                      <button type="button" onClick={() => removePendingItem(it._id)}
+                        className="text-gray-300 hover:text-red-400 text-sm transition px-1">✕</button>
+                    </div>
+                  ))}
 
-            {/* ── RIGHT PANEL: Items ────────────────────────────────────── */}
-            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden flex flex-col">
-              {!selectedType ? (
-                <div className="flex flex-col items-center justify-center py-24 text-gray-400">
-                  <p className="text-sm">← {t('catalog.itemTypes')}</p>
-                </div>
-              ) : (
-                <>
-                  {/* Panel header */}
-                  <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100">
-                    <h2 className="text-sm font-semibold text-gray-700">
-                      {t('catalog.items')} —{' '}
-                      <span className="text-amber-600">{selectedType.name}</span>
-                    </h2>
-                    <button
-                      onClick={openAddItem}
-                      disabled={itemForm !== null}
-                      className="inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs font-semibold text-white transition disabled:opacity-40"
-                      style={{ backgroundColor: '#059669' }}
-                      onMouseEnter={e => { if (!e.currentTarget.disabled) e.currentTarget.style.backgroundColor = '#047857' }}
-                      onMouseLeave={e => { e.currentTarget.style.backgroundColor = '#059669' }}
-                    >
-                      <span className="text-sm leading-none">+</span> {t('catalog.addItem')}
-                    </button>
-                  </div>
-
-                  {/* Deactivate message */}
-                  {deactivateMsg && (
-                    <div className="mx-5 mt-3 px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-700 flex items-start gap-2">
-                      <span>⚠️</span>
-                      <span>{deactivateMsg}</span>
-                      <button
-                        onClick={() => setDeactivateMsg('')}
-                        className="ml-auto text-amber-500 hover:text-amber-700 leading-none"
-                      >
-                        &times;
+                  {/* Inline add-item form */}
+                  {addTypeItemForm ? (
+                    <div className="px-4 py-3 bg-green-50 border-t border-green-100">
+                      <p className="text-xs font-semibold text-green-700 mb-2">New Item</p>
+                      <ItemForm
+                        formData={addTypeItemData}
+                        setFormData={setAddTypeItemData}
+                        error={addTypeItemError}
+                        saving={false}
+                        onSave={handleAddPendingItem}
+                        onCancel={() => { setAddTypeItemForm(false); setAddTypeItemError('') }}
+                        isEdit={false}
+                      />
+                    </div>
+                  ) : (
+                    <div className="px-4 py-3">
+                      <button type="button" onClick={() => { setAddTypeItemForm(true); setAddTypeItemData(BLANK_ITEM); setAddTypeItemError('') }}
+                        className="inline-flex items-center gap-1.5 rounded-xl border border-dashed border-gray-300 hover:border-amber-400 hover:bg-amber-50 hover:text-amber-700 px-4 py-2 text-xs font-medium text-gray-500 transition">
+                        + Add Item
                       </button>
                     </div>
                   )}
+                </div>
 
-                  {/* Add item inline form */}
-                  {itemForm?.mode === 'add' && (
-                    <div className="px-5 py-4 border-b border-emerald-100" style={{ backgroundColor: '#f0fdf4' }}>
-                      <ItemForm
-                        formData={itemFormData}
-                        setFormData={setItemFormData}
-                        error={itemFormError}
-                        saving={saving}
-                        onSave={handleSaveItem}
-                        onCancel={cancelItemForm}
-                        isEdit={false}
-                        isFeedType={selectedType?.name?.toLowerCase().includes('feed') ?? false}
-                      />
-                    </div>
-                  )}
-
-                  {/* Items list */}
-                  {itemsLoading ? (
-                    <div className="flex items-center justify-center py-16">
-                      <div className="h-7 w-7 rounded-full border-4 border-emerald-400 border-t-transparent animate-spin" />
-                    </div>
-                  ) : items.length === 0 && itemForm?.mode !== 'add' ? (
-                    <div className="flex flex-col items-center justify-center py-16 text-gray-400">
-                      <p className="text-sm font-medium">{t('catalog.noItems')}</p>
-                      <p className="text-xs mt-1">{t('catalog.addItem')}</p>
-                    </div>
-                  ) : (
-                    <div className="flex-1 overflow-y-auto divide-y divide-gray-50">
-                      {/* Active items */}
-                      {activeItems.map(item => (
-                        <ItemRow
-                          key={item.id}
-                          item={item}
-                          itemForm={itemForm}
-                          itemFormData={itemFormData}
-                          setItemFormData={setItemFormData}
-                          itemFormError={itemFormError}
-                          saving={saving}
-                          onEdit={openEditItem}
-                          onDelete={handleDeleteItem}
-                          onToggleActive={handleToggleItemActive}
-                          onSave={handleSaveItem}
-                          onCancel={cancelItemForm}
-                          isFeedType={selectedType?.name?.toLowerCase().includes('feed') ?? false}
-                        />
-                      ))}
-                      {/* Inactive items */}
-                      {inactiveItems.length > 0 && (
-                        <>
-                          {activeItems.length > 0 && (
-                            <div className="px-5 py-2 bg-gray-50 border-t border-gray-100">
-                              <p className="text-xs font-medium text-gray-400 uppercase tracking-wider">{t('common.inactive')}</p>
-                            </div>
-                          )}
-                          {inactiveItems.map(item => (
-                            <ItemRow
-                              key={item.id}
-                              item={item}
-                              itemForm={itemForm}
-                              itemFormData={itemFormData}
-                              setItemFormData={setItemFormData}
-                              itemFormError={itemFormError}
-                              saving={saving}
-                              onEdit={openEditItem}
-                              onDelete={handleDeleteItem}
-                              onToggleActive={handleToggleItemActive}
-                              onSave={handleSaveItem}
-                              onCancel={cancelItemForm}
-                              isFeedType={selectedType?.name?.toLowerCase().includes('feed') ?? false}
-                            />
-                          ))}
-                        </>
-                      )}
-                    </div>
-                  )}
-                </>
-              )}
+                {/* Save / Cancel */}
+                <div className="flex gap-2 px-5 py-4 border-t border-gray-100">
+                  {addTypeError && <p className="text-xs text-red-600 flex-1">{addTypeError}</p>}
+                  <button type="submit" disabled={addTypeSaving}
+                    className="rounded-xl bg-amber-500 hover:bg-amber-600 disabled:opacity-60 px-5 py-2 text-sm font-semibold text-white transition">
+                    {addTypeSaving ? t('common.loading') : `Save${addTypeItems.length > 0 ? ` with ${addTypeItems.length} item${addTypeItems.length > 1 ? 's' : ''}` : ''}`}
+                  </button>
+                  <button type="button" onClick={() => setAddTypeOpen(false)}
+                    className="rounded-xl border border-gray-300 px-5 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 transition">
+                    {t('common.cancel')}
+                  </button>
+                </div>
+              </form>
             </div>
-          </div>
+          )}
+
+          {/* ── Empty state ────────────────────────────────────────────── */}
+          {itemTypes.length === 0 && !addTypeOpen && (
+            <div className="rounded-2xl border-2 border-dashed border-gray-200 py-16 text-center">
+              <p className="text-sm font-medium text-gray-400">{t('catalog.noItemTypes')}</p>
+              <p className="text-xs text-gray-400 mt-1">Click "+ Add Item Type" to get started</p>
+            </div>
+          )}
+
+          {/* ── Type cards ─────────────────────────────────────────────── */}
+          {itemTypes.map(type => {
+            const items   = allItems[type.id] || []
+            const active  = items.filter(i => i.is_active)
+            const inactive = items.filter(i => !i.is_active)
+            const isEditing = editingTypeId === type.id
+
+            return (
+              <TypeCard
+                key={type.id}
+                type={type}
+                activeItems={active}
+                inactiveItems={inactive}
+                isEditing={isEditing}
+                typeNameDraft={typeNameDraft}
+                setTypeNameDraft={setTypeNameDraft}
+                typeDescDraft={typeDescDraft}
+                setTypeDescDraft={setTypeDescDraft}
+                typeNameError={typeNameError}
+                typeNameSaving={typeNameSaving}
+                onEnterEdit={() => enterEditMode(type)}
+                onDone={exitEditMode}
+                onSaveTypeName={() => handleSaveTypeName(type.id)}
+                onDeleteType={() => handleDeleteType(type)}
+                itemForm={isEditing ? itemForm : null}
+                itemFormData={itemFormData}
+                setItemFormData={setItemFormData}
+                itemFormError={itemFormError}
+                itemSaving={itemSaving}
+                onOpenAddItem={() => openAddItem(type.id)}
+                onOpenEditItem={openEditItem}
+                onCancelItemForm={cancelItemForm}
+                onSaveItem={e => handleSaveItem(e, type.id)}
+                onDeleteItem={handleDeleteItem}
+                onToggleActive={handleToggleActive}
+              />
+            )
+          })}
         </div>
       )}
 
-      {/* Confirm modal */}
       {confirmModal && (
         <ConfirmModal
           title={confirmModal.title}
@@ -631,244 +497,335 @@ export default function CatalogSettings() {
   )
 }
 
-// ─── TypeForm (reused for add / edit) ────────────────────────────────────────
+// ─── TypeCard ─────────────────────────────────────────────────────────────────
 
-function TypeForm({ formData, setFormData, error, saving, onSave, onCancel, isEdit }) {
+function TypeCard({
+  type, activeItems, inactiveItems,
+  isEditing, typeNameDraft, setTypeNameDraft, typeDescDraft, setTypeDescDraft,
+  typeNameError, typeNameSaving,
+  onEnterEdit, onDone, onSaveTypeName, onDeleteType,
+  itemForm, itemFormData, setItemFormData, itemFormError, itemSaving,
+  onOpenAddItem, onOpenEditItem, onCancelItemForm, onSaveItem,
+  onDeleteItem, onToggleActive,
+}) {
   const { t } = useTranslation()
+  const allItems = [...activeItems, ...inactiveItems]
+
   return (
-    <form onSubmit={onSave} className="space-y-2">
-      <input
-        autoFocus
-        required
-        type="text"
-        placeholder={t('catalog.itemTypes') + ' *'}
-        value={formData.name}
-        onChange={e => setFormData(prev => ({ ...prev, name: e.target.value }))}
-        className="w-full rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
-      />
-      <input
-        type="text"
-        placeholder={t('common.description')}
-        value={formData.description}
-        onChange={e => setFormData(prev => ({ ...prev, description: e.target.value }))}
-        className="w-full rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
-      />
-      {error && (
-        <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-2 py-1">{error}</p>
+    <div className={`bg-white rounded-2xl shadow-sm overflow-hidden transition-all ${
+      isEditing ? 'border-2 border-amber-400' : 'border border-gray-100'
+    }`}>
+
+      {/* ── Card Header ────────────────────────────────────────────────── */}
+      {isEditing ? (
+        /* Edit mode header */
+        <div className="px-5 py-4 bg-amber-50 border-b border-amber-200">
+          <div className="flex items-start gap-3">
+            <div className="flex-1 space-y-2">
+              <input
+                autoFocus
+                type="text"
+                value={typeNameDraft}
+                onChange={e => setTypeNameDraft(e.target.value)}
+                placeholder="Type name *"
+                className="w-full rounded-xl border border-amber-300 bg-white px-3 py-2 text-sm font-semibold text-gray-800 focus:outline-none focus:ring-2 focus:ring-amber-400"
+              />
+              <input
+                type="text"
+                value={typeDescDraft}
+                onChange={e => setTypeDescDraft(e.target.value)}
+                placeholder="Description (optional)"
+                className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-gray-600 focus:outline-none focus:ring-2 focus:ring-amber-400"
+              />
+              {typeNameError && <p className="text-xs text-red-600">{typeNameError}</p>}
+            </div>
+            <div className="flex gap-2 shrink-0 mt-0.5">
+              <button
+                onClick={onSaveTypeName}
+                disabled={typeNameSaving}
+                className="rounded-xl bg-amber-500 hover:bg-amber-600 disabled:opacity-60 px-3 py-2 text-xs font-semibold text-white transition"
+              >
+                {typeNameSaving ? '…' : '✓ Save'}
+              </button>
+              <button
+                onClick={onDone}
+                className="rounded-xl border border-gray-300 bg-white hover:bg-gray-50 px-3 py-2 text-xs font-medium text-gray-600 transition"
+              >
+                Done
+              </button>
+              <button
+                onClick={onDeleteType}
+                className="rounded-xl border border-red-200 bg-white hover:bg-red-50 px-3 py-2 text-xs font-medium text-red-500 transition"
+                title="Delete type"
+              >
+                🗑️ Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : (
+        /* View mode header */
+        <div className="flex items-center justify-between px-5 py-3.5 border-b border-gray-100">
+          <div className="flex items-center gap-3">
+            <div className="h-7 w-1 rounded-full bg-amber-400 shrink-0" />
+            <div>
+              <p className="text-sm font-bold text-gray-800">{type.name}</p>
+              {type.description && <p className="text-xs text-gray-400 mt-0.5">{type.description}</p>}
+            </div>
+            <span className="rounded-full bg-amber-50 border border-amber-200 px-2 py-0.5 text-xs font-medium text-amber-600">
+              {allItems.length} item{allItems.length !== 1 ? 's' : ''}
+            </span>
+          </div>
+          <button
+            onClick={onEnterEdit}
+            className="flex items-center gap-1.5 rounded-xl border border-gray-200 bg-white hover:bg-amber-50 hover:border-amber-300 hover:text-amber-700 px-3 py-1.5 text-xs font-medium text-gray-500 transition"
+          >
+            ✏️ Edit
+          </button>
+        </div>
       )}
-      <div className="flex gap-2 pt-1">
-        <button
-          type="submit"
-          disabled={saving}
-          className="flex-1 rounded-lg py-1.5 text-xs font-semibold text-white transition disabled:opacity-60"
-          style={{ backgroundColor: '#f59e0b' }}
-        >
-          {saving ? t('common.loading') : isEdit ? t('catalog.editItemType') : t('common.save')}
-        </button>
-        <button
-          type="button"
-          onClick={onCancel}
-          className="flex-1 rounded-lg border border-gray-300 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 transition"
-        >
-          {t('common.cancel')}
-        </button>
-      </div>
-    </form>
+
+      {/* ── Items list ─────────────────────────────────────────────────── */}
+      {allItems.length === 0 && !isEditing ? (
+        <div className="px-5 py-4 ml-5 border-l-2 border-gray-100 mt-1 mb-1">
+          <p className="text-xs text-gray-400 italic">No items yet — click Edit to add items</p>
+        </div>
+      ) : (
+        <div className="divide-y divide-gray-50 ml-5 border-l-2 border-amber-100">
+          {/* Active items */}
+          {activeItems.map(item => (
+            <ItemRow
+              key={item.id}
+              item={item}
+              isEditing={isEditing}
+              itemForm={itemForm}
+              itemFormData={itemFormData}
+              setItemFormData={setItemFormData}
+              itemFormError={itemFormError}
+              itemSaving={itemSaving}
+              onEdit={() => onOpenEditItem(item)}
+              onDelete={() => onDeleteItem(item)}
+              onToggleActive={() => onToggleActive(item)}
+              onSaveItem={onSaveItem}
+              onCancelItemForm={onCancelItemForm}
+            />
+          ))}
+
+          {/* Inactive section */}
+          {inactiveItems.length > 0 && (
+            <>
+              <div className="px-4 py-1 bg-gray-50 border-t border-gray-100">
+                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">{t('common.inactive')}</p>
+              </div>
+              {inactiveItems.map(item => (
+                <ItemRow
+                  key={item.id}
+                  item={item}
+                  isEditing={isEditing}
+                  itemForm={itemForm}
+                  itemFormData={itemFormData}
+                  setItemFormData={setItemFormData}
+                  itemFormError={itemFormError}
+                  itemSaving={itemSaving}
+                  onEdit={() => onOpenEditItem(item)}
+                  onDelete={() => onDeleteItem(item)}
+                  onToggleActive={() => onToggleActive(item)}
+                  onSaveItem={onSaveItem}
+                  onCancelItemForm={onCancelItemForm}
+                />
+              ))}
+            </>
+          )}
+
+          {/* Add item inline form */}
+          {isEditing && itemForm?.mode === 'add' && itemForm?.typeId === type.id && (
+            <div className="px-5 py-4 bg-green-50 border-t border-green-100">
+              <p className="text-xs font-semibold text-green-700 mb-3">New Item</p>
+              <ItemForm
+                formData={itemFormData}
+                setFormData={setItemFormData}
+                error={itemFormError}
+                saving={itemSaving}
+                onSave={onSaveItem}
+                onCancel={onCancelItemForm}
+                isEdit={false}
+              />
+            </div>
+          )}
+
+          {/* Add item button — only in edit mode */}
+          {isEditing && !(itemForm?.mode === 'add' && itemForm?.typeId === type.id) && (
+            <div className="px-5 py-3 bg-gray-50/60">
+              <button
+                onClick={onOpenAddItem}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-dashed border-gray-300 hover:border-amber-400 hover:bg-amber-50 hover:text-amber-700 px-4 py-2 text-xs font-medium text-gray-500 transition"
+              >
+                + Add Item
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   )
 }
 
 // ─── ItemRow ──────────────────────────────────────────────────────────────────
 
 function ItemRow({
-  item,
-  itemForm,
-  itemFormData,
-  setItemFormData,
-  itemFormError,
-  saving,
-  onEdit,
-  onDelete,
-  onToggleActive,
-  onSave,
-  onCancel,
-  isFeedType,
+  item, isEditing,
+  itemForm, itemFormData, setItemFormData, itemFormError, itemSaving,
+  onEdit, onDelete, onToggleActive, onSaveItem, onCancelItemForm,
 }) {
   const { t } = useTranslation()
-  const isEditing = itemForm?.mode === 'edit' && itemForm.id === item.id
+  const isEditingThis = itemForm?.mode === 'edit' && itemForm?.itemId === item.id
 
-  if (isEditing) {
+  if (isEditingThis) {
     return (
-      <div className="px-5 py-4 border-b border-emerald-100" style={{ backgroundColor: '#f0fdf4' }}>
+      <div className="px-5 py-4 bg-green-50 border-l-4 border-green-400">
+        <p className="text-xs font-semibold text-green-700 mb-3">Edit Item</p>
         <ItemForm
           formData={itemFormData}
           setFormData={setItemFormData}
           error={itemFormError}
-          saving={saving}
-          onSave={onSave}
-          onCancel={onCancel}
+          saving={itemSaving}
+          onSave={onSaveItem}
+          onCancel={onCancelItemForm}
           isEdit={true}
-          isFeedType={isFeedType}
         />
       </div>
     )
   }
 
   return (
-    <div
-      className="flex items-start gap-3 px-5 py-3 transition hover:bg-gray-50/80"
-      style={!item.is_active ? { opacity: 0.6 } : {}}
-    >
+    <div className={`flex items-center gap-3 px-4 py-2.5 transition hover:bg-gray-50 ${!item.is_active ? 'opacity-50' : ''}`}>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
-          <p className={`text-sm font-semibold text-gray-800${!item.is_active ? ' italic' : ''}`}>
-            {item.name}
-          </p>
-          <span
-            className="rounded-full px-2 py-0.5 text-xs font-medium text-gray-500"
-            style={{ backgroundColor: '#f3f4f6' }}
-          >
-            {item.unit}
-          </span>
-          {isFeedType && item.kg_per_unit != null && (
-            <span
-              className="rounded-full px-2 py-0.5 text-xs font-medium"
-              style={{ backgroundColor: '#ecfdf5', color: '#059669' }}
-            >
-              {item.kg_per_unit} kg/{item.unit}
-            </span>
+          <span className={`text-sm font-medium text-gray-700 ${!item.is_active ? 'italic' : ''}`}>{item.name}</span>
+          <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-500">{item.unit}</span>
+          {item.unit === 'Bag' && item.kg_per_unit != null && (
+            <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">{item.kg_per_unit} kg/bag</span>
           )}
-          {isFeedType && item.kg_per_unit == null && (
-            <span
-              className="rounded-full px-2 py-0.5 text-xs font-medium"
-              style={{ backgroundColor: '#fef3c7', color: '#d97706' }}
-            >
-              kg/unit not set
-            </span>
+          {item.unit === 'Bottle' && item.ml_per_unit != null && (
+            <span className="rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-600">{item.ml_per_unit} ml/bottle</span>
           )}
           {!item.is_active && (
-            <span
-              className="rounded-full px-2 py-0.5 text-xs font-medium"
-              style={{ backgroundColor: '#fee2e2', color: '#dc2626' }}
-            >
-              {t('common.inactive')}
-            </span>
+            <span className="rounded-full bg-red-50 px-2 py-0.5 text-xs font-medium text-red-600">{t('common.inactive')}</span>
           )}
         </div>
-        {item.description && (
-          <p className="text-xs text-gray-500 mt-0.5 truncate">{item.description}</p>
-        )}
+        {item.description && <p className="text-xs text-gray-400 mt-0.5">{item.description}</p>}
       </div>
 
-      <div className="flex items-center gap-2 shrink-0 mt-0.5">
-        {/* Active toggle */}
-        <div className="flex items-center gap-1.5">
-          <span className="text-xs text-gray-500">{item.is_active ? t('common.active') : t('common.inactive')}</span>
-          <Toggle checked={item.is_active} onChange={() => onToggleActive(item)} />
-        </div>
-        {/* Edit */}
-        <button
-          onClick={e => onEdit(item, e)}
-          className="p-1 rounded hover:bg-amber-100 text-gray-400 hover:text-amber-600 transition text-sm leading-none"
-          title="Edit"
-        >
-          ✏️
-        </button>
-        {/* Delete */}
-        <button
-          onClick={e => onDelete(item, e)}
-          className="p-1 rounded hover:bg-red-50 text-gray-400 hover:text-red-500 transition text-sm leading-none"
-          title="Delete"
-        >
-          🗑️
-        </button>
+      <div className="flex items-center gap-2 shrink-0">
+        <Toggle checked={item.is_active} onChange={onToggleActive} />
+        {isEditing && (
+          <>
+            <button onClick={onEdit}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-amber-200 bg-amber-50 hover:bg-amber-100 px-3 py-1.5 text-xs font-semibold text-amber-700 transition">
+              ✏️ Edit
+            </button>
+            <button onClick={onDelete}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 bg-red-50 hover:bg-red-100 px-3 py-1.5 text-xs font-semibold text-red-600 transition">
+              🗑️ Delete
+            </button>
+          </>
+        )}
       </div>
     </div>
   )
 }
 
-// ─── ItemForm (reused for add / edit) ────────────────────────────────────────
+// ─── ItemForm ─────────────────────────────────────────────────────────────────
 
-const UNIT_SUGGESTIONS = ['Bags', 'Vials', 'Bottles', 'Chicks', 'KG', 'Litres', 'Tablets']
-
-function ItemForm({ formData, setFormData, error, saving, onSave, onCancel, isEdit, isFeedType }) {
+function ItemForm({ formData, setFormData, error, saving, onSave, onCancel, isEdit }) {
   const { t } = useTranslation()
+
+  function handleUnitChange(unit) {
+    // Clear sub-fields when unit changes
+    setFormData(p => ({ ...p, unit, kg_per_unit: '', ml_per_unit: '' }))
+  }
+
   return (
-    <form onSubmit={onSave} className="space-y-2">
+    <form onSubmit={onSave} className="space-y-3">
       <div className="grid grid-cols-2 gap-2">
+        {/* Name */}
         <input
-          autoFocus
-          required
-          type="text"
-          placeholder={t('catalog.items') + ' *'}
+          autoFocus required type="text"
+          placeholder="Item name *"
           value={formData.name}
-          onChange={e => setFormData(prev => ({ ...prev, name: e.target.value }))}
-          className="col-span-2 w-full rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400"
+          onChange={e => setFormData(p => ({ ...p, name: e.target.value }))}
+          className="col-span-2 w-full rounded-xl border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400"
         />
+
+        {/* Unit dropdown */}
         <div className="col-span-2 sm:col-span-1">
-          <input
+          <select
             required
-            type="text"
-            placeholder={t('catalog.unit') + ' *'}
-            list="unit-suggestions"
             value={formData.unit}
-            onChange={e => setFormData(prev => ({ ...prev, unit: e.target.value }))}
-            className="w-full rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400"
-          />
-          <datalist id="unit-suggestions">
-            {UNIT_SUGGESTIONS.map(u => <option key={u} value={u} />)}
-          </datalist>
+            onChange={e => handleUnitChange(e.target.value)}
+            className="w-full rounded-xl border border-gray-300 px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-emerald-400 bg-white"
+          >
+            <option value="">Select unit *</option>
+            {UNIT_OPTIONS.map(u => (
+              <option key={u.value} value={u.value}>{u.label}</option>
+            ))}
+          </select>
         </div>
+
+        {/* Description */}
         <input
           type="text"
-          placeholder={t('common.description')}
+          placeholder="Description (optional)"
           value={formData.description}
-          onChange={e => setFormData(prev => ({ ...prev, description: e.target.value }))}
-          className="col-span-2 sm:col-span-1 w-full rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400"
+          onChange={e => setFormData(p => ({ ...p, description: e.target.value }))}
+          className="col-span-2 sm:col-span-1 w-full rounded-xl border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400"
         />
-        {isFeedType && (
-          <div className="col-span-2">
-            <input
-              required
-              type="number"
-              step="0.01"
-              min="0.01"
-              placeholder="KG per unit * (e.g. 50 for a 50 kg bag)"
-              value={formData.kg_per_unit}
-              onChange={e => setFormData(prev => ({ ...prev, kg_per_unit: e.target.value }))}
-              className="w-full rounded-lg border border-emerald-400 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400"
-            />
-            <p className="text-xs text-gray-500 mt-0.5">How many KG does one {formData.unit || 'unit'} weigh? Used to calculate FCR.</p>
-          </div>
-        )}
       </div>
 
-      {/* Active toggle */}
-      <div className="flex items-center gap-2 pt-1">
-        <Toggle
-          checked={formData.is_active}
-          onChange={val => setFormData(prev => ({ ...prev, is_active: val }))}
-        />
-        <span className="text-sm text-gray-600">{formData.is_active ? t('common.active') : t('common.inactive')}</span>
-      </div>
-
-      {error && (
-        <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-2 py-1">{error}</p>
+      {/* Bag → kg per bag */}
+      {formData.unit === 'Bag' && (
+        <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 space-y-1">
+          <label className="text-xs font-semibold text-emerald-700">How many KG is one bag? *</label>
+          <input
+            required type="number" step="0.01" min="0.01"
+            placeholder="e.g. 50"
+            value={formData.kg_per_unit}
+            onChange={e => setFormData(p => ({ ...p, kg_per_unit: e.target.value }))}
+            className="w-full rounded-lg border border-emerald-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400"
+          />
+          <p className="text-xs text-emerald-600">Used for FCR calculation.</p>
+        </div>
       )}
 
-      <div className="flex gap-2 pt-1">
-        <button
-          type="submit"
-          disabled={saving}
-          className="flex-1 rounded-lg py-1.5 text-xs font-semibold text-white transition disabled:opacity-60"
-          style={{ backgroundColor: '#059669' }}
-        >
+      {/* Bottle → ml per bottle */}
+      {formData.unit === 'Bottle' && (
+        <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 space-y-1">
+          <label className="text-xs font-semibold text-blue-700">How many ml is one bottle? *</label>
+          <input
+            required type="number" step="1" min="1"
+            placeholder="e.g. 500"
+            value={formData.ml_per_unit}
+            onChange={e => setFormData(p => ({ ...p, ml_per_unit: e.target.value }))}
+            className="w-full rounded-lg border border-blue-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+          />
+        </div>
+      )}
+
+      {/* Active toggle */}
+      <div className="flex items-center gap-2">
+        <Toggle checked={formData.is_active} onChange={val => setFormData(p => ({ ...p, is_active: val }))} />
+        <span className="text-xs text-gray-500">{formData.is_active ? t('common.active') : t('common.inactive')}</span>
+      </div>
+
+      {error && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-1.5">{error}</p>}
+
+      <div className="flex gap-2">
+        <button type="submit" disabled={saving}
+          className="flex-1 rounded-xl bg-emerald-500 hover:bg-emerald-600 disabled:opacity-60 py-2 text-xs font-semibold text-white transition">
           {saving ? t('common.loading') : isEdit ? t('catalog.editItem') : t('common.save')}
         </button>
-        <button
-          type="button"
-          onClick={onCancel}
-          className="flex-1 rounded-lg border border-gray-300 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 transition"
-        >
+        <button type="button" onClick={onCancel}
+          className="flex-1 rounded-xl border border-gray-300 py-2 text-xs font-medium text-gray-600 hover:bg-gray-50 transition">
           {t('common.cancel')}
         </button>
       </div>

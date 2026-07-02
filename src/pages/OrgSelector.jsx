@@ -23,7 +23,7 @@ export default function OrgSelector() {
     if (!user) return
     supabase
       .from('organization_users')
-      .select('organization_id, role, organizations(id, name, business_name, is_active)')
+      .select('organization_id, role, organizations(id, name, is_active)')
       .eq('user_id', user.id)
       .eq('is_active', true)
       .then(({ data }) => {
@@ -67,9 +67,6 @@ export default function OrgSelector() {
                   <div className="flex items-center justify-between">
                     <div>
                       <p className="font-semibold text-gray-800">{org.name}</p>
-                      {org.business_name && org.business_name !== org.name && (
-                        <p className="text-sm text-gray-500 mt-0.5">{org.business_name}</p>
-                      )}
                     </div>
                     <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${role.color}`}>{role.label}</span>
                   </div>

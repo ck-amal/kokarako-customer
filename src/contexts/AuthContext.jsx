@@ -26,7 +26,7 @@ export function AuthProvider({ children }) {
 
     const { data: ouRows } = await supabase
       .from('organization_users')
-      .select('organization_id, role, organizations(id, name, business_name, phone, address, subscription_plan, billing_period, subscription_status, current_period_end, is_active)')
+      .select('organization_id, role, organizations(id, name, phone, address, subscription_plan, billing_period, subscription_status, current_period_end, trial_ends_at, is_active, onboarding_completed_at)')
       .eq('user_id', authUser.id)
       .eq('is_active', true)
 

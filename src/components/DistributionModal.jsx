@@ -10,9 +10,6 @@ function fmtDate(d, lang = 'en') {
   return formatDate(d, lang)
 }
 
-// Shared "Record Distribution" modal — used by FarmDetail and BatchDetail.
-// Fetches its own central stock + the farm's active batches; pass initialBatchId
-// to preselect a specific batch (e.g. when opened from the Batch page).
 export default function DistributionModal({ farmId, initialBatchId, onClose, onSaved }) {
   const { organization, user } = useAuth()
   const { t, i18n } = useTranslation()
@@ -23,23 +20,22 @@ export default function DistributionModal({ farmId, initialBatchId, onClose, onS
   const [itemTypes,       setItemTypes]       = useState([])
   const [typeId,          setTypeId]          = useState('')
   const [catalogItems,    setCatalogItems]    = useState([])
+  const [canonCount,      setCanonCount]      = useState('') // bags / bottles / units
+  const [subCount,        setSubCount]        = useState('') // kg / ml
   const [form, setForm] = useState({
-    item_id:  '',
-    quantity: '',
-    date:     new Date().toISOString().slice(0, 10),
-    notes:    '',
+    item_id: '',
+    date:    new Date().toISOString().slice(0, 10),
+    notes:   '',
   })
   const [saving, setSaving] = useState(false)
   const [error,  setError]  = useState('')
 
-  // Central stock (for availability display + deduction)
   useEffect(() => {
     if (!organization?.id) return
     supabase.from('stock').select('*').eq('organization_id', organization.id)
       .then(({ data }) => setStock(data || []))
   }, [organization?.id])
 
-  // Active batches for this farm + distributable item types
   useEffect(() => {
     supabase.from('batches')
       .select('id, start_date, chick_count')
@@ -66,11 +62,10 @@ export default function DistributionModal({ farmId, initialBatchId, onClose, onS
       })
   }, [farmId])
 
-  // Catalog items whenever type changes
   useEffect(() => {
     if (!typeId) { setCatalogItems([]); return }
     supabase.from('items')
-      .select('id, name, unit')
+      .select('id, name, unit, kg_per_unit, ml_per_unit')
       .eq('item_type_id', typeId)
       .eq('is_active', true)
       .eq('organization_id', organization?.id)
@@ -79,8 +74,14 @@ export default function DistributionModal({ farmId, initialBatchId, onClose, onS
         const items = data || []
         setCatalogItems(items)
         setForm(p => ({ ...p, item_id: items.length ? items[0].id : '' }))
+        setCanonCount(''); setSubCount('')
       })
   }, [typeId])
+
+  // Reset quantity inputs when item changes
+  useEffect(() => {
+    setCanonCount(''); setSubCount('')
+  }, [form.item_id])
 
   function set(f) { return e => setForm(p => ({ ...p, [f]: e.target.value })) }
 
@@ -88,18 +89,42 @@ export default function DistributionModal({ farmId, initialBatchId, onClose, onS
   const selectedStock = selectedItem
     ? stock.find(s => s.item_name.toLowerCase() === selectedItem.name.toLowerCase())
     : null
-  const typeName      = itemTypes.find(it => it.id === typeId)?.name?.toLowerCase() || ''
-  const hasNoBatches  = !batchesLoading && activeBatches.length === 0
-  const formDisabled  = hasNoBatches
+  const typeName = itemTypes.find(it => it.id === typeId)?.name?.toLowerCase() || ''
+
+  const isBag      = selectedItem?.unit === 'Bag'    && Number(selectedItem?.kg_per_unit) > 0
+  const isBottle   = selectedItem?.unit === 'Bottle' && Number(selectedItem?.ml_per_unit) > 0
+  const hasSubUnit = isBag || isBottle
+  const subLabel   = isBag ? 'KG' : isBottle ? 'ml' : ''
+  const canonLabel = selectedItem?.unit ?? 'units'
+  const factor     = isBag ? Number(selectedItem.kg_per_unit) : isBottle ? Number(selectedItem.ml_per_unit) : 1
+
+  // Canonical qty = full bags/bottles + fractional bags/bottles from sub-unit input
+  const canonicalQty = hasSubUnit
+    ? (parseFloat(canonCount) || 0) + (parseFloat(subCount) || 0) / factor
+    : (parseFloat(canonCount) || 0)
+
+  // Summary line shown below inputs
+  const totalSubEquiv  = canonicalQty > 0 ? canonicalQty * factor : null
+  const hasNoBatches   = !batchesLoading && activeBatches.length === 0
+  const formDisabled   = hasNoBatches
 
   async function handleSubmit(e) {
     e.preventDefault()
     if (!batchId && activeBatches.length > 0) { setError('Select a batch'); return }
-    if (!form.item_id || !selectedItem) { setError('Select a stock item'); return }
-    const qty = parseFloat(form.quantity)
-    if (!qty || qty <= 0) { setError('Enter a valid quantity'); return }
-    if (selectedStock && qty > Number(selectedStock.quantity)) {
-      setError(`Only ${Number(selectedStock.quantity).toLocaleString('en-IN')} ${selectedStock.unit} available in stock`)
+    if (!form.item_id || !selectedItem)        { setError('Select a stock item'); return }
+
+    const availableQty = selectedStock ? Number(selectedStock.quantity) : 0
+    if (availableQty <= 0) {
+      setError(`${selectedItem.name} is out of stock — add stock before distributing`)
+      return
+    }
+    if (canonicalQty <= 0) { setError('Enter a valid quantity'); return }
+    if (canonicalQty > availableQty) {
+      const avail = availableQty.toLocaleString('en-IN')
+      const availSub = hasSubUnit
+        ? ` (${(availableQty * factor).toLocaleString('en-IN', { maximumFractionDigits: 1 })} ${subLabel})`
+        : ''
+      setError(`Only ${avail} ${canonLabel}${availSub} available in stock`)
       return
     }
 
@@ -112,7 +137,7 @@ export default function DistributionModal({ farmId, initialBatchId, onClose, onS
       stock_id:        selectedStock?.id || null,
       item_name:       selectedItem.name,
       type:            typeName,
-      quantity:        qty,
+      quantity:        canonicalQty,
       unit:            selectedItem.unit,
       date:            form.date,
       notes:           form.notes.trim() || null,
@@ -123,73 +148,51 @@ export default function DistributionModal({ farmId, initialBatchId, onClose, onS
 
     if (distErr) { setError(distErr.message); setSaving(false); return }
 
-    // 1. Ledger OUT entry
     await ledgerOut({
-      itemName:       selectedItem.name,
-      itemType:       typeName,
-      quantity:       qty,
-      unit:           selectedItem.unit,
-      referenceType:  'distribution',
-      referenceId:    distInserted.id,
-      date:           form.date,
-      organizationId: organization?.id,
+      itemName: selectedItem.name, itemType: typeName,
+      quantity: canonicalQty, unit: selectedItem.unit,
+      referenceType: 'distribution', referenceId: distInserted.id,
+      date: form.date, organizationId: organization?.id,
     })
 
-    // 2. Deduct from stock cache
     if (selectedStock) {
       await supabase.from('stock')
-        .update({ quantity: Math.max(0, Number(selectedStock.quantity) - qty) })
-        .eq('id', selectedStock.id)
-        .eq('organization_id', organization?.id)
+        .update({ quantity: Math.max(0, Number(selectedStock.quantity) - canonicalQty) })
+        .eq('id', selectedStock.id).eq('organization_id', organization?.id)
     }
 
-    // 3. Weighted-average cost scoped to this batch
     const resolvedBatch = activeBatches.find(b => b.id === batchId)
     const avgCpu = await getAverageCostPerUnit(selectedItem.name, {
-      batchId:        batchId || undefined,
-      startDate:      resolvedBatch?.start_date,
+      batchId: batchId || undefined, startDate: resolvedBatch?.start_date,
       organizationId: organization?.id,
     })
     await supabase.from('farm_expenses').insert({
-      farm_id:         farmId,
-      batch_id:        batchId || null,
-      distribution_id: distInserted.id,
-      item_name:       selectedItem.name,
-      item_type:       typeName,
-      quantity:        qty,
-      unit:            selectedItem.unit,
-      cost_per_unit:   avgCpu,
-      total_cost:      roundCurrency(qty * avgCpu),
-      date:            form.date,
-      organization_id: organization?.id,
-      created_by_id:   user?.id,
-      created_by_name: userName,
+      farm_id: farmId, batch_id: batchId || null, distribution_id: distInserted.id,
+      item_name: selectedItem.name, item_type: typeName,
+      quantity: canonicalQty, unit: selectedItem.unit,
+      cost_per_unit: avgCpu, total_cost: roundCurrency(canonicalQty * avgCpu),
+      date: form.date, organization_id: organization?.id,
+      created_by_id: user?.id, created_by_name: userName,
     })
 
-    // 4. Increment farm_stock on-hand
     const { data: fsCurrent } = await supabase.from('farm_stock')
-      .select('id, quantity_on_hand')
-      .eq('farm_id', farmId)
-      .eq('organization_id', organization?.id)
-      .eq('item_name', selectedItem.name)
-      .maybeSingle()
+      .select('id, quantity_on_hand').eq('farm_id', farmId)
+      .eq('organization_id', organization?.id).eq('item_name', selectedItem.name).maybeSingle()
     if (fsCurrent) {
-      await supabase.from('farm_stock').update({
-        quantity_on_hand: Number(fsCurrent.quantity_on_hand) + qty,
-        updated_at:       new Date().toISOString(),
-      }).eq('id', fsCurrent.id)
+      await supabase.from('farm_stock')
+        .update({ quantity_on_hand: Number(fsCurrent.quantity_on_hand) + canonicalQty, updated_at: new Date().toISOString() })
+        .eq('id', fsCurrent.id)
     } else {
       await supabase.from('farm_stock').insert({
-        farm_id:          farmId,
-        item_name:        selectedItem.name,
-        unit:             selectedItem.unit,
-        quantity_on_hand: qty,
-        organization_id:  organization?.id,
+        farm_id: farmId, item_name: selectedItem.name,
+        unit: selectedItem.unit, quantity_on_hand: canonicalQty, organization_id: organization?.id,
       })
     }
 
     onSaved()
   }
+
+  const inputCls = "w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
@@ -200,7 +203,7 @@ export default function DistributionModal({ farmId, initialBatchId, onClose, onS
         </div>
         <form onSubmit={handleSubmit} className="space-y-4">
 
-          {/* Batch selector */}
+          {/* Batch */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">{t('sales.batch')} *</label>
             {batchesLoading ? (
@@ -214,8 +217,7 @@ export default function DistributionModal({ farmId, initialBatchId, onClose, onS
                 {t('sales.batch')} started {fmtDate(activeBatches[0].start_date, i18n.language)} — {Number(activeBatches[0].chick_count).toLocaleString('en-IN')} chicks
               </div>
             ) : (
-              <select value={batchId} onChange={e => setBatchId(e.target.value)}
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400">
+              <select value={batchId} onChange={e => setBatchId(e.target.value)} className={inputCls}>
                 <option value="">— Select a batch —</option>
                 {activeBatches.map(b => (
                   <option key={b.id} value={b.id}>
@@ -228,56 +230,112 @@ export default function DistributionModal({ farmId, initialBatchId, onClose, onS
 
           <div className={formDisabled ? 'opacity-40 pointer-events-none' : ''}>
             <div className="space-y-4">
+
+              {/* Item type */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">{t('procurement.itemType')} *</label>
-                <select value={typeId} onChange={e => setTypeId(e.target.value)}
-                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400">
-                  {itemTypes.map(it => (
-                    <option key={it.id} value={it.id}>{it.name}</option>
-                  ))}
+                <select value={typeId} onChange={e => setTypeId(e.target.value)} className={inputCls + ' bg-white'}>
+                  {itemTypes.map(it => <option key={it.id} value={it.id}>{it.name}</option>)}
                 </select>
               </div>
 
+              {/* Item */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">{t('distributions.selectItem')} *</label>
                 {catalogItems.length === 0 ? (
                   <p className="text-sm text-gray-400 py-1">No items for this type.</p>
                 ) : (
-                  <select value={form.item_id} onChange={set('item_id')}
-                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400">
-                    {catalogItems.map(item => {
-                      const s = stock.find(st => st.item_name.toLowerCase() === item.name.toLowerCase())
-                      const qty = s ? Number(s.quantity).toLocaleString('en-IN') + ' ' + s.unit + ' available' : 'not in stock'
-                      return (
-                        <option key={item.id} value={item.id}>
-                          {item.name} — {qty}
-                        </option>
-                      )
-                    })}
-                  </select>
+                  <>
+                    <select value={form.item_id} onChange={set('item_id')} className={inputCls + ' bg-white'}>
+                      {catalogItems.map(item => {
+                        const s = stock.find(st => st.item_name.toLowerCase() === item.name.toLowerCase())
+                        const availQty = s ? Number(s.quantity) : 0
+                        const label = availQty > 0 ? `${availQty.toLocaleString('en-IN')} ${s.unit} available` : 'out of stock'
+                        return <option key={item.id} value={item.id}>{item.name} — {label}</option>
+                      })}
+                    </select>
+                    {selectedItem && (!selectedStock || Number(selectedStock.quantity) <= 0) && (
+                      <div className="mt-1.5 flex items-center gap-2 rounded-lg bg-red-50 border border-red-200 px-3 py-2">
+                        <span className="text-red-500 text-sm">✕</span>
+                        <p className="text-xs font-medium text-red-700">
+                          {selectedItem.name} is out of stock — add stock before distributing
+                        </p>
+                      </div>
+                    )}
+                    {selectedItem && selectedStock && Number(selectedStock.quantity) > 0 && (
+                      <p className="text-xs mt-1.5 font-medium text-green-600">
+                        ✓ {Number(selectedStock.quantity).toLocaleString('en-IN')} {selectedStock.unit} available
+                        {hasSubUnit && ` (${(Number(selectedStock.quantity) * factor).toLocaleString('en-IN', { maximumFractionDigits: 1 })} ${subLabel})`}
+                      </p>
+                    )}
+                  </>
                 )}
               </div>
 
+              {/* Quantity */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Quantity ({selectedStock?.unit ?? 'units'}) *
-                </label>
-                <input required type="number" min="0.01" step="0.01" value={form.quantity} onChange={set('quantity')}
-                  placeholder="e.g. 100"
-                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400" />
+                <label className="block text-sm font-medium text-gray-700 mb-1">Quantity *</label>
+                {hasSubUnit ? (
+                  <>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <div className="relative">
+                          <input
+                            type="number" min="0" step="1"
+                            value={canonCount} onChange={e => setCanonCount(e.target.value)}
+                            placeholder="0" className={inputCls + ' pr-12'}
+                          />
+                          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-medium text-gray-400 pointer-events-none">
+                            {canonLabel}
+                          </span>
+                        </div>
+                      </div>
+                      <div>
+                        <div className="relative">
+                          <input
+                            type="number" min="0" step="any"
+                            value={subCount} onChange={e => setSubCount(e.target.value)}
+                            placeholder="0" className={inputCls + ' pr-10'}
+                          />
+                          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-medium text-gray-400 pointer-events-none">
+                            {subLabel}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                    {canonicalQty > 0 && (
+                      <p className="text-xs mt-1.5 text-gray-500 font-medium">
+                        Total = {canonicalQty % 1 === 0 ? canonicalQty : canonicalQty.toFixed(3)} {canonLabel}
+                        {' '}({totalSubEquiv?.toLocaleString('en-IN', { maximumFractionDigits: 1 })} {subLabel})
+                      </p>
+                    )}
+                  </>
+                ) : (
+                  <div className="relative">
+                    <input
+                      required type="number" min="0.01" step="any"
+                      value={canonCount} onChange={e => setCanonCount(e.target.value)}
+                      placeholder={`e.g. 5 ${canonLabel}`} className={inputCls + ' pr-16'}
+                    />
+                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-medium text-gray-400 pointer-events-none">
+                      {canonLabel}
+                    </span>
+                  </div>
+                )}
               </div>
 
+              {/* Date */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">{t('common.date')} *</label>
-                <input required type="date" value={form.date} onChange={set('date')}
-                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400" />
+                <input required type="date" value={form.date} onChange={set('date')} className={inputCls} />
               </div>
 
+              {/* Notes */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">{t('common.notes')}</label>
-                <input value={form.notes} onChange={set('notes')} placeholder="Optional"
-                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400" />
+                <input value={form.notes} onChange={set('notes')} placeholder="Optional" className={inputCls} />
               </div>
+
             </div>
           </div>
 

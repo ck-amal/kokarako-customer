@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { supabase } from '../lib/supabaseClient'
 import { formatCurrency } from '../utils/format'
 import { formatDate } from '../utils/dateFormat'
 import { useAuth } from '../contexts/AuthContext'
+import { useOnboarding } from '../contexts/OnboardingContext'
 import AuditInfo from '../components/AuditInfo'
 
 function batchLabel(batch, i18nLanguage) {
@@ -228,6 +230,8 @@ function SaleModal({ batches, vendors, onClose, onSaved }) {
 export default function Sales() {
   const { t, i18n } = useTranslation()
   const { organization, user, userRole, canRecordOperations } = useAuth()
+  const { currentStep, stepDone } = useOnboarding()
+  const navigate = useNavigate()
   const userName = user?.user_metadata?.full_name || user?.email || 'Unknown'
   const canConfirm = ['owner', 'manager', 'accountant'].includes(userRole)
   const [sales, setSales]       = useState([])
@@ -298,14 +302,23 @@ export default function Sales() {
           <h1 className="text-2xl font-bold text-gray-800">{t('sales.title')}</h1>
           <p className="text-sm text-gray-500 mt-0.5">Record and track all sales</p>
         </div>
-        {canRecordOperations && (
+        <div className="flex items-center gap-2">
           <button
-            onClick={() => setShowModal(true)}
-            className="inline-flex items-center gap-2 rounded-lg bg-amber-500 hover:bg-amber-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition"
+            onClick={() => navigate('/vendors')}
+            className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 px-4 py-2 text-sm font-semibold text-gray-700 shadow-sm transition"
           >
-            <span className="text-base leading-none">+</span> {t('sales.recordSale')}
+            🤝 Vendors
           </button>
-        )}
+          {canRecordOperations && (
+            <button
+              data-tour="sale"
+              onClick={() => setShowModal(true)}
+              className="inline-flex items-center gap-2 rounded-lg bg-amber-500 hover:bg-amber-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition"
+            >
+              <span className="text-base leading-none">+</span> {t('sales.recordSale')}
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Revenue this month */}
@@ -414,7 +427,7 @@ export default function Sales() {
           batches={batches}
           vendors={vendors}
           onClose={() => setShowModal(false)}
-          onSaved={() => { setShowModal(false); fetchData() }}
+          onSaved={() => { setShowModal(false); fetchData(); if (currentStep?.id === 'sale') stepDone('sale') }}
         />
       )}
     </div>

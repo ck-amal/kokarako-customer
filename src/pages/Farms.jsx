@@ -3,6 +3,7 @@ import { useNavigate, Link } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
+import { useOnboarding } from '../contexts/OnboardingContext'
 import { formatDate } from '../utils/dateFormat'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -391,7 +392,7 @@ function DeleteModal({ farm, onClose, onDeleted }) {
 
 // ─── Farm Card ────────────────────────────────────────────────────────────────
 
-function FarmCard({ farm, batchInfo, onEdit, onDelete, onAdvance, onClick, canEdit, canDelete }) {
+function FarmCard({ farm, batchInfo, onEdit, onDelete, onAdvance, onAddBatch, onClick, canEdit, canDelete }) {
   const { t } = useTranslation()
   const { activeBatchCount = 0, liveChicks = 0, nextHarvestDays = null, totalBatches = 0 } = batchInfo || {}
   const hasActive = activeBatchCount > 0
@@ -464,23 +465,33 @@ function FarmCard({ farm, batchInfo, onEdit, onDelete, onAdvance, onClick, canEd
       </div>
 
       {/* Right: action buttons */}
-      <div className="flex gap-1.5 shrink-0" onClick={e => e.stopPropagation()}>
-        {canEdit && (
+      <div className="flex flex-col items-end gap-1.5 shrink-0" onClick={e => e.stopPropagation()}>
+        {!hasActive && canEdit && (
           <button
-            onClick={onEdit}
-            className="rounded-lg border border-gray-300 bg-white px-2.5 py-1 text-xs font-semibold text-gray-600 hover:bg-gray-50 transition"
+            onClick={onAddBatch}
+            className="rounded-lg bg-amber-500 hover:bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white transition"
           >
-            {t('common.edit')}
+            + Add Batch
           </button>
         )}
-        {canDelete && (
-          <button
-            onClick={onDelete}
-            className="rounded-lg border border-red-200 bg-white px-2.5 py-1 text-xs font-semibold text-red-500 hover:bg-red-50 transition"
-          >
-            {t('common.delete')}
-          </button>
-        )}
+        <div className="flex gap-1.5">
+          {canEdit && (
+            <button
+              onClick={onEdit}
+              className="rounded-lg border border-gray-300 bg-white px-2.5 py-1 text-xs font-semibold text-gray-600 hover:bg-gray-50 transition"
+            >
+              {t('common.edit')}
+            </button>
+          )}
+          {canDelete && (
+            <button
+              onClick={onDelete}
+              className="rounded-lg border border-red-200 bg-white px-2.5 py-1 text-xs font-semibold text-red-500 hover:bg-red-50 transition"
+            >
+              {t('common.delete')}
+            </button>
+          )}
+        </div>
       </div>
     </div>
   )
@@ -492,6 +503,7 @@ export default function Farms() {
   const navigate = useNavigate()
   const { organization, canEdit, canDelete } = useAuth()
   const { t } = useTranslation()
+  const { currentStep, stepDone } = useOnboarding()
 
   const [farms,        setFarms]        = useState([])
   const [farmBatchMap, setFarmBatchMap] = useState({}) // farm_id → { activeBatchCount, liveChicks, nextHarvestDays, totalBatches }
@@ -542,7 +554,7 @@ export default function Farms() {
 
   useEffect(() => { fetchData() }, [])
 
-  function handleSaved()   { setModalOpen(false); setEditingFarm(null); fetchData() }
+  function handleSaved()   { setModalOpen(false); setEditingFarm(null); fetchData(); if (currentStep?.id === 'farm') stepDone('farm') }
   function handleDeleted() { setDeletingFarm(null); fetchData() }
 
   // Unique locations
@@ -580,6 +592,7 @@ export default function Farms() {
         {canEdit && (
           <div className="flex flex-col items-end gap-1">
             <button
+              data-tour="farm"
               onClick={() => { setEditingFarm(null); setModalOpen(true) }}
               disabled={atFarmLimit}
               className="inline-flex items-center gap-2 rounded-lg bg-amber-500 hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed px-4 py-2 text-sm font-semibold text-white shadow-sm transition"
@@ -682,6 +695,7 @@ export default function Farms() {
               onEdit={() => { setEditingFarm(farm); setModalOpen(true) }}
               onDelete={() => setDeletingFarm(farm)}
               onAdvance={() => setAdvanceFarm(farm)}
+              onAddBatch={() => navigate('/batches', { state: { openNew: true, farmId: farm.id } })}
               canEdit={canEdit}
               canDelete={canDelete}
             />

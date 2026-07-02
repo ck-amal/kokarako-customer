@@ -3,65 +3,145 @@ import { NavLink, useLocation } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useAuth } from '../contexts/AuthContext'
 
-// ─── All possible nav items with role requirements ────────────────────────────
+// ─── Nav structure ────────────────────────────────────────────────────────────
 
 const ALL_NAV = [
   // Core — visible to all roles
   { to: '/dashboard',        labelKey: 'nav.dashboard',    icon: '🏠', roles: null },
   { to: '/farms',            labelKey: 'nav.farms',        icon: '🏡', roles: null },
   { to: '/batches',          labelKey: 'nav.batches',      icon: '🐣', roles: null },
-  { to: '/stock',            labelKey: 'nav.stock',        icon: '📦', roles: null },
   { to: '/sales',            labelKey: 'nav.sales',        icon: '💰', roles: null },
 
-  // Manager+ (not farm_supervisor, not accountant, not viewer)
-  { to: '/procurement',     labelKey: 'nav.procurement',   icon: '🛒', roles: ['owner','manager'] },
-  { to: '/suppliers',       labelKey: 'nav.suppliers',     icon: '🏭', roles: ['owner','manager','accountant'] },
-  { to: '/vendors',         labelKey: 'nav.vendors',       icon: '🤝', roles: ['owner','manager','accountant'] },
+  // Manager+
   { to: '/cash-collection', labelKey: 'nav.cashCollection',icon: '💳', roles: ['owner','manager','accountant'] },
   { to: '/expenses',        labelKey: 'nav.expenses',      icon: '🧾', roles: ['owner','manager','accountant'] },
 
-  // Financial — owner, manager, accountant
-  { to: '/accounts',          labelKey: 'nav.cashBank',    icon: '💵', roles: ['owner','manager','accountant'] },
-  { to: '/growing-fees',      labelKey: 'nav.growingFees', icon: '🌿', roles: ['owner','manager','accountant'] },
-  { to: '/reports/pl',        labelKey: 'nav.plReport',    icon: '📊', roles: ['owner','manager','accountant'] },
-  { to: '/reports/fcr',       labelKey: 'nav.fcrReport',   icon: '🌾', roles: ['owner','manager','accountant'] },
+  // Financial
+  { to: '/growing-fees', labelKey: 'nav.growingFees', icon: '🌿', roles: ['owner','manager','accountant'] },
 
-  // Settings — varies
-  { to: '/settings/catalog',      labelKey: 'nav.itemCatalog',  icon: '⚙️',  roles: ['owner','manager'] },
-  { to: '/settings/growing-fee',  labelKey: 'nav.feeConfig',    icon: '🔧', roles: ['owner'] },
-  { to: '/settings/team',         labelKey: 'nav.team',         icon: '👥', roles: ['owner'] },
-  { to: '/settings/organization', labelKey: 'nav.organization', icon: '🏢', roles: ['owner'] },
-  { to: '/settings/profile',      labelKey: 'nav.profile',      icon: '👤', roles: null }, // all roles
+  // Settings
+  { to: '/settings/profile', labelKey: 'nav.profile', icon: '👤', roles: null },
 ]
 
-function NavItem({ to, label, icon, onClick }) {
+// Inventory group — Stock visible to all, Procurement/Suppliers owner+manager only
+const INVENTORY_GROUP = {
+  labelKey: 'nav.inventory',
+  label:    'Inventory',
+  icon:     '📦',
+  children: [
+    { to: '/stock',       labelKey: 'nav.stock',       icon: '🗂️',  roles: null },
+    { to: '/procurement', labelKey: 'nav.procurement', icon: '🛒',  roles: ['owner','manager'] },
+    { to: '/suppliers',   labelKey: 'nav.suppliers',   icon: '🏭',  roles: ['owner','manager'] },
+  ],
+}
+
+// Reports group
+const REPORTS_GROUP = {
+  labelKey: 'nav.reports',
+  label:    'Reports',
+  icon:     '📊',
+  children: [
+    { to: '/accounts',    labelKey: 'nav.cashBank',  icon: '💵', roles: ['owner','manager','accountant'] },
+    { to: '/reports/pl',  labelKey: 'nav.plReport',  icon: '📈', roles: ['owner','manager','accountant'] },
+    { to: '/reports/fcr', labelKey: 'nav.fcrReport', icon: '🌾', roles: ['owner','manager','accountant'] },
+  ],
+}
+
+// Config group — rendered separately as a collapsible submenu
+const CONFIG_GROUP = {
+  labelKey: 'nav.config',
+  label:    'Config',
+  icon:     '⚙️',
+  children: [
+    { to: '/settings/catalog',     labelKey: 'nav.itemCatalog', icon: '📋', roles: ['owner','manager'] },
+    { to: '/settings/growing-fee', labelKey: 'nav.feeConfig',   icon: '🔧', roles: ['owner'] },
+  ],
+}
+
+function roleAllowed(roles, userRole) {
+  if (!roles) return true
+  if (!userRole) return false
+  return roles.includes(userRole)
+}
+
+// ─── Components ───────────────────────────────────────────────────────────────
+
+function NavItem({ to, label, icon, onClick, sub = false }) {
   return (
     <NavLink
       to={to}
       onClick={onClick}
       className={({ isActive }) =>
-        `flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${
+        `flex items-center gap-3 rounded-xl text-sm font-medium transition-all ${
+          sub ? 'px-3 py-2' : 'px-3 py-2.5'
+        } ${
           isActive
             ? 'bg-amber-500 text-white shadow-sm'
             : 'text-gray-600 hover:bg-amber-50 hover:text-amber-700'
         }`
       }
     >
-      <span className="text-base w-5 text-center leading-none">{icon}</span>
+      <span className={`text-base w-5 text-center leading-none ${sub ? 'text-sm' : ''}`}>{icon}</span>
       <span>{label}</span>
     </NavLink>
   )
 }
 
-function useFilteredNav(userRole) {
-  return ALL_NAV.filter(item => {
-    if (!item.roles) return true          // visible to everyone
-    if (!userRole)   return false         // not yet loaded
-    return item.roles.includes(userRole)
-  })
+function NavGroup({ group, userRole, onChildClick }) {
+  const { t }    = useTranslation()
+  const location = useLocation()
+
+  const visibleChildren = group.children.filter(c => roleAllowed(c.roles, userRole))
+  if (visibleChildren.length === 0) return null
+
+  const isAnyChildActive = visibleChildren.some(c => location.pathname.startsWith(c.to))
+  const [open, setOpen]  = useState(isAnyChildActive)
+
+  useEffect(() => {
+    if (isAnyChildActive) setOpen(true)
+  }, [location.pathname])
+
+  return (
+    <div>
+      <button
+        onClick={() => setOpen(o => !o)}
+        className={`w-full flex items-center justify-between gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${
+          isAnyChildActive
+            ? 'bg-amber-50 text-amber-700'
+            : 'text-gray-600 hover:bg-amber-50 hover:text-amber-700'
+        }`}
+      >
+        <div className="flex items-center gap-3">
+          <span className="text-base w-5 text-center leading-none">{group.icon}</span>
+          <span>{t(group.labelKey, { defaultValue: group.label })}</span>
+        </div>
+        <svg
+          className={`h-4 w-4 shrink-0 transition-transform ${open ? 'rotate-180' : ''}`}
+          fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+
+      {open && (
+        <div className="mt-0.5 ml-4 pl-3 border-l-2 border-amber-100 space-y-0.5">
+          {visibleChildren.map(child => (
+            <NavItem
+              key={child.to}
+              to={child.to}
+              label={t(child.labelKey)}
+              icon={child.icon}
+              onClick={onChildClick}
+              sub
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  )
 }
 
-// ── Read-only banner ─────────────────────────────────────────────────────────
+// ── Read-only banner ──────────────────────────────────────────────────────────
 
 function RoleBanner({ userRole }) {
   if (userRole === 'accountant') return (
@@ -77,12 +157,39 @@ function RoleBanner({ userRole }) {
   return null
 }
 
+// ─── Shared nav renderer ──────────────────────────────────────────────────────
+
+function NavList({ userRole, onItemClick }) {
+  const { t } = useTranslation()
+  const filteredNav = ALL_NAV.filter(item => roleAllowed(item.roles, userRole))
+
+  // Split: items before profile (all main items), profile last
+  const mainItems    = filteredNav.filter(i => i.to !== '/settings/profile')
+  const profileItem  = filteredNav.find(i => i.to === '/settings/profile')
+
+  return (
+    <>
+      <div className="space-y-0.5">
+        {mainItems.map(item => (
+          <NavItem key={item.to} to={item.to} label={t(item.labelKey)} icon={item.icon} onClick={onItemClick} />
+        ))}
+        <NavGroup group={INVENTORY_GROUP} userRole={userRole} onChildClick={onItemClick} />
+        <NavGroup group={REPORTS_GROUP}   userRole={userRole} onChildClick={onItemClick} />
+        <NavGroup group={CONFIG_GROUP}    userRole={userRole} onChildClick={onItemClick} />
+      </div>
+      {profileItem && (
+        <div className="mt-auto pt-2 border-t border-gray-100">
+          <NavItem to={profileItem.to} label={t(profileItem.labelKey)} icon={profileItem.icon} onClick={onItemClick} />
+        </div>
+      )}
+    </>
+  )
+}
+
 // ─── Desktop sidebar ──────────────────────────────────────────────────────────
 
 export function DesktopSidebar() {
-  const { t } = useTranslation()
   const { organization, userRole } = useAuth()
-  const navItems = useFilteredNav(userRole)
 
   return (
     <aside className="hidden lg:flex flex-col w-56 shrink-0 bg-white border-r border-gray-100 min-h-screen sticky top-0 h-screen">
@@ -106,13 +213,10 @@ export function DesktopSidebar() {
         <RoleBanner userRole={userRole} />
       </div>
 
-      {/* Nav links */}
-      <nav className="flex-1 px-3 pb-4 space-y-0.5 overflow-y-auto">
-        {navItems.map(item => (
-          <NavItem key={item.to} to={item.to} label={t(item.labelKey)} icon={item.icon} />
-        ))}
+      {/* Nav */}
+      <nav className="flex-1 px-3 pb-4 overflow-y-auto flex flex-col">
+        <NavList userRole={userRole} />
       </nav>
-
     </aside>
   )
 }
@@ -120,11 +224,10 @@ export function DesktopSidebar() {
 // ─── Mobile header + drawer ───────────────────────────────────────────────────
 
 export function MobileHeader() {
-  const [open, setOpen]   = useState(false)
-  const location          = useLocation()
-  const { t } = useTranslation()
+  const [open, setOpen] = useState(false)
+  const location        = useLocation()
+  const { t }           = useTranslation()
   const { organization, userRole } = useAuth()
-  const navItems = useFilteredNav(userRole)
 
   useEffect(() => { setOpen(false) }, [location.pathname])
   useEffect(() => {
@@ -132,7 +235,14 @@ export function MobileHeader() {
     return () => { document.body.style.overflow = '' }
   }, [open])
 
-  const currentPage = ALL_NAV.find(n => location.pathname.startsWith(n.to))?.labelKey ?? null
+  // Find current page label from flat nav + config children
+  const allFlat = [
+    ...ALL_NAV,
+    ...INVENTORY_GROUP.children,
+    ...REPORTS_GROUP.children,
+    ...CONFIG_GROUP.children,
+  ]
+  const currentPage = allFlat.find(n => location.pathname.startsWith(n.to))?.labelKey ?? null
 
   return (
     <>
@@ -169,12 +279,9 @@ export function MobileHeader() {
 
         <RoleBanner userRole={userRole} />
 
-        <nav className="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto">
-          {navItems.map(item => (
-            <NavItem key={item.to} to={item.to} label={t(item.labelKey)} icon={item.icon} onClick={() => setOpen(false)} />
-          ))}
+        <nav className="flex-1 px-3 py-4 overflow-y-auto flex flex-col">
+          <NavList userRole={userRole} onItemClick={() => setOpen(false)} />
         </nav>
-
       </div>
     </>
   )

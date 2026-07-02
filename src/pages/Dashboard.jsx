@@ -119,6 +119,7 @@ export default function Dashboard() {
         { data: stockItems },
         { data: soldFCRBatches },
         { data: gfLedger },
+        { data: farms },
       ] = await Promise.all([
         // Active batches (for count, chick total, table)
         supabase
@@ -214,6 +215,12 @@ export default function Dashboard() {
           .select('balance_due')
           .eq('organization_id', organization?.id)
           .in('status', ['pending', 'partial']),
+
+        // Total farm count
+        supabase
+          .from('farms')
+          .select('id')
+          .eq('organization_id', organization?.id),
       ])
 
       const monthRevenue  = (monthSales || []).reduce((s, r) => s + Number(r.total_amount || 0), 0)
@@ -271,6 +278,7 @@ export default function Dashboard() {
 
       setData({
         batches:        batches || [],
+        farmCount:      (farms || []).length,
         totalChicks,
         monthRevenue,
         totalOutstanding,
@@ -310,6 +318,14 @@ export default function Dashboard() {
 
       {/* Summary cards */}
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+        <StatCard
+          label="Total Farms"
+          value={loading ? '…' : data.farmCount}
+          sub={loading ? '' : data.farmCount === 1 ? '1 active farm' : `${data.farmCount} active farms`}
+          icon="🏡"
+          to="/farms"
+          loading={loading}
+        />
         <StatCard
           label={t('dashboard.activeBatches')}
           value={loading ? '…' : data.batches.length}

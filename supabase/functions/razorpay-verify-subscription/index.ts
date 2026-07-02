@@ -34,6 +34,7 @@ Deno.serve(async (req: Request) => {
       return json({ error: 'Missing verification fields' }, 400)
     }
 
+    const KEY_ID     = Deno.env.get('RAZORPAY_KEY_ID')
     const KEY_SECRET = Deno.env.get('RAZORPAY_KEY_SECRET')
     const SUPA_URL   = Deno.env.get('SUPABASE_URL')!
     const ANON       = Deno.env.get('SUPABASE_ANON_KEY')!
@@ -63,13 +64,30 @@ Deno.serve(async (req: Request) => {
       return json({ error: 'Subscription does not match this organisation.' }, 400)
     }
 
-    // 4. Activate the plan (trial starts now; first charge is deferred by Razorpay)
+    // 4. Fetch subscription from Razorpay to get trial end date (current_end)
+    let trialEndsAt: string | null = null
+    if (KEY_ID) {
+      try {
+        const rzpAuth = 'Basic ' + btoa(`${KEY_ID}:${KEY_SECRET}`)
+        const rzpRes  = await fetch(`https://api.razorpay.com/v1/subscriptions/${razorpay_subscription_id}`, {
+          headers: { Authorization: rzpAuth },
+        })
+        const rzpSub = await rzpRes.json()
+        // current_end is a UNIX timestamp — during trial it is the trial end date
+        if (rzpSub?.current_end && rzpSub.current_end > 0) {
+          trialEndsAt = new Date(rzpSub.current_end * 1000).toISOString()
+        }
+      } catch (_) { /* non-fatal — trial_ends_at just stays null */ }
+    }
+
+    // 5. Activate the plan (trial starts now; first charge is deferred by Razorpay)
     await admin.from('organizations').update({
       subscription_status:    'active',
       subscription_plan:      org.pending_plan || undefined,
       billing_period:         org.pending_billing_period || 'monthly',
       pending_plan:           null,
       pending_billing_period: null,
+      ...(trialEndsAt ? { trial_ends_at: trialEndsAt } : {}),
     }).eq('id', org.id)
 
     return json({ success: true })
