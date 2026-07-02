@@ -240,19 +240,30 @@ export default function BatchDetail() {
   const { t } = useTranslation()
   const { organization, user, userRole, canEdit, canDelete, canRecordOperations, canViewFinancials } = useAuth()
   const { currentStep, stepDone } = useOnboarding()
-  const canConfirmSales = ['owner', 'manager', 'accountant'].includes(userRole)
-  const SALE_STATUS_STYLE = { pending: 'bg-amber-100 text-amber-700', confirmed: 'bg-green-100 text-green-700', rejected: 'bg-red-100 text-red-700' }
-  const SALE_STATUS_LABEL = { pending: 'Pending', confirmed: 'Confirmed', rejected: 'Rejected' }
+  const canManageSales = ['owner', 'manager', 'accountant'].includes(userRole)
+  const SALE_STATUS_STYLE = { pending: 'bg-amber-100 text-amber-700', confirmed: 'bg-green-100 text-green-700' }
+  const SALE_STATUS_LABEL = { pending: 'Pending', confirmed: 'Confirmed' }
+  const [editingSale, setEditingSale] = useState(null)
   async function confirmSale(s) {
     const name = user?.user_metadata?.full_name || user?.email || null
     const { error } = await supabase.rpc('confirm_sale', { p_id: s.id, p_by_name: name })
     if (error) window.alert(error.message); else refresh()
   }
-  async function rejectSale(s) {
-    if (!window.confirm('Reject this sale? It will not count anywhere.')) return
-    const name = user?.user_metadata?.full_name || user?.email || null
-    const { error } = await supabase.rpc('reject_sale', { p_id: s.id, p_reason: null, p_by_name: name })
+  async function deleteSale(s) {
+    if (!window.confirm('Delete this sale? This cannot be undone.')) return
+    const { error } = await supabase.from('sales').delete().eq('id', s.id)
     if (error) window.alert(error.message); else refresh()
+  }
+  function openEditSale(s) {
+    setEditingSale(s)
+    setSaleForm({ vendor_id: s.vendor_id, chicken_count: String(s.chicken_count ?? ''), kg_sold: String(s.kg_sold ?? ''), price_per_kg: String(s.price_per_kg ?? ''), date: s.date, notes: s.notes ?? '' })
+    setActionError('')
+    setSaleModal(true)
+  }
+  function closeSaleModal() {
+    setSaleModal(false)
+    setEditingSale(null)
+    setSaleForm({ vendor_id: vendors[0]?.id || '', chicken_count: '', kg_sold: '', price_per_kg: '', date: new Date().toISOString().slice(0, 10), notes: '' })
   }
 
   const [farm,         setFarm]         = useState(null)
@@ -297,7 +308,7 @@ export default function BatchDetail() {
       supabase.from('farms').select('id, name, owner_name, owner_phone').eq('id', farmId).eq('organization_id', organization?.id).single(),
       supabase.from('batches').select('*').eq('id', batchId).eq('organization_id', organization?.id).single(),
       supabase.from('distributions').select('*, created_by_name, created_at, updated_by_name, updated_at').eq('batch_id', batchId).eq('organization_id', organization?.id).order('date', { ascending: true }),
-      supabase.from('sales').select('*, vendors(name), created_by_name, created_at, updated_by_name, updated_at').eq('batch_id', batchId).eq('organization_id', organization?.id).order('date', { ascending: true }),
+      supabase.from('sales').select('*, vendors(name), created_by_name, created_at, updated_by_name, updated_at, confirmed_by_name, confirmed_at').eq('batch_id', batchId).eq('organization_id', organization?.id).order('date', { ascending: true }),
       supabase.from('farm_expenses').select('*').eq('batch_id', batchId).eq('organization_id', organization?.id),
       supabase.from('batch_chick_purchases').select('id, quantity, price_per_chick, total_cost, source, notes').eq('batch_id', batchId).eq('organization_id', organization?.id).order('created_at'),
       supabase.from('vendors').select('id, name').eq('organization_id', organization?.id).order('name'),
@@ -334,7 +345,7 @@ export default function BatchDetail() {
     const [{ data: batchData }, { data: distData }, { data: salesData }, { data: expData }] = await Promise.all([
       supabase.from('batches').select('*').eq('id', batchId).eq('organization_id', organization?.id).single(),
       supabase.from('distributions').select('*, created_by_name, created_at, updated_by_name, updated_at').eq('batch_id', batchId).eq('organization_id', organization?.id).order('date', { ascending: true }),
-      supabase.from('sales').select('*, vendors(name), created_by_name, created_at, updated_by_name, updated_at').eq('batch_id', batchId).eq('organization_id', organization?.id).order('date', { ascending: true }),
+      supabase.from('sales').select('*, vendors(name), created_by_name, created_at, updated_by_name, updated_at, confirmed_by_name, confirmed_at').eq('batch_id', batchId).eq('organization_id', organization?.id).order('date', { ascending: true }),
       supabase.from('farm_expenses').select('*').eq('batch_id', batchId).eq('organization_id', organization?.id),
     ])
     // Fetch growing fee ledger separately (safe — won't break if migration not run yet)
@@ -569,31 +580,49 @@ export default function BatchDetail() {
     const count = parseInt(saleForm.chicken_count)
     if (!count || count <= 0) { setActionError('Enter number of chickens'); return }
     const live      = Math.max(0, Number(batch.chick_count || 0) - Number(batch.mortality_count || 0))
-    const soldSoFar = sales.filter(r => r.status !== 'rejected').reduce((s, r) => s + Number(r.chicken_count || 0), 0)
+    const soldSoFar = sales
+      .filter(r => r.status !== 'rejected' && (!editingSale || r.id !== editingSale.id))
+      .reduce((s, r) => s + Number(r.chicken_count || 0), 0)
     const available = Math.max(0, live - soldSoFar)
     if (count > available) {
       setActionError(`Only ${available.toLocaleString('en-IN')} birds available (${live.toLocaleString('en-IN')} live − ${soldSoFar.toLocaleString('en-IN')} already sold)`)
       return
     }
-    const kg    = parseFloat(saleForm.kg_sold)
-    const price = parseFloat(saleForm.price_per_kg)
-    setSaving(true)
+    const kg       = parseFloat(saleForm.kg_sold)
+    const price    = parseFloat(saleForm.price_per_kg)
     const userName = user?.user_metadata?.full_name || user?.email || 'Unknown'
-    const { error } = await supabase.from('sales').insert({
-      batch_id:        batchId,
-      vendor_id:       saleForm.vendor_id,
-      chicken_count:   count,
-      kg_sold:         kg,
-      price_per_kg:    price,
-      date:            saleForm.date,
-      organization_id: organization?.id,
-      created_by_id:   user?.id,
-      created_by_name: userName,
-    })
+    setSaving(true)
+    let error
+    if (editingSale) {
+      const { error: e } = await supabase.from('sales').update({
+        vendor_id:       saleForm.vendor_id,
+        chicken_count:   count,
+        kg_sold:         kg,
+        price_per_kg:    price,
+        date:            saleForm.date,
+        notes:           saleForm.notes?.trim() || null,
+        updated_by_id:   user?.id,
+        updated_by_name: userName,
+      }).eq('id', editingSale.id)
+      error = e
+    } else {
+      const { error: e } = await supabase.from('sales').insert({
+        batch_id:        batchId,
+        vendor_id:       saleForm.vendor_id,
+        chicken_count:   count,
+        kg_sold:         kg,
+        price_per_kg:    price,
+        date:            saleForm.date,
+        notes:           saleForm.notes?.trim() || null,
+        organization_id: organization?.id,
+        created_by_id:   user?.id,
+        created_by_name: userName,
+      })
+      error = e
+    }
     setSaving(false)
     if (error) { setActionError(error.message); return }
-    setSaleModal(false)
-    setSaleForm({ vendor_id: vendors[0]?.id || '', chicken_count: '', kg_sold: '', price_per_kg: '', date: new Date().toISOString().slice(0, 10) })
+    closeSaleModal()
     refresh()
   }
 
@@ -1012,16 +1041,20 @@ export default function BatchDetail() {
                       <span className={`inline-block rounded-full px-2.5 py-0.5 text-xs font-semibold ${SALE_STATUS_STYLE[s.status] || SALE_STATUS_STYLE.pending}`}>
                         {SALE_STATUS_LABEL[s.status] || s.status}
                       </span>
-                      {canConfirmSales && s.status === 'pending' && (
+                      {canManageSales && (
                         <div className="flex gap-1.5 justify-center mt-2">
-                          <button onClick={() => rejectSale(s)}
-                            className="rounded-md border border-red-200 px-2 py-1 text-[11px] font-semibold text-red-600 hover:bg-red-50 transition">Reject</button>
-                          <button onClick={() => confirmSale(s)}
-                            className="rounded-md bg-green-600 hover:bg-green-700 px-2 py-1 text-[11px] font-semibold text-white transition">Confirm</button>
+                          {s.status === 'pending' && (
+                            <button onClick={() => confirmSale(s)}
+                              className="rounded-md bg-green-600 hover:bg-green-700 px-2 py-1 text-[11px] font-semibold text-white transition">Confirm</button>
+                          )}
+                          <button onClick={() => openEditSale(s)}
+                            className="rounded-md border border-amber-300 px-2 py-1 text-[11px] font-semibold text-amber-700 hover:bg-amber-50 transition">Edit</button>
+                          <button onClick={() => deleteSale(s)}
+                            className="rounded-md border border-red-200 px-2 py-1 text-[11px] font-semibold text-red-600 hover:bg-red-50 transition">Delete</button>
                         </div>
                       )}
                     </td>
-                    <td className="px-4 py-3"><AuditInfo createdByName={s.created_by_name} createdAt={s.created_at} updatedByName={s.updated_by_name} updatedAt={s.updated_at} /></td>
+                    <td className="px-4 py-3"><AuditInfo createdByName={s.created_by_name} createdAt={s.created_at} updatedByName={s.updated_by_name} updatedAt={s.updated_at} confirmedByName={s.confirmed_by_name} confirmedAt={s.confirmed_at} /></td>
                   </tr>
                 ))}
               </tbody>
@@ -1368,8 +1401,8 @@ export default function BatchDetail() {
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
         <div className="w-full max-w-2xl bg-white rounded-2xl shadow-xl p-6">
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-base font-semibold text-gray-800">{t('batches.recordSaleTitle')}</h2>
-            <button onClick={() => setSaleModal(false)} className="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
+            <h2 className="text-base font-semibold text-gray-800">{editingSale ? 'Edit Sale' : t('batches.recordSaleTitle')}</h2>
+            <button onClick={closeSaleModal} className="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
           </div>
           <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-xs text-amber-800 mb-4">
             {t('batches.title')} {fmtDate(batch.start_date)} · {Number(batch.chick_count).toLocaleString('en-IN')} chicks
@@ -1439,11 +1472,11 @@ export default function BatchDetail() {
             </div>
             {actionError && <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{actionError}</p>}
             <div className="flex gap-3 pt-1">
-              <button type="button" onClick={() => setSaleModal(false)}
+              <button type="button" onClick={closeSaleModal}
                 className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition">{t('common.cancel')}</button>
               <button type="submit" disabled={saving || vendors.length === 0}
                 className="flex-1 rounded-lg bg-amber-500 hover:bg-amber-600 disabled:opacity-60 px-4 py-2 text-sm font-semibold text-white transition">
-                {saving ? t('batches.saving') : t('batches.saveSale')}
+                {saving ? t('batches.saving') : editingSale ? 'Save Changes' : t('batches.saveSale')}
               </button>
             </div>
           </form>

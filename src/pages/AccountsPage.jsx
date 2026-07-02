@@ -380,6 +380,7 @@ export default function AccountsPage() {
   ]
   const [accounts,     setAccounts]     = useState([])
   const [transactions, setTransactions] = useState([])
+  const [ccAuditMap,   setCcAuditMap]   = useState({})
   const [loading,      setLoading]      = useState(true)
   const [addAccModal,    setAddAccModal]    = useState(false)
   const [manualModal,    setManualModal]    = useState(false)
@@ -399,7 +400,18 @@ export default function AccountsPage() {
       supabase.from('transactions').select('*, created_by_name, created_at, updated_by_name, updated_at').eq('organization_id', organization.id).order('transaction_date', { ascending: false }),
     ])
     setAccounts(accs || [])
-    setTransactions(txns || [])
+    const txnList = txns || []
+    setTransactions(txnList)
+
+    const ccIds = [...new Set(txnList.filter(t => t.reference_type === 'cash_collection' && t.reference_id).map(t => t.reference_id))]
+    if (ccIds.length) {
+      const { data: ccRows } = await supabase.from('cash_collection')
+        .select('id, collected_by_name, created_at, updated_by_name, updated_at, verified_by_name, verified_at')
+        .in('id', ccIds)
+      const map = {}
+      for (const cc of ccRows || []) map[cc.id] = cc
+      setCcAuditMap(map)
+    }
     setLoading(false)
   }
 
@@ -588,7 +600,12 @@ export default function AccountsPage() {
                       {txn.transaction_type === 'in' ? '▲ ' : '▼ '}{formatCurrency(txn.amount)}
                     </td>
                     <td className="px-5 py-3.5">
-                      <AuditInfo createdByName={txn.created_by_name} createdAt={txn.created_at} updatedByName={txn.updated_by_name} updatedAt={txn.updated_at} />
+                      {(() => {
+                        const cc = txn.reference_type === 'cash_collection' ? ccAuditMap[txn.reference_id] : null
+                        return cc
+                          ? <AuditInfo createdByName={cc.collected_by_name} createdAt={cc.created_at} updatedByName={cc.updated_by_name} updatedAt={cc.updated_at} confirmedByName={cc.verified_by_name} confirmedAt={cc.verified_at} />
+                          : <AuditInfo createdByName={txn.created_by_name} createdAt={txn.created_at} updatedByName={txn.updated_by_name} updatedAt={txn.updated_at} />
+                      })()}
                     </td>
                   </tr>
                 ))}

@@ -10,7 +10,11 @@ function fmt(iso) {
   })
 }
 
-export default function AuditInfo({ createdByName, createdAt, updatedByName, updatedAt }) {
+export default function AuditInfo({
+  createdByName, createdAt,
+  updatedByName, updatedAt,
+  confirmedByName, confirmedAt,
+}) {
   const { t } = useTranslation()
   const [show, setShow] = useState(false)
 
@@ -32,7 +36,7 @@ export default function AuditInfo({ createdByName, createdAt, updatedByName, upd
       </button>
 
       {show && (
-        <div className="absolute z-50 right-6 top-1/2 -translate-y-1/2 w-52
+        <div className="absolute z-50 right-6 top-1/2 -translate-y-1/2 w-56
                         bg-gray-900 text-white text-xs rounded-lg shadow-xl px-3 py-2.5
                         pointer-events-none">
           <div className="space-y-1.5">
@@ -46,6 +50,13 @@ export default function AuditInfo({ createdByName, createdAt, updatedByName, upd
                 <p className="text-gray-400">{t('audit.updatedBy')}</p>
                 <p className="font-medium">{updatedByName}</p>
                 <p className="text-gray-400">{fmt(updatedAt)}</p>
+              </div>
+            )}
+            {confirmedByName && (
+              <div className="border-t border-gray-700 pt-1.5">
+                <p className="text-green-400">Confirmed by</p>
+                <p className="font-medium">{confirmedByName}</p>
+                <p className="text-gray-400">{fmt(confirmedAt)}</p>
               </div>
             )}
           </div>

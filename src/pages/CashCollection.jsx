@@ -8,6 +8,7 @@ import { useAuth } from '../contexts/AuthContext'
 import AttachmentUploader from '../components/AttachmentUploader'
 import AttachmentViewer from '../components/AttachmentViewer'
 import { uploadAttachments, attachmentsByEntity } from '../lib/attachments'
+import AuditInfo from '../components/AuditInfo'
 
 const METHODS = [
   { k: 'cash',   label: '💵 Cash' },
@@ -25,8 +26,9 @@ function CollectionModal({ editItem, onClose, onSaved }) {
   const { organization, user } = useAuth()
   const userName = user?.user_metadata?.full_name || user?.email || 'Unknown'
   const isEdit = !!editItem
-  const [vendors, setVendors] = useState([])
-  const [sales, setSales]     = useState([])
+  const [vendors, setVendors]           = useState([])
+  const [sales, setSales]               = useState([])
+  const [vendorBalance, setVendorBalance] = useState(null)
   const [form, setForm] = useState(editItem ? {
     vendor_id: editItem.vendor_id || '', sale_id: editItem.sale_id || '',
     amount_paid: String(editItem.amount_paid ?? ''), method: editItem.method || 'cash',
@@ -42,10 +44,13 @@ function CollectionModal({ editItem, onClose, onSaved }) {
   }, [])
 
   useEffect(() => {
-    if (!form.vendor_id) { setSales([]); return }
+    if (!form.vendor_id) { setSales([]); setVendorBalance(null); return }
     supabase.from('sales').select('id, date, total_amount').eq('organization_id', organization.id)
       .eq('vendor_id', form.vendor_id).order('date', { ascending: false })
       .then(({ data }) => setSales(data || []))
+    supabase.from('vendor_balances').select('total_sales, total_collected, outstanding_balance')
+      .eq('organization_id', organization.id).eq('vendor_id', form.vendor_id).maybeSingle()
+      .then(({ data }) => setVendorBalance(data))
   }, [form.vendor_id])
 
   function set(field) { return e => setForm(p => ({ ...p, [field]: e.target.value })) }
@@ -110,6 +115,36 @@ function CollectionModal({ editItem, onClose, onSaved }) {
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Paid by (vendor) *</label>
+            <select required value={form.vendor_id} onChange={set('vendor_id')}
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-amber-400">
+              <option value="">— select vendor —</option>
+              {vendors.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
+            </select>
+          </div>
+
+          {vendorBalance !== null && (
+            <div className={`rounded-lg border px-4 py-3 flex items-center justify-between gap-3 ${
+              Number(vendorBalance.outstanding_balance) > 0
+                ? 'bg-red-50 border-red-200'
+                : 'bg-green-50 border-green-200'
+            }`}>
+              <div>
+                <p className={`text-xs font-semibold uppercase tracking-wide ${Number(vendorBalance.outstanding_balance) > 0 ? 'text-red-500' : 'text-green-600'}`}>
+                  Receivable (outstanding)
+                </p>
+                <p className={`text-xl font-bold mt-0.5 ${Number(vendorBalance.outstanding_balance) > 0 ? 'text-red-700' : 'text-green-700'}`}>
+                  {formatCurrency(Number(vendorBalance.outstanding_balance))}
+                </p>
+              </div>
+              <div className="text-right text-xs text-gray-500 space-y-0.5">
+                <p>Total sales: <span className="font-semibold text-gray-700">{formatCurrency(Number(vendorBalance.total_sales))}</span></p>
+                <p>Collected: <span className="font-semibold text-gray-700">{formatCurrency(Number(vendorBalance.total_collected))}</span></p>
+              </div>
+            </div>
+          )}
+
+          <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">{t('cashCollection.amountPaid')} (₹) *</label>
             <input required type="number" min="0.01" step="0.01" value={form.amount_paid} onChange={set('amount_paid')}
               placeholder="e.g. 5000"
@@ -127,15 +162,6 @@ function CollectionModal({ editItem, onClose, onSaved }) {
                 </button>
               ))}
             </div>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Paid by (vendor) *</label>
-            <select required value={form.vendor_id} onChange={set('vendor_id')}
-              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-amber-400">
-              <option value="">— select vendor —</option>
-              {vendors.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
-            </select>
           </div>
 
           {sales.length > 0 && (
@@ -245,7 +271,14 @@ function CollectionCard({ item, files, showCollector, showActions, canEdit, onVi
       <p className="text-sm font-medium text-gray-700 mt-1.5">{item.vendors?.name || '—'}</p>
       <div className="flex items-center justify-between mt-1 text-xs text-gray-400">
         <span className="capitalize">{item.method || 'cash'} · {formatDate(item.date, i18n.language)}{files?.length ? ` · 📎${files.length}` : ''}</span>
-        {showCollector && <span>by {item.collected_by_name || '—'}</span>}
+        <div className="flex items-center gap-1.5">
+          {showCollector && <span>by {item.collected_by_name || '—'}</span>}
+          <AuditInfo
+            createdByName={item.created_by_name} createdAt={item.created_at}
+            updatedByName={item.updated_by_name} updatedAt={item.updated_at}
+            confirmedByName={item.verified_by_name} confirmedAt={item.verified_at}
+          />
+        </div>
       </div>
       {canEdit && item.status === 'pending' && (
         <div className="mt-3" onClick={e => e.stopPropagation()}>
@@ -289,7 +322,7 @@ export default function CashCollection() {
   async function fetchData() {
     setLoading(true)
     const { data: mineData } = await supabase.from('cash_collection')
-      .select('*, vendors(name)').eq('organization_id', organization.id)
+      .select('*, vendors(name), created_by_name, created_at, updated_by_name, updated_at, verified_by_name, verified_at, collected_by_name').eq('organization_id', organization.id)
       .eq('collected_by_id', myId).order('created_at', { ascending: false }).limit(200)
     const mineRows = mineData || []
     setMine(mineRows)
@@ -297,7 +330,7 @@ export default function CashCollection() {
     let queueRows = []
     if (canVerify) {
       const { data } = await supabase.from('cash_collection')
-        .select('*, vendors(name)').eq('organization_id', organization.id)
+        .select('*, vendors(name), created_by_name, created_at, updated_by_name, updated_at, verified_by_name, verified_at, collected_by_name').eq('organization_id', organization.id)
         .eq('status', 'pending').order('created_at', { ascending: true })
       queueRows = data || []
       setQueue(queueRows)
@@ -475,6 +508,8 @@ export default function CashCollection() {
               <div><span className="text-gray-400 text-xs block">Status</span>{STATUS_LABEL[viewItem.status] || viewItem.status}</div>
               <div><span className="text-gray-400 text-xs block">{t('common.date')}</span>{formatDate(viewItem.date, i18n.language)}</div>
               <div><span className="text-gray-400 text-xs block">Collected by</span>{viewItem.collected_by_name || '—'}</div>
+              {viewItem.updated_by_name && <div><span className="text-gray-400 text-xs block">Edited by</span>{viewItem.updated_by_name}</div>}
+              {viewItem.verified_by_name && <div><span className="text-gray-400 text-xs block">Verified by</span>{viewItem.verified_by_name}</div>}
               {viewItem.notes && <div className="col-span-2"><span className="text-gray-400 text-xs block">{t('common.notes')}</span>{viewItem.notes}</div>}
             </div>
           }
