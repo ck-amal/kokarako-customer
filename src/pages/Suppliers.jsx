@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { supabase } from '../lib/supabaseClient'
 import { formatCurrency } from '../utils/format'
 import { useAuth } from '../contexts/AuthContext'
+import { useOnboarding } from '../contexts/OnboardingContext'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -431,6 +432,7 @@ export default function Suppliers() {
   const navigate = useNavigate()
   const { organization, canViewFinancials, canEdit, canDelete } = useAuth()
   const { t } = useTranslation()
+  const { currentStep, stepDone } = useOnboarding()
   const [suppliers, setSuppliers]         = useState([])
   const [loading, setLoading]             = useState(true)
   const [addModal, setAddModal]           = useState(false)
@@ -501,6 +503,7 @@ export default function Suppliers() {
               💳 {t('suppliers.recordPayment')}
             </button>
             <button
+              data-tour="suppliers"
               onClick={() => setAddModal(true)}
               className="inline-flex items-center gap-2 rounded-lg bg-amber-500 hover:bg-amber-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition"
             >
@@ -562,7 +565,7 @@ export default function Suppliers() {
       {addModal && (
         <SupplierModal
           onClose={() => setAddModal(false)}
-          onSaved={() => { setAddModal(false); fetchData() }}
+          onSaved={() => { setAddModal(false); fetchData(); if (currentStep?.id === 'suppliers') stepDone('suppliers') }}
         />
       )}
       {editSupplier && (

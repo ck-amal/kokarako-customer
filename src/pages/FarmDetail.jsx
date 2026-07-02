@@ -2,7 +2,8 @@ import { useEffect, useState, useRef } from 'react'
 import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { supabase } from '../lib/supabaseClient'
-import { ledgerIn, ledgerOut, getChickBalance, getAverageCostPerUnit } from '../lib/stockLedger'
+import { ledgerIn, ledgerOut, getAverageCostPerUnit } from '../lib/stockLedger'
+import NewBatchModal from '../components/NewBatchModal'
 import { formatCurrency, roundCurrency } from '../utils/format'
 import { formatDate } from '../utils/dateFormat'
 import StockReturnModal from '../components/StockReturnModal'
@@ -252,268 +253,6 @@ function EditBatchModal({ batch, onClose, onSaved }) {
   )
 }
 
-// ─── New Batch Modal ──────────────────────────────────────────────────────────
-
-function NewBatchModal({ farmId, onClose, onSaved }) {
-  const { organization, user } = useAuth()
-  const { t, i18n } = useTranslation()
-  const [form, setForm] = useState({
-    chick_count: '',
-    start_date:  new Date().toISOString().slice(0, 10),
-  })
-  const [pricePerChick, setPricePerChick] = useState('')
-  const [supplierId,    setSupplierId]    = useState('')
-  const [payNow,        setPayNow]        = useState(false)
-  const [accountId,     setAccountId]     = useState('')
-
-  const [chickBalance,  setChickBalance]  = useState(null)
-  const [capacity,      setCapacity]      = useState(null)
-  const [liveChicks,    setLiveChicks]    = useState(0)
-  const [suppliers,     setSuppliers]     = useState([])
-  const [accounts,      setAccounts]      = useState([])
-  const [saving,        setSaving]        = useState(false)
-  const [error,         setError]         = useState('')
-
-  useEffect(() => {
-    async function load() {
-      const [{ data: farm }, { data: activeBatches }, balance, { data: sups }, { data: accs }] = await Promise.all([
-        supabase.from('farms').select('capacity').eq('id', farmId).eq('organization_id', organization?.id).single(),
-        supabase.from('batches').select('chick_count, mortality_count').eq('farm_id', farmId).eq('organization_id', organization?.id).eq('status', 'active'),
-        getChickBalance(organization?.id),
-        supabase.from('suppliers').select('id, name').eq('is_active', true).eq('organization_id', organization?.id).order('name'),
-        supabase.from('accounts').select('id, name, type').eq('is_active', true).eq('organization_id', organization?.id).order('name'),
-      ])
-      setCapacity(farm?.capacity ?? null)
-      setLiveChicks((activeBatches || []).reduce(
-        (s, b) => s + Math.max(0, Number(b.chick_count || 0) - Number(b.mortality_count || 0)), 0
-      ))
-      setChickBalance(balance)
-      setSuppliers(sups || [])
-      const accList = accs || []
-      setAccounts(accList)
-      const cash = accList.find(a => a.type === 'cash')
-      if (cash) setAccountId(cash.id)
-    }
-    load()
-  }, [farmId])
-
-  const remaining     = capacity != null ? Math.max(0, capacity - liveChicks) : null
-  const chickCount    = Number(form.chick_count) || 0
-  const needsPurchase = chickBalance !== null && chickCount > 0 && chickBalance < chickCount
-  const totalCost     = needsPurchase ? roundCurrency(chickCount * (parseFloat(pricePerChick) || 0)) : 0
-
-  function set(f) { return e => setForm(p => ({ ...p, [f]: e.target.value })) }
-
-  const inputCls = "w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
-
-  async function handleSubmit(e) {
-    e.preventDefault()
-    setError('')
-    if (remaining !== null && chickCount > remaining) {
-      setError(`Exceeds remaining capacity. Only ${remaining.toLocaleString('en-IN')} spots available.`)
-      return
-    }
-    if (needsPurchase && !pricePerChick) {
-      setError('Enter price per chick to record the purchase')
-      return
-    }
-    if (needsPurchase && !supplierId) {
-      setError('Select a supplier — required to track chick cost as a liability or payment')
-      return
-    }
-    setSaving(true)
-    const userName = user?.user_metadata?.full_name || user?.email || 'Unknown'
-
-    // Create batch first so we can link the chick procurement to it via batch_id
-    const { data: inserted, error: batchErr } = await supabase.from('batches').insert({
-      organization_id: organization?.id,
-      farm_id:         farmId,
-      chick_count:     chickCount,
-      start_date:      form.start_date,
-      status:          'active',
-      created_by_id:   user?.id,
-      created_by_name: userName,
-    }).select('id').single()
-
-    if (batchErr) { setError(batchErr.message); setSaving(false); return }
-
-    if (needsPurchase) {
-      const price = parseFloat(pricePerChick)
-      const { data: proc, error: procErr } = await supabase.from('procurement').insert({
-        organization_id: organization?.id,
-        type:            'chicks',
-        item_name:       'Chicks',
-        batch_id:        inserted.id,
-        quantity:        chickCount,
-        unit:            'birds',
-        cost:            totalCost,
-        cost_per_unit:   price,
-        supplier_id:     supplierId || null,
-        date:            form.start_date,
-        notes:           'Auto-recorded on batch creation',
-        created_by_id:   user?.id,
-        created_by_name: userName,
-      }).select('id').single()
-
-      if (procErr) { setError(procErr.message); setSaving(false); return }
-
-      await ledgerIn({
-        itemName:       'Chicks',
-        itemType:       'chicks',
-        quantity:       chickCount,
-        unit:           'birds',
-        referenceType:  'procurement',
-        referenceId:    proc.id,
-        date:           form.start_date,
-        organizationId: organization?.id,
-      })
-
-      if (payNow && accountId) {
-        await supabase.from('transactions').insert({
-          organization_id:  organization?.id,
-          account_id:       accountId,
-          transaction_type: 'out',
-          category:         'procurement',
-          description:      `Chick purchase — ${chickCount.toLocaleString('en-IN')} birds`,
-          amount:           totalCost,
-          transaction_date: form.start_date,
-          reference_type:   'procurement',
-          reference_id:     proc.id,
-        })
-      }
-    }
-
-    await ledgerOut({
-      itemName:       'Chicks',
-      itemType:       'chicks',
-      quantity:       chickCount,
-      unit:           'birds',
-      referenceType:  'batch',
-      referenceId:    inserted.id,
-      date:           form.start_date,
-      organizationId: organization?.id,
-    })
-
-    onSaved()
-  }
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
-      <div className="w-full max-w-md bg-white rounded-2xl shadow-xl p-6 max-h-[90vh] overflow-y-auto">
-        <div className="flex items-center justify-between mb-5">
-          <h2 className="text-lg font-semibold text-gray-800">{t('batches.startBatch')}</h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
-        </div>
-        <form onSubmit={handleSubmit} className="space-y-4">
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">{t('batches.chickCount')} *</label>
-            <input required type="number" min="1" value={form.chick_count} onChange={set('chick_count')}
-              placeholder="e.g. 2000" className={inputCls} />
-            {/* Stock availability */}
-            {chickBalance !== null && chickCount > 0 && (
-              <p className={`text-xs mt-1 font-medium ${
-                chickBalance === 0 ? 'text-red-600'
-                : chickCount > chickBalance ? 'text-orange-600'
-                : 'text-green-600'
-              }`}>
-                {chickBalance === 0
-                  ? '⚠ No chicks in stock — purchase details required below'
-                  : chickCount > chickBalance
-                  ? `⚠ Only ${chickBalance.toLocaleString('en-IN')} in stock — ${(chickCount - chickBalance).toLocaleString('en-IN')} will be purchased`
-                  : `✓ ${chickBalance.toLocaleString('en-IN')} chicks available in stock`}
-              </p>
-            )}
-            {remaining !== null && (
-              <p className={`text-xs mt-1 font-medium ${remaining === 0 ? 'text-red-500' : 'text-gray-400'}`}>
-                {remaining === 0
-                  ? '⚠ Farm is at full capacity'
-                  : `Farm capacity remaining: ${remaining.toLocaleString('en-IN')} birds`}
-              </p>
-            )}
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">{t('batches.startDate')} *</label>
-            <input required type="date" value={form.start_date} onChange={set('start_date')} className={inputCls} />
-          </div>
-
-          {/* Purchase section */}
-          {needsPurchase && (
-            <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-4 space-y-3">
-              <p className="text-xs font-semibold text-amber-800 uppercase tracking-wide">Chick Purchase Details</p>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Price per Chick (₹) *</label>
-                  <input
-                    required={needsPurchase} type="number" min="0.01" step="0.01"
-                    value={pricePerChick} onChange={e => setPricePerChick(e.target.value)}
-                    placeholder="e.g. 28.50" className={inputCls} />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">{t('procurement.totalCost')}</label>
-                  <div className="flex items-center h-[38px] rounded-lg bg-white border border-gray-200 px-3 text-sm font-semibold text-amber-700">
-                    {totalCost > 0 ? formatCurrency(totalCost) : '—'}
-                  </div>
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">{t('procurement.supplier')} <span className="text-gray-400 font-normal">(optional)</span></label>
-                <select value={supplierId} onChange={e => setSupplierId(e.target.value)} className={inputCls + ' bg-white'}>
-                  <option value="">— select supplier —</option>
-                  {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                </select>
-              </div>
-
-              <div className="rounded-lg bg-white border border-amber-100 px-3 py-3">
-                <label className="flex items-center gap-3 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={payNow}
-                    onChange={e => setPayNow(e.target.checked)}
-                    className="h-4 w-4 rounded border-gray-300 accent-amber-500"
-                  />
-                  <div>
-                    <span className="text-sm font-medium text-gray-700">Pay now</span>
-                    <p className="text-xs text-gray-400 mt-0.5">
-                      {payNow
-                        ? 'Cash will be deducted from the selected account'
-                        : 'Amount will be added to Supplier Dues (liability)'}
-                    </p>
-                  </div>
-                </label>
-                {payNow && accounts.length > 0 && (
-                  <select
-                    value={accountId}
-                    onChange={e => setAccountId(e.target.value)}
-                    className={inputCls + ' bg-white mt-3'}
-                  >
-                    <option value="">— select account —</option>
-                    {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
-                  </select>
-                )}
-              </div>
-            </div>
-          )}
-
-          {error && <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</p>}
-
-          <div className="flex gap-3 pt-1">
-            <button type="button" onClick={onClose}
-              className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition">{t('common.cancel')}</button>
-            <button type="submit" disabled={saving || chickBalance === null}
-              className="flex-1 rounded-lg bg-amber-500 hover:bg-amber-600 disabled:opacity-60 px-4 py-2 text-sm font-semibold text-white transition">
-              {saving ? t('common.loading') : chickBalance === null ? t('common.loading') : t('batches.startBatch')}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
-  )
-}
-
 // ─── Distribution Modal ───────────────────────────────────────────────────────
 
 function DistributionModal({ farmId, stock, onClose, onSaved }) {
@@ -527,10 +266,11 @@ function DistributionModal({ farmId, stock, onClose, onSaved }) {
   const [catalogItems,    setCatalogItems]    = useState([])
   const [form, setForm] = useState({
     item_id:  '',
-    quantity: '',
     date:     new Date().toISOString().slice(0, 10),
     notes:    '',
   })
+  const [canonCount, setCanonCount] = useState('')
+  const [subCount,   setSubCount]   = useState('')
   const [saving, setSaving] = useState(false)
   const [error,  setError]  = useState('')
 
@@ -565,7 +305,7 @@ function DistributionModal({ farmId, stock, onClose, onSaved }) {
   useEffect(() => {
     if (!typeId) { setCatalogItems([]); return }
     supabase.from('items')
-      .select('id, name, unit')
+      .select('id, name, unit, kg_per_unit, ml_per_unit')
       .eq('item_type_id', typeId)
       .eq('is_active', true)
       .eq('organization_id', organization?.id)
@@ -574,8 +314,14 @@ function DistributionModal({ farmId, stock, onClose, onSaved }) {
         const items = data || []
         setCatalogItems(items)
         setForm(p => ({ ...p, item_id: items.length ? items[0].id : '' }))
+        setCanonCount(''); setSubCount('')
       })
   }, [typeId])
+
+  // Reset counts when item changes
+  useEffect(() => {
+    setCanonCount(''); setSubCount('')
+  }, [form.item_id])
 
   function set(f) { return e => setForm(p => ({ ...p, [f]: e.target.value })) }
 
@@ -587,14 +333,32 @@ function DistributionModal({ farmId, stock, onClose, onSaved }) {
   const hasNoBatches   = !batchesLoading && activeBatches.length === 0
   const formDisabled   = hasNoBatches
 
+  const isBag      = selectedItem?.unit === 'Bag'    && Number(selectedItem?.kg_per_unit) > 0
+  const isBottle   = selectedItem?.unit === 'Bottle' && Number(selectedItem?.ml_per_unit) > 0
+  const hasSubUnit = isBag || isBottle
+  const subLabel   = isBag ? 'KG' : isBottle ? 'ml' : ''
+  const canonLabel = selectedItem?.unit ?? 'units'
+  const factor     = isBag ? Number(selectedItem.kg_per_unit) : isBottle ? Number(selectedItem.ml_per_unit) : 1
+  const canonicalQty = hasSubUnit
+    ? (parseFloat(canonCount) || 0) + (parseFloat(subCount) || 0) / factor
+    : (parseFloat(canonCount) || 0)
+
   async function handleSubmit(e) {
     e.preventDefault()
     if (!batchId && activeBatches.length > 0) { setError('Select a batch'); return }
     if (!form.item_id || !selectedItem) { setError('Select a stock item'); return }
-    const qty = parseFloat(form.quantity)
+    const availableQty = selectedStock ? Number(selectedStock.quantity) : 0
+    if (availableQty <= 0) {
+      setError(`${selectedItem.name} is out of stock — add stock before distributing`)
+      return
+    }
+    const qty = canonicalQty
     if (!qty || qty <= 0) { setError('Enter a valid quantity'); return }
-    if (selectedStock && qty > Number(selectedStock.quantity)) {
-      setError(`Only ${Number(selectedStock.quantity).toLocaleString('en-IN')} ${selectedStock.unit} available in stock`)
+    if (qty > availableQty) {
+      const availSub = hasSubUnit
+        ? ` (${(availableQty * factor).toLocaleString('en-IN', { maximumFractionDigits: 1 })} ${subLabel})`
+        : ''
+      setError(`Only ${availableQty.toLocaleString('en-IN')} ${canonLabel}${availSub} available in stock`)
       return
     }
 
@@ -737,28 +501,78 @@ function DistributionModal({ farmId, stock, onClose, onSaved }) {
                 {catalogItems.length === 0 ? (
                   <p className="text-sm text-gray-400 py-1">No items for this type.</p>
                 ) : (
-                  <select value={form.item_id} onChange={set('item_id')}
-                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400">
-                    {catalogItems.map(item => {
-                      const s = stock.find(st => st.item_name.toLowerCase() === item.name.toLowerCase())
-                      const qty = s ? Number(s.quantity).toLocaleString('en-IN') + ' ' + s.unit + ' available' : 'not in stock'
-                      return (
-                        <option key={item.id} value={item.id}>
-                          {item.name} — {qty}
-                        </option>
-                      )
-                    })}
-                  </select>
+                  <>
+                    <select value={form.item_id} onChange={set('item_id')}
+                      className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400">
+                      {catalogItems.map(item => {
+                        const s = stock.find(st => st.item_name.toLowerCase() === item.name.toLowerCase())
+                        const qty = s ? Number(s.quantity).toLocaleString('en-IN') + ' ' + s.unit + ' available' : 'out of stock'
+                        return (
+                          <option key={item.id} value={item.id}>
+                            {item.name} — {qty}
+                          </option>
+                        )
+                      })}
+                    </select>
+                    {selectedItem && !selectedStock && (
+                      <div className="mt-1.5 flex items-center gap-2 rounded-lg bg-red-50 border border-red-200 px-3 py-2">
+                        <span className="text-red-500 text-sm">✕</span>
+                        <p className="text-xs font-medium text-red-700">
+                          {selectedItem.name} is out of stock — add stock before distributing
+                        </p>
+                      </div>
+                    )}
+                    {selectedItem && selectedStock && (
+                      <p className="text-xs mt-1.5 font-medium text-green-600">
+                        ✓ {Number(selectedStock.quantity).toLocaleString('en-IN')} {selectedStock.unit} available
+                      </p>
+                    )}
+                  </>
                 )}
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Quantity ({selectedStock?.unit ?? 'units'}) *
-                </label>
-                <input required type="number" min="0.01" step="0.01" value={form.quantity} onChange={set('quantity')}
-                  placeholder="e.g. 100"
-                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400" />
+                <label className="block text-sm font-medium text-gray-700 mb-1">Quantity *</label>
+                {hasSubUnit ? (
+                  <>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="relative">
+                        <input
+                          type="number" min="0" step="1"
+                          value={canonCount} onChange={e => setCanonCount(e.target.value)}
+                          placeholder="0"
+                          className="w-full rounded-lg border border-gray-300 px-3 py-2 pr-12 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
+                        />
+                        <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-medium text-gray-400 pointer-events-none">{canonLabel}</span>
+                      </div>
+                      <div className="relative">
+                        <input
+                          type="number" min="0" step="any"
+                          value={subCount} onChange={e => setSubCount(e.target.value)}
+                          placeholder="0"
+                          className="w-full rounded-lg border border-gray-300 px-3 py-2 pr-10 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
+                        />
+                        <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-medium text-gray-400 pointer-events-none">{subLabel}</span>
+                      </div>
+                    </div>
+                    {canonicalQty > 0 && (
+                      <p className="text-xs mt-1.5 text-gray-500">
+                        = {canonicalQty.toLocaleString('en-IN', { maximumFractionDigits: 3 })} {canonLabel}
+                        {' '}({(canonicalQty * factor).toLocaleString('en-IN', { maximumFractionDigits: 1 })} {subLabel})
+                      </p>
+                    )}
+                  </>
+                ) : (
+                  <div className="relative">
+                    <input
+                      required type="number" min="0.01" step="0.01"
+                      value={canonCount} onChange={e => setCanonCount(e.target.value)}
+                      placeholder="e.g. 100"
+                      className="w-full rounded-lg border border-gray-300 px-3 py-2 pr-14 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
+                    />
+                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-medium text-gray-400 pointer-events-none">{canonLabel}</span>
+                  </div>
+                )}
               </div>
 
               <div>

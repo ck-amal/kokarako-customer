@@ -1,6 +1,10 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { DesktopSidebar, MobileHeader } from './components/Sidebar'
 import ProtectedRoute from './components/ProtectedRoute'
+import { OnboardingProvider } from './contexts/OnboardingContext'
+import WelcomeModal from './components/WelcomeModal'
+import TourSpotlight from './components/TourSpotlight'
+import TourGuide from './components/TourGuide'
 
 // Public pages
 import Login        from './pages/Login'
@@ -31,8 +35,6 @@ import PLReport        from './pages/PLReport'
 import FCRReport       from './pages/FCRReport'
 import GrowingFees         from './pages/GrowingFees'
 import GrowingFeeSettings  from './pages/GrowingFeeSettings'
-import TeamSettings        from './pages/TeamSettings'
-import OrgSettings         from './pages/OrgSettings'
 import Profile             from './pages/Profile'
 
 import './index.css'
@@ -54,7 +56,12 @@ function AppLayout({ children }) {
 function P({ children }) {
   return (
     <ProtectedRoute>
-      <AppLayout>{children}</AppLayout>
+      <OnboardingProvider>
+        <AppLayout>{children}</AppLayout>
+        <WelcomeModal />
+        <TourSpotlight />
+        <TourGuide />
+      </OnboardingProvider>
     </ProtectedRoute>
   )
 }
@@ -95,9 +102,9 @@ export default function App() {
         {/* Settings */}
         <Route path="/settings/catalog"      element={<P><CatalogSettings /></P>} />
         <Route path="/settings/growing-fee"  element={<P><GrowingFeeSettings /></P>} />
-        <Route path="/settings/team"         element={<P><TeamSettings /></P>} />
-        <Route path="/settings/organization" element={<P><OrgSettings /></P>} />
         <Route path="/settings/profile"      element={<P><Profile /></P>} />
+        <Route path="/settings/organization" element={<Navigate to="/settings/profile?tab=org" replace />} />
+        <Route path="/settings/team"         element={<Navigate to="/settings/profile?tab=team" replace />} />
 
         {/* Default redirect */}
         <Route path="*" element={<Navigate to="/dashboard" replace />} />

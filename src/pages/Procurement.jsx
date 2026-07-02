@@ -6,6 +6,7 @@ import { ledgerIn } from '../lib/stockLedger'
 import { formatCurrency, roundCurrency } from '../utils/format'
 import { formatDate } from '../utils/dateFormat'
 import { useAuth } from '../contexts/AuthContext'
+import { useOnboarding } from '../contexts/OnboardingContext'
 import AuditInfo from '../components/AuditInfo'
 import AttachmentUploader from '../components/AttachmentUploader'
 import { uploadAttachments, attachmentsByEntity } from '../lib/attachments'
@@ -104,12 +105,12 @@ function ProcurementModal({ onClose, onSaved }) {
   const [error, setError] = useState('')
   const [pendingFiles, setPendingFiles] = useState([])
 
-  // Fetch active catalog items for a given type
+  // Fetch active catalog items for a given type (includes kg/ml per unit)
   async function fetchItems(typeId) {
     if (!typeId) return []
     const { data } = await supabase
       .from('items')
-      .select('id, name, unit, item_type_id')
+      .select('id, name, unit, item_type_id, kg_per_unit, ml_per_unit')
       .eq('item_type_id', typeId)
       .eq('is_active', true)
       .order('name')
@@ -187,6 +188,74 @@ function ProcurementModal({ onClose, onSaved }) {
   }
 
   const grandTotal = lines.reduce((s, ln) => s + (parseFloat(ln.cost) || 0), 0)
+
+  // ── kg/ml per unit inline editing ─────────────────────────────────────────
+  // kgMlState[i] = { editing: bool, draft: string, saving: bool, error: string }
+  const [kgMlState, setKgMlState] = useState({})
+
+  function kgMlOf(i) {
+    return kgMlState[i] || { editing: false, draft: '', saving: false, error: '' }
+  }
+  function setKgMl(i, patch) {
+    setKgMlState(prev => ({ ...prev, [i]: { ...kgMlOf(i), ...patch } }))
+  }
+
+  function openKgMlEdit(i, currentVal) {
+    setKgMl(i, { editing: true, draft: currentVal != null ? String(currentVal) : '', error: '' })
+  }
+
+  async function saveKgMl(i) {
+    const ln = lines[i]
+    const item = ln.items.find(it => it.id === ln.item_id)
+    if (!item) return
+    const state = kgMlOf(i)
+    if (!state.draft || isNaN(parseFloat(state.draft))) {
+      setKgMl(i, { error: 'Enter a valid number' }); return
+    }
+    setKgMl(i, { saving: true, error: '' })
+    const val = parseFloat(state.draft)
+    const field = item.unit === 'Bag' ? 'kg_per_unit' : 'ml_per_unit'
+    await supabase.from('items').update({ [field]: val }).eq('id', item.id)
+    // Refresh items list for this line so the display updates
+    const refreshed = await fetchItems(ln.item_type_id)
+    updateLine(i, { items: refreshed })
+    setKgMl(i, { editing: false, saving: false, draft: '' })
+  }
+
+  // ── Add new item to catalog inline ────────────────────────────────────────
+  const [addItemLine, setAddItemLine] = useState(null) // which line index
+  const [addItemData, setAddItemData] = useState({ name: '', unit: '', kg_per_unit: '', ml_per_unit: '' })
+  const [addItemError, setAddItemError] = useState('')
+  const [addItemSaving, setAddItemSaving] = useState(false)
+
+  const UNIT_OPTIONS = ['KG', 'ml', 'Bag', 'Bottle', 'Number']
+
+  async function handleAddNewItem(e) {
+    e.preventDefault()
+    setAddItemError('')
+    const i = addItemLine
+    const ln = lines[i]
+    if (!addItemData.name.trim()) { setAddItemError('Item name is required'); return }
+    if (!addItemData.unit) { setAddItemError('Select a unit'); return }
+    if (addItemData.unit === 'Bag' && !addItemData.kg_per_unit) { setAddItemError('Enter KG per bag'); return }
+    if (addItemData.unit === 'Bottle' && !addItemData.ml_per_unit) { setAddItemError('Enter ml per bottle'); return }
+    setAddItemSaving(true)
+    const { data: newItem, error } = await supabase.from('items').insert({
+      name: addItemData.name.trim(),
+      unit: addItemData.unit,
+      is_active: true,
+      item_type_id: ln.item_type_id,
+      organization_id: organization?.id,
+      kg_per_unit: addItemData.unit === 'Bag' && addItemData.kg_per_unit ? parseFloat(addItemData.kg_per_unit) : null,
+      ml_per_unit: addItemData.unit === 'Bottle' && addItemData.ml_per_unit ? parseFloat(addItemData.ml_per_unit) : null,
+    }).select('id, name, unit, item_type_id, kg_per_unit, ml_per_unit').single()
+    if (error) { setAddItemError(error.message); setAddItemSaving(false); return }
+    const refreshed = await fetchItems(ln.item_type_id)
+    updateLine(i, { items: refreshed, item_id: newItem.id })
+    setAddItemSaving(false)
+    setAddItemLine(null)
+    setAddItemData({ name: '', unit: '', kg_per_unit: '', ml_per_unit: '' })
+  }
 
   async function handleSubmit(e) {
     e.preventDefault()
@@ -341,7 +410,7 @@ function ProcurementModal({ onClose, onSaved }) {
                     )}
                   </div>
 
-                  <div className="grid grid-cols-2 gap-3 mb-3">
+                  <div className="grid grid-cols-2 gap-3 mb-2">
                     <div>
                       <label className="block text-xs font-medium text-gray-600 mb-1">{t('procurement.itemType')} *</label>
                       <select
@@ -370,6 +439,115 @@ function ProcurementModal({ onClose, onSaved }) {
                       </select>
                     </div>
                   </div>
+
+                  {/* Add new item to catalog inline */}
+                  {ln.item_type_id && addItemLine !== i && (
+                    <div className="mb-3">
+                      <button type="button" onClick={() => { setAddItemLine(i); setAddItemData({ name: '', unit: '', kg_per_unit: '', ml_per_unit: '' }); setAddItemError('') }}
+                        className="text-xs text-amber-600 hover:text-amber-700 font-medium underline underline-offset-2">
+                        + Add new item to catalog
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Inline add-new-item form */}
+                  {addItemLine === i && (
+                    <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 p-3">
+                      <div className="flex items-center justify-between mb-2">
+                        <p className="text-xs font-semibold text-amber-700">New Item (saved to catalog)</p>
+                        <button type="button" onClick={() => setAddItemLine(null)} className="text-gray-400 hover:text-gray-600 text-sm">✕</button>
+                      </div>
+                      <form onSubmit={handleAddNewItem} className="space-y-2">
+                        <div className="grid grid-cols-2 gap-2">
+                          <input
+                            autoFocus required type="text"
+                            placeholder="Item name *"
+                            value={addItemData.name}
+                            onChange={e => setAddItemData(p => ({ ...p, name: e.target.value }))}
+                            className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
+                          />
+                          <select
+                            required value={addItemData.unit}
+                            onChange={e => setAddItemData(p => ({ ...p, unit: e.target.value, kg_per_unit: '', ml_per_unit: '' }))}
+                            className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-amber-400"
+                          >
+                            <option value="">Unit *</option>
+                            {UNIT_OPTIONS.map(u => <option key={u} value={u}>{u}</option>)}
+                          </select>
+                        </div>
+                        {addItemData.unit === 'Bag' && (
+                          <input required type="number" step="0.01" min="0.01"
+                            placeholder="KG per bag *  (e.g. 50)"
+                            value={addItemData.kg_per_unit}
+                            onChange={e => setAddItemData(p => ({ ...p, kg_per_unit: e.target.value }))}
+                            className="w-full rounded-lg border border-emerald-400 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400"
+                          />
+                        )}
+                        {addItemData.unit === 'Bottle' && (
+                          <input required type="number" step="1" min="1"
+                            placeholder="ml per bottle *  (e.g. 500)"
+                            value={addItemData.ml_per_unit}
+                            onChange={e => setAddItemData(p => ({ ...p, ml_per_unit: e.target.value }))}
+                            className="w-full rounded-lg border border-blue-400 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                          />
+                        )}
+                        {addItemError && <p className="text-xs text-red-600">{addItemError}</p>}
+                        <div className="flex gap-2">
+                          <button type="submit" disabled={addItemSaving}
+                            className="rounded-lg bg-amber-500 hover:bg-amber-600 disabled:opacity-60 px-4 py-1.5 text-xs font-semibold text-white transition">
+                            {addItemSaving ? 'Saving…' : 'Add to catalog & select'}
+                          </button>
+                          <button type="button" onClick={() => setAddItemLine(null)}
+                            className="rounded-lg border border-gray-300 px-4 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 transition">
+                            Cancel
+                          </button>
+                        </div>
+                      </form>
+                    </div>
+                  )}
+
+                  {/* kg/ml per unit display & edit — shown when Bag or Bottle is selected */}
+                  {item && (item.unit === 'Bag' || item.unit === 'Bottle') && (
+                    <div className={`mb-3 rounded-xl px-3 py-2 flex items-center justify-between gap-3 ${item.unit === 'Bag' ? 'bg-emerald-50 border border-emerald-200' : 'bg-blue-50 border border-blue-200'}`}>
+                      {kgMlOf(i).editing ? (
+                        <div className="flex items-center gap-2 flex-1">
+                          <input
+                            autoFocus type="number" step="0.01" min="0.01"
+                            value={kgMlOf(i).draft}
+                            onChange={e => setKgMl(i, { draft: e.target.value })}
+                            placeholder={item.unit === 'Bag' ? 'KG per bag' : 'ml per bottle'}
+                            className={`w-32 rounded-lg border px-2 py-1 text-sm focus:outline-none focus:ring-2 ${item.unit === 'Bag' ? 'border-emerald-400 focus:ring-emerald-400' : 'border-blue-400 focus:ring-blue-400'}`}
+                          />
+                          <span className="text-xs text-gray-500">{item.unit === 'Bag' ? 'kg/bag' : 'ml/bottle'}</span>
+                          {kgMlOf(i).error && <span className="text-xs text-red-600">{kgMlOf(i).error}</span>}
+                          <button type="button" onClick={() => saveKgMl(i)} disabled={kgMlOf(i).saving}
+                            className="rounded-lg bg-emerald-500 hover:bg-emerald-600 disabled:opacity-60 px-3 py-1 text-xs font-semibold text-white transition">
+                            {kgMlOf(i).saving ? '…' : '✓ Save to catalog'}
+                          </button>
+                          <button type="button" onClick={() => setKgMl(i, { editing: false })}
+                            className="text-xs text-gray-400 hover:text-gray-600">Cancel</button>
+                        </div>
+                      ) : (
+                        <>
+                          <div className="flex items-center gap-2">
+                            {item.unit === 'Bag' && item.kg_per_unit != null ? (
+                              <span className={`text-xs font-semibold text-emerald-700`}>📦 {item.kg_per_unit} kg per bag</span>
+                            ) : item.unit === 'Bottle' && item.ml_per_unit != null ? (
+                              <span className="text-xs font-semibold text-blue-700">🧴 {item.ml_per_unit} ml per bottle</span>
+                            ) : (
+                              <span className={`text-xs font-medium ${item.unit === 'Bag' ? 'text-amber-600' : 'text-blue-600'}`}>
+                                ⚠ {item.unit === 'Bag' ? 'KG per bag not set' : 'ml per bottle not set'} — needed for FCR
+                              </span>
+                            )}
+                          </div>
+                          <button type="button" onClick={() => openKgMlEdit(i, item.unit === 'Bag' ? item.kg_per_unit : item.ml_per_unit)}
+                            className={`text-xs font-medium underline underline-offset-2 ${item.unit === 'Bag' ? 'text-emerald-600 hover:text-emerald-800' : 'text-blue-600 hover:text-blue-800'}`}>
+                            {(item.unit === 'Bag' ? item.kg_per_unit : item.ml_per_unit) != null ? 'Edit' : 'Set it'}
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  )}
 
                   <div className="grid grid-cols-3 gap-3">
                     <div>
@@ -499,6 +677,8 @@ function ProcurementModal({ onClose, onSaved }) {
 export default function Procurement() {
   const { t, i18n } = useTranslation()
   const { organization, canEdit } = useAuth()
+  const { currentStep, stepDone } = useOnboarding()
+
   const [records, setRecords]       = useState([])
   const [itemTypes, setItemTypes]   = useState([])
   const [loading, setLoading]       = useState(true)
@@ -551,14 +731,17 @@ export default function Procurement() {
           <h1 className="text-2xl font-bold text-gray-800">{t('procurement.title')}</h1>
           <p className="text-sm text-gray-500 mt-0.5">All purchases — feed, chicks, medicine &amp; more</p>
         </div>
-        {canEdit && (
-          <button
-            onClick={() => setModalOpen(true)}
-            className="inline-flex items-center gap-2 rounded-lg bg-amber-500 hover:bg-amber-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition"
-          >
-            <span className="text-base leading-none">+</span> {t('procurement.addPurchase')}
-          </button>
-        )}
+        <div className="flex items-center gap-2">
+          {canEdit && (
+            <button
+              data-tour="procurement"
+              onClick={() => setModalOpen(true)}
+              className="inline-flex items-center gap-2 rounded-lg bg-amber-500 hover:bg-amber-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition"
+            >
+              <span className="text-base leading-none">+</span> {t('procurement.addPurchase')}
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Untracked payables alert */}
@@ -788,7 +971,7 @@ export default function Procurement() {
       {modalOpen && (
         <ProcurementModal
           onClose={() => setModalOpen(false)}
-          onSaved={() => { setModalOpen(false); fetchData() }}
+          onSaved={() => { setModalOpen(false); fetchData(); if (currentStep?.id === 'procurement') stepDone('procurement') }}
         />
       )}
     </div>

@@ -98,6 +98,7 @@ export default function Stock() {
   const [reorderMap,   setReorderMap]   = useState({}) // item_name (lowercase) → reorder_level
   const [kgPerUnitMap, setKgPerUnitMap] = useState({}) // item_name (lowercase) → kg_per_unit
   const [stockIdMap,   setStockIdMap]   = useState({}) // item_name (lowercase) → stock.id
+  const [itemsMap,     setItemsMap]     = useState({}) // item_name (lowercase) → { id, kg_per_unit }
   const [loading,      setLoading]      = useState(true)
   const [search,       setSearch]       = useState('')
   const [typeFilter,   setTypeFilter]   = useState('all')
@@ -109,9 +110,10 @@ export default function Stock() {
 
   async function fetchData() {
     setLoading(true)
-    const [{ data: ledgerData }, { data: stockData }] = await Promise.all([
+    const [{ data: ledgerData }, { data: stockData }, { data: itemsData }] = await Promise.all([
       supabase.from('stock_ledger').select('*').eq('organization_id', organization?.id).order('date', { ascending: false }),
       supabase.from('stock').select('id, item_name, reorder_level, kg_per_unit').eq('organization_id', organization?.id),
+      supabase.from('items').select('id, name, kg_per_unit').eq('organization_id', organization?.id),
     ])
 
     setLedger(ledgerData || [])
@@ -122,22 +124,40 @@ export default function Stock() {
     for (const s of (stockData || [])) {
       const key = s.item_name.toLowerCase().trim()
       rMap[key]  = Number(s.reorder_level || 0)
-      kMap[key]  = s.kg_per_unit ?? null
+      kMap[key]  = s.kg_per_unit ?? null  // fallback from stock table
       idMap[key] = s.id
     }
+
+    // items table is the source of truth — override stock values
+    const iMap = {}
+    for (const it of (itemsData || [])) {
+      const key = it.name.toLowerCase().trim()
+      iMap[key] = { id: it.id, kg_per_unit: it.kg_per_unit }
+      if (it.kg_per_unit != null) kMap[key] = it.kg_per_unit
+    }
+
     setReorderMap(rMap)
     setKgPerUnitMap(kMap)
     setStockIdMap(idMap)
+    setItemsMap(iMap)
     setLoading(false)
   }
 
   async function saveKgPerUnit() {
     if (!kgEditItem) return
     const key = kgEditItem.item_name.toLowerCase().trim()
-    const stockId = stockIdMap[key]
-    if (!stockId) return
+    const val = parseFloat(kgEditVal) || null
     setKgSaving(true)
-    await supabase.from('stock').update({ kg_per_unit: parseFloat(kgEditVal) || null }).eq('id', stockId).eq('organization_id', organization?.id)
+    // Save to items table (source of truth)
+    const itemEntry = itemsMap[key]
+    if (itemEntry?.id) {
+      await supabase.from('items').update({ kg_per_unit: val }).eq('id', itemEntry.id)
+    }
+    // Also sync to stock table for backward compat
+    const stockId = stockIdMap[key]
+    if (stockId) {
+      await supabase.from('stock').update({ kg_per_unit: val }).eq('id', stockId).eq('organization_id', organization?.id)
+    }
     setKgSaving(false)
     setKgEditItem(null)
     fetchData()

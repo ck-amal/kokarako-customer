@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
+import { useOnboarding } from '../contexts/OnboardingContext'
 
 function formatCurrency(n) {
   return '₹' + Number(n || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })
@@ -145,6 +146,7 @@ function DeleteModal({ vendor, onClose, onDeleted }) {
 export default function Vendors() {
   const { t } = useTranslation()
   const { organization, canEdit, canDelete } = useAuth()
+  const { currentStep, stepDone } = useOnboarding()
   const [vendors, setVendors]       = useState([])
   const [loading, setLoading]       = useState(true)
   const [modal, setModal]           = useState(null) // null | { mode: 'add'|'edit'|'delete', vendor? }
@@ -186,7 +188,7 @@ export default function Vendors() {
   function openEdit(vendor)   { setModal({ mode: 'edit', vendor }) }
   function openDelete(vendor) { setModal({ mode: 'delete', vendor }) }
   function closeModal()       { setModal(null) }
-  function afterSave()        { closeModal(); fetchVendors() }
+  function afterSave()        { closeModal(); fetchVendors(); if (currentStep?.id === 'vendors') stepDone('vendors') }
 
   return (
     <div>
@@ -198,6 +200,7 @@ export default function Vendors() {
         </div>
         {canEdit && (
           <button
+            data-tour="vendors"
             onClick={openAdd}
             className="inline-flex items-center gap-2 rounded-lg bg-amber-500 hover:bg-amber-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition"
           >

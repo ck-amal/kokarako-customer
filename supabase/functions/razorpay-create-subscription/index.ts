@@ -52,9 +52,8 @@ Deno.serve(async (req: Request) => {
     const auth = 'Basic ' + btoa(`${KEY_ID}:${KEY_SECRET}`)
 
     // 4. Create the subscription (Checkout captures the customer + mandate).
-    //    "3 months free trial": authorise autopay now, but defer the first charge
-    //    by TRIAL_DAYS via start_at (set TRIAL_DAYS = 0 to charge immediately).
-    const TRIAL_DAYS  = 90
+    //    Defer the first charge by the plan's configurable trial_period_days.
+    const TRIAL_DAYS  = Math.max(0, plan.trial_period_days ?? 0)
     const total_count = period === 'yearly' ? 5 : 60 // cap cycles (≈5 yrs); Razorpay requires it
     const start_at    = Math.floor(Date.now() / 1000) + TRIAL_DAYS * 24 * 60 * 60
     const subRes = await fetch('https://api.razorpay.com/v1/subscriptions', {
@@ -71,12 +70,17 @@ Deno.serve(async (req: Request) => {
     const sub = await subRes.json()
     if (!subRes.ok) return json({ error: sub?.error?.description || 'Could not create the subscription.' }, 400)
 
-    // 5. Record it as pending — the webhook applies the plan after the first charge
+    // 5. Record it as pending — the webhook applies the plan after the first charge.
+    //    Also stamp trial_ends_at so the web app can show the trial countdown.
+    const trialEndsAt = TRIAL_DAYS > 0
+      ? new Date(Date.now() + TRIAL_DAYS * 24 * 60 * 60 * 1000).toISOString()
+      : null
     await admin.from('organizations').update({
       razorpay_subscription_id: sub.id,
       subscription_status:      sub.status || 'created',
       pending_plan:             plan_key,
       pending_billing_period:   period,
+      ...(trialEndsAt ? { trial_ends_at: trialEndsAt } : {}),
     }).eq('id', organization_id)
 
     return json({ subscription_id: sub.id, key_id: KEY_ID })

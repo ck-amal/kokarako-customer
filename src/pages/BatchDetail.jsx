@@ -7,6 +7,7 @@ import StockReturnModal from '../components/StockReturnModal'
 import DistributionModal from '../components/DistributionModal'
 import AuditInfo from '../components/AuditInfo'
 import { useAuth } from '../contexts/AuthContext'
+import { useOnboarding } from '../contexts/OnboardingContext'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function fmtDate(d) {
@@ -238,6 +239,7 @@ export default function BatchDetail() {
   const navigate = useNavigate()
   const { t } = useTranslation()
   const { organization, user, userRole, canEdit, canDelete, canRecordOperations, canViewFinancials } = useAuth()
+  const { currentStep, stepDone } = useOnboarding()
   const canConfirmSales = ['owner', 'manager', 'accountant'].includes(userRole)
   const SALE_STATUS_STYLE = { pending: 'bg-amber-100 text-amber-700', confirmed: 'bg-green-100 text-green-700', rejected: 'bg-red-100 text-red-700' }
   const SALE_STATUS_LABEL = { pending: 'Pending', confirmed: 'Confirmed', rejected: 'Rejected' }
@@ -258,8 +260,7 @@ export default function BatchDetail() {
   const [distributions,setDistributions]= useState([])
   const [sales,        setSales]        = useState([])
   const [expenses,     setExpenses]     = useState([])
-  const [chickProc,    setChickProc]    = useState([])
-  const [allBatchTotal,setAllBatchTotal]= useState(0)
+  const [chickPurchases, setChickPurchases] = useState([])
   const [vendors,      setVendors]      = useState([])
   const [loading,      setLoading]      = useState(true)
 
@@ -290,8 +291,7 @@ export default function BatchDetail() {
       { data: distData },
       { data: salesData },
       { data: expData },
-      { data: chickProcData },
-      { data: allBatchData },
+      { data: chickPurchaseData },
       { data: vendorData },
     ] = await Promise.all([
       supabase.from('farms').select('id, name, owner_name, owner_phone').eq('id', farmId).eq('organization_id', organization?.id).single(),
@@ -299,8 +299,7 @@ export default function BatchDetail() {
       supabase.from('distributions').select('*, created_by_name, created_at, updated_by_name, updated_at').eq('batch_id', batchId).eq('organization_id', organization?.id).order('date', { ascending: true }),
       supabase.from('sales').select('*, vendors(name), created_by_name, created_at, updated_by_name, updated_at').eq('batch_id', batchId).eq('organization_id', organization?.id).order('date', { ascending: true }),
       supabase.from('farm_expenses').select('*').eq('batch_id', batchId).eq('organization_id', organization?.id),
-      supabase.from('procurement').select('cost, quantity').eq('type', 'chicks').eq('organization_id', organization?.id),
-      supabase.from('batches').select('chick_count').eq('organization_id', organization?.id),
+      supabase.from('batch_chick_purchases').select('id, quantity, price_per_chick, total_cost, source, notes').eq('batch_id', batchId).eq('organization_id', organization?.id).order('created_at'),
       supabase.from('vendors').select('id, name').eq('organization_id', organization?.id).order('name'),
     ])
     setFarm(farmData)
@@ -308,8 +307,7 @@ export default function BatchDetail() {
     setDistributions(distData || [])
     setSales(salesData || [])
     setExpenses(expData || [])
-    setChickProc(chickProcData || [])
-    setAllBatchTotal((allBatchData || []).reduce((s, b) => s + Number(b.chick_count || 0), 0))
+    setChickPurchases(chickPurchaseData || [])
     setVendors(vendorData || [])
 
     // Fetch advances (safe — graceful if table doesn't exist yet)
@@ -642,10 +640,7 @@ export default function BatchDetail() {
   const feedCost  = roundCurrency(expenses.filter(e => e.item_type === 'feed').reduce((s, e) => s + Number(e.total_cost || 0), 0) - feedReturnCredit)
   const medCost   = roundCurrency(expenses.filter(e => e.item_type === 'medicine').reduce((s, e) => s + Number(e.total_cost || 0), 0) - medReturnCredit)
 
-  const totalChickCostAll = chickProc.reduce((s, p) => s + Number(p.cost || 0), 0)
-  const chickCost = allBatchTotal > 0
-    ? roundCurrency((Number(batch.chick_count) / allBatchTotal) * totalChickCostAll)
-    : 0
+  const chickCost = roundCurrency(chickPurchases.reduce((s, p) => s + Number(p.total_cost || 0), 0))
 
   const growingFee    = (!isActive && batch.growing_fee_total != null) ? Number(batch.growing_fee_total) : 0
   const totalExpenses = chickCost + feedCost + medCost + growingFee
@@ -847,7 +842,7 @@ export default function BatchDetail() {
           {(() => {
             const rows = [
               { label: t('batches.revenue'),        value: formatCurrency(revenue),                                      color: '#15803d', bold: false },
-              { label: t('batches.chickCost'),      value: formatCurrency(chickCost),                                   color: '#dc2626', bold: false },
+              { label: t('batches.chickCost'),      value: formatCurrency(chickCost),                                   color: '#dc2626', bold: false, breakdown: chickPurchases },
               { label: t('batches.feedCost'),       value: formatCurrency(feedCost),                                    color: '#dc2626', bold: false },
               { label: t('batches.medicineCost'),   value: formatCurrency(medCost),                                     color: '#dc2626', bold: false },
               ...(growingFee > 0 ? [{ label: t('growingFees.title'), value: formatCurrency(growingFee), color: '#7c3aed', bold: false }] : []),
@@ -858,11 +853,26 @@ export default function BatchDetail() {
             return (
               <div>
                 {rows.map((row, i) => (
-                  <div key={row.label}
-                    className="flex justify-between items-center py-2"
-                    style={{ borderBottom: i < rows.length - 1 ? '1px solid var(--border)' : 'none' }}>
-                    <span style={{ color: 'var(--text-muted)', fontWeight: row.bold ? 600 : 400 }} className="text-sm">{row.label}</span>
-                    <span style={{ color: row.color, fontWeight: row.bold ? 800 : 600 }} className="text-sm">{row.value}</span>
+                  <div key={row.label}>
+                    <div
+                      className="flex justify-between items-center py-2"
+                      style={{ borderBottom: (!row.breakdown?.length && i < rows.length - 1) ? '1px solid var(--border)' : 'none' }}>
+                      <span style={{ color: 'var(--text-muted)', fontWeight: row.bold ? 600 : 400 }} className="text-sm">{row.label}</span>
+                      <span style={{ color: row.color, fontWeight: row.bold ? 800 : 600 }} className="text-sm">{row.value}</span>
+                    </div>
+                    {row.breakdown?.length > 0 && (
+                      <div className="mb-2 ml-3 space-y-0.5" style={{ borderBottom: i < rows.length - 1 ? '1px solid var(--border)' : 'none', paddingBottom: '8px' }}>
+                        {row.breakdown.map(line => (
+                          <div key={line.id} className="flex justify-between items-center text-xs" style={{ color: 'var(--text-muted)' }}>
+                            <span>
+                              {Number(line.quantity).toLocaleString('en-IN')} birds × {formatCurrency(line.price_per_chick)}
+                              {line.source === 'stock' && <span className="ml-1.5 text-amber-600">(stock)</span>}
+                            </span>
+                            <span>{formatCurrency(line.total_cost)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
@@ -1349,7 +1359,7 @@ export default function BatchDetail() {
         farmId={farmId}
         initialBatchId={batchId}
         onClose={() => setDistModal(false)}
-        onSaved={() => { setDistModal(false); refresh() }}
+        onSaved={() => { setDistModal(false); refresh(); if (currentStep?.id === 'distribution') stepDone('distribution') }}
       />
     )}
 
