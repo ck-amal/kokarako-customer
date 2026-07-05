@@ -104,7 +104,7 @@ export default function CatalogSettings() {
     if (!orgId) return
     setLoading(true)
     const [{ data: types }, { data: items }] = await Promise.all([
-      supabase.from('item_types').select('id, name, description').eq('organization_id', orgId).order('name'),
+      supabase.from('item_types').select('id, name, description, is_system').eq('organization_id', orgId).order('name'),
       supabase.from('items').select('id, item_type_id, name, unit, description, is_active, kg_per_unit, ml_per_unit').eq('organization_id', orgId).order('name'),
     ])
     const grouped = {}
@@ -196,6 +196,8 @@ export default function CatalogSettings() {
   }
 
   async function handleSaveTypeName(typeId) {
+    const type = itemTypes.find(t => t.id === typeId)
+    if (type?.is_system) return
     setTypeNameError('')
     if (!typeNameDraft.trim()) { setTypeNameError(t('errors.required')); return }
     setTypeNameSaving(true)
@@ -211,6 +213,7 @@ export default function CatalogSettings() {
   // ── Delete type ───────────────────────────────────────────────────────────
 
   function handleDeleteType(type) {
+    if (type.is_system) return
     const count = (allItems[type.id] || []).length
     setConfirmModal({
       title: 'Delete Item Type',
@@ -522,44 +525,60 @@ function TypeCard({
         <div className="px-5 py-4 bg-amber-50 border-b border-amber-200">
           <div className="flex items-start gap-3">
             <div className="flex-1 space-y-2">
-              <input
-                autoFocus
-                type="text"
-                value={typeNameDraft}
-                onChange={e => setTypeNameDraft(e.target.value)}
-                placeholder="Type name *"
-                className="w-full rounded-xl border border-amber-300 bg-white px-3 py-2 text-sm font-semibold text-gray-800 focus:outline-none focus:ring-2 focus:ring-amber-400"
-              />
-              <input
-                type="text"
-                value={typeDescDraft}
-                onChange={e => setTypeDescDraft(e.target.value)}
-                placeholder="Description (optional)"
-                className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-gray-600 focus:outline-none focus:ring-2 focus:ring-amber-400"
-              />
-              {typeNameError && <p className="text-xs text-red-600">{typeNameError}</p>}
+              {type.is_system ? (
+                /* System type — name is read-only */
+                <div className="flex items-center gap-2">
+                  <p className="text-sm font-bold text-gray-800">{type.name}</p>
+                  <span className="rounded-full bg-blue-50 border border-blue-200 px-2 py-0.5 text-xs font-medium text-blue-600">
+                    🔒 System — name cannot be changed
+                  </span>
+                </div>
+              ) : (
+                <>
+                  <input
+                    autoFocus
+                    type="text"
+                    value={typeNameDraft}
+                    onChange={e => setTypeNameDraft(e.target.value)}
+                    placeholder="Type name *"
+                    className="w-full rounded-xl border border-amber-300 bg-white px-3 py-2 text-sm font-semibold text-gray-800 focus:outline-none focus:ring-2 focus:ring-amber-400"
+                  />
+                  <input
+                    type="text"
+                    value={typeDescDraft}
+                    onChange={e => setTypeDescDraft(e.target.value)}
+                    placeholder="Description (optional)"
+                    className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-gray-600 focus:outline-none focus:ring-2 focus:ring-amber-400"
+                  />
+                  {typeNameError && <p className="text-xs text-red-600">{typeNameError}</p>}
+                </>
+              )}
             </div>
             <div className="flex gap-2 shrink-0 mt-0.5">
-              <button
-                onClick={onSaveTypeName}
-                disabled={typeNameSaving}
-                className="rounded-xl bg-amber-500 hover:bg-amber-600 disabled:opacity-60 px-3 py-2 text-xs font-semibold text-white transition"
-              >
-                {typeNameSaving ? '…' : '✓ Save'}
-              </button>
+              {!type.is_system && (
+                <button
+                  onClick={onSaveTypeName}
+                  disabled={typeNameSaving}
+                  className="rounded-xl bg-amber-500 hover:bg-amber-600 disabled:opacity-60 px-3 py-2 text-xs font-semibold text-white transition"
+                >
+                  {typeNameSaving ? '…' : '✓ Save'}
+                </button>
+              )}
               <button
                 onClick={onDone}
                 className="rounded-xl border border-gray-300 bg-white hover:bg-gray-50 px-3 py-2 text-xs font-medium text-gray-600 transition"
               >
                 Done
               </button>
-              <button
-                onClick={onDeleteType}
-                className="rounded-xl border border-red-200 bg-white hover:bg-red-50 px-3 py-2 text-xs font-medium text-red-500 transition"
-                title="Delete type"
-              >
-                🗑️ Delete
-              </button>
+              {!type.is_system && (
+                <button
+                  onClick={onDeleteType}
+                  className="rounded-xl border border-red-200 bg-white hover:bg-red-50 px-3 py-2 text-xs font-medium text-red-500 transition"
+                  title="Delete type"
+                >
+                  🗑️ Delete
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -575,12 +594,17 @@ function TypeCard({
             <span className="rounded-full bg-amber-50 border border-amber-200 px-2 py-0.5 text-xs font-medium text-amber-600">
               {allItems.length} item{allItems.length !== 1 ? 's' : ''}
             </span>
+            {type.is_system && (
+              <span className="rounded-full bg-blue-50 border border-blue-200 px-2 py-0.5 text-xs font-medium text-blue-600" title="System type — name cannot be changed or deleted">
+                🔒 System
+              </span>
+            )}
           </div>
           <button
             onClick={onEnterEdit}
             className="flex items-center gap-1.5 rounded-xl border border-gray-200 bg-white hover:bg-amber-50 hover:border-amber-300 hover:text-amber-700 px-3 py-1.5 text-xs font-medium text-gray-500 transition"
           >
-            ✏️ Edit
+            ✏️ {type.is_system ? 'Manage Items' : 'Edit'}
           </button>
         </div>
       )}

@@ -1244,6 +1244,7 @@ export default function FarmDetail() {
     netDistCostMap[distId] = roundCurrency((distCostMap[distId] || 0) - (returnCostMap[distId] || 0))
   }
 
+  const distTypeFilters = ['all', ...Array.from(new Set(distributions.map(d => d.type).filter(Boolean))).sort()]
   const filteredDists = distFilter === 'all' ? distributions : distributions.filter(d => d.type === distFilter)
 
   const batchFiltersActive = batchStatusFilter !== 'active' || batchDateFrom || batchDateTo || batchSearch
@@ -1812,7 +1813,7 @@ export default function FarmDetail() {
 
           {/* Filter toggle bar */}
           <div className="flex gap-2 px-5 py-3 border-b border-gray-100 bg-gray-50">
-            {['all', 'feed', 'medicine'].map(f => (
+            {distTypeFilters.map(f => (
               <button key={f} onClick={() => setDistFilter(f)}
                 className={`px-3 py-1 rounded-full text-xs font-semibold transition ${
                   distFilter === f ? 'bg-green-600 text-white' : 'bg-white border border-gray-200 text-gray-500 hover:bg-gray-100'
