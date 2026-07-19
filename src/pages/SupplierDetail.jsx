@@ -478,7 +478,8 @@ export default function SupplierDetail() {
 
   const totalPurchased = procurements.reduce((s, p) => s + Number(p.cost), 0)
   const totalPaid      = payments.reduce((s, p) => s + Number(p.amount), 0)
-  const outstanding    = Math.max(0, totalPurchased - totalPaid)
+  const openingBalance = Number(supplier?.opening_balance || 0)
+  const outstanding    = openingBalance + totalPurchased - totalPaid
 
   if (loading) {
     return (
@@ -523,9 +524,9 @@ export default function SupplierDetail() {
 
         <div className="flex flex-col items-end gap-2 shrink-0">
           <span className={`inline-flex items-center rounded-full px-4 py-1.5 text-base font-bold ${
-            outstanding > 0 ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'
+            outstanding < 0 ? 'bg-blue-100 text-blue-700' : outstanding > 0 ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'
           }`}>
-            {outstanding > 0 ? `${formatCurrency(outstanding)} owed` : '✓ All cleared'}
+            {outstanding < 0 ? `Credit ${formatCurrency(Math.abs(outstanding))}` : outstanding > 0 ? `${formatCurrency(outstanding)} owed` : '✓ All cleared'}
           </span>
           {outstanding > 0 && canEdit && (
             <button
@@ -543,14 +544,21 @@ export default function SupplierDetail() {
         <div className="bg-white rounded-2xl border border-gray-100 shadow-sm px-4 py-3">
           <p className="text-xs text-gray-500 uppercase tracking-wide font-medium">{t('suppliers.totalPurchased')}</p>
           <p className="text-xl font-bold text-gray-800 mt-1">{formatCurrency(totalPurchased)}</p>
+          {openingBalance !== 0 && (
+            <p className="text-xs text-gray-400 mt-0.5">
+              Opening: {openingBalance > 0 ? '+' : ''}{formatCurrency(openingBalance)}
+            </p>
+          )}
         </div>
         <div className="bg-white rounded-2xl border border-green-100 shadow-sm px-4 py-3">
           <p className="text-xs text-gray-500 uppercase tracking-wide font-medium">{t('suppliers.totalPaid')}</p>
           <p className="text-xl font-bold text-green-600 mt-1">{formatCurrency(totalPaid)}</p>
         </div>
-        <div className={`bg-white rounded-2xl border shadow-sm px-4 py-3 ${outstanding > 0 ? 'border-red-200' : 'border-gray-100'}`}>
-          <p className="text-xs text-gray-500 uppercase tracking-wide font-medium">{t('suppliers.balanceDue')}</p>
-          <p className={`text-xl font-bold mt-1 ${outstanding > 0 ? 'text-red-600' : 'text-green-600'}`}>{formatCurrency(outstanding)}</p>
+        <div className={`bg-white rounded-2xl border shadow-sm px-4 py-3 ${outstanding > 0 ? 'border-red-200' : outstanding < 0 ? 'border-blue-200' : 'border-gray-100'}`}>
+          <p className="text-xs text-gray-500 uppercase tracking-wide font-medium">{outstanding < 0 ? 'Credit Balance' : t('suppliers.balanceDue')}</p>
+          <p className={`text-xl font-bold mt-1 ${outstanding > 0 ? 'text-red-600' : outstanding < 0 ? 'text-blue-600' : 'text-green-600'}`}>
+            {outstanding < 0 ? formatCurrency(Math.abs(outstanding)) : formatCurrency(outstanding)}
+          </p>
         </div>
       </div>
 

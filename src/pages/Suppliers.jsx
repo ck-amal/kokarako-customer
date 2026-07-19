@@ -22,10 +22,11 @@ function SupplierModal({ supplier, onClose, onSaved }) {
   const { organization } = useAuth()
   const { t } = useTranslation()
   const [form, setForm] = useState({
-    name:    supplier?.name    ?? '',
-    phone:   supplier?.phone   ?? '',
-    address: supplier?.address ?? '',
-    notes:   supplier?.notes   ?? '',
+    name:            supplier?.name            ?? '',
+    phone:           supplier?.phone           ?? '',
+    address:         supplier?.address         ?? '',
+    notes:           supplier?.notes           ?? '',
+    opening_balance: supplier?.opening_balance != null ? String(supplier.opening_balance) : '0',
   })
   const [saving, setSaving] = useState(false)
   const [error, setError]   = useState('')
@@ -42,11 +43,13 @@ function SupplierModal({ supplier, onClose, onSaved }) {
     if (!form.name.trim()) { setError(t('errors.required')); return }
     setSaving(true)
 
+    const openingBal = parseFloat(form.opening_balance) || 0
     const payload = {
-      name:    form.name.trim(),
-      phone:   form.phone.trim()   || null,
-      address: form.address.trim() || null,
-      notes:   form.notes.trim()   || null,
+      name:            form.name.trim(),
+      phone:           form.phone.trim()   || null,
+      address:         form.address.trim() || null,
+      notes:           form.notes.trim()   || null,
+      opening_balance: openingBal,
     }
 
     const { error: err } = isEdit
@@ -99,6 +102,23 @@ function SupplierModal({ supplier, onClose, onSaved }) {
               placeholder="Any notes…"
               className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-amber-400"
             />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Opening Balance (₹) <span className="text-gray-400 font-normal">(optional)</span>
+            </label>
+            <div className="relative">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">₹</span>
+              <input
+                type="number" step="0.01" value={form.opening_balance} onChange={set('opening_balance')}
+                placeholder="0"
+                className="w-full rounded-lg border border-gray-300 pl-7 pr-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
+              />
+            </div>
+            <p className="text-xs text-gray-400 mt-1">
+              Positive = amount owed to supplier before using this system. Negative = advance already given to supplier.
+            </p>
           </div>
 
           {error && (
@@ -158,13 +178,15 @@ function RecordPaymentModal({ suppliers, initialSupplierId, onClose, onSaved }) 
   useEffect(() => {
     if (!form.supplier_id) { setOutstanding(null); return }
     async function load() {
-      const [{ data: procs }, { data: pays }] = await Promise.all([
+      const [{ data: sup }, { data: procs }, { data: pays }] = await Promise.all([
+        supabase.from('suppliers').select('opening_balance').eq('organization_id', organization.id).eq('id', form.supplier_id).single(),
         supabase.from('procurement').select('cost').eq('organization_id', organization.id).eq('supplier_id', form.supplier_id),
         supabase.from('supplier_payments').select('amount').eq('organization_id', organization.id).eq('supplier_id', form.supplier_id),
       ])
-      const totalCost = (procs || []).reduce((s, r) => s + Number(r.cost), 0)
-      const totalPaid = (pays  || []).reduce((s, r) => s + Number(r.amount), 0)
-      setOutstanding(Math.max(0, totalCost - totalPaid))
+      const openingBal = Number(sup?.opening_balance || 0)
+      const totalCost  = (procs || []).reduce((s, r) => s + Number(r.cost), 0)
+      const totalPaid  = (pays  || []).reduce((s, r) => s + Number(r.amount), 0)
+      setOutstanding(openingBal + totalCost - totalPaid)
     }
     load()
   }, [form.supplier_id])
@@ -363,7 +385,8 @@ function RecordPaymentModal({ suppliers, initialSupplierId, onClose, onSaved }) 
 function SupplierCard({ supplier, onEdit, onPayment, onClick, canEdit, canDelete }) {
   const { t } = useTranslation()
   const { outstanding } = supplier
-  const isPaid = outstanding <= 0
+  const isPaid   = outstanding <= 0
+  const isCredit = outstanding < 0
 
   return (
     <div
@@ -389,9 +412,9 @@ function SupplierCard({ supplier, onEdit, onPayment, onClick, canEdit, canDelete
       {/* Right: balance + actions */}
       <div className="flex flex-col items-end gap-2 shrink-0">
         <span className={`inline-flex items-center rounded-full px-3 py-1 text-sm font-bold ${
-          isPaid ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+          isCredit ? 'bg-blue-100 text-blue-700' : isPaid ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
         }`}>
-          {isPaid ? '✓ Cleared' : formatCurrency(outstanding)}
+          {isCredit ? `Credit ${formatCurrency(Math.abs(outstanding))}` : isPaid ? '✓ Cleared' : formatCurrency(outstanding)}
         </span>
         <div className="flex items-center gap-2 mt-1" onClick={e => e.stopPropagation()}>
           {canEdit && (
@@ -456,7 +479,7 @@ export default function Suppliers() {
       ...s,
       totalPurchased: costMap[s.id] || 0,
       totalPaid:      paidMap[s.id] || 0,
-      outstanding:    Math.max(0, (costMap[s.id] || 0) - (paidMap[s.id] || 0)),
+      outstanding:    Number(s.opening_balance || 0) + (costMap[s.id] || 0) - (paidMap[s.id] || 0),
     }))
 
     setSuppliers(enriched)
