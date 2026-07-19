@@ -339,25 +339,32 @@ function RecordPaymentModal({ initialFarmId, farmGroups, onClose, onSaved }) {
       })
     }
 
-    // 3. Distribute payment FIFO across pending/partial entries (oldest first)
+    // 3. Distribute payment FIFO across pending/partial entries (oldest first).
+    //    On the last entry, allow overpayment — excess becomes overpaid_amount.
     let remaining = amt
-    for (const entry of pendingEntries) {
+    for (let i = 0; i < pendingEntries.length; i++) {
+      const entry   = pendingEntries[i]
       if (remaining <= 0) break
 
-      const entryBalance   = Number(entry.balance_due)
-      const applied        = roundCurrency(Math.min(remaining, entryBalance))
-      remaining            = roundCurrency(remaining - applied)
+      const isLast       = i === pendingEntries.length - 1
+      const entryBalance = Number(entry.balance_due)
+
+      // For the last entry absorb all remaining (may exceed balance); for others cap at balance
+      const applied      = isLast ? remaining : roundCurrency(Math.min(remaining, entryBalance))
+      remaining          = roundCurrency(remaining - applied)
 
       const newAmountPaid  = roundCurrency(Number(entry.amount_paid) + applied)
-      const newBalanceDue  = roundCurrency(entryBalance - applied)
-      const newStatus      = newBalanceDue <= 0 ? 'paid' : 'partial'
+      const newBalanceDue  = roundCurrency(Math.max(0, entryBalance - applied))
+      const overpaidAmt    = roundCurrency(Math.max(0, applied - entryBalance))
+      const newStatus      = newBalanceDue <= 0 ? (overpaidAmt > 0 ? 'overpaid' : 'paid') : 'partial'
 
       const { error: updateErr } = await supabase
         .from('growing_fee_ledger')
         .update({
-          amount_paid: newAmountPaid,
-          balance_due: newBalanceDue,
-          status:      newStatus,
+          amount_paid:     newAmountPaid,
+          balance_due:     newBalanceDue,
+          overpaid_amount: overpaidAmt,
+          status:          newStatus,
         })
         .eq('organization_id', organization.id)
         .eq('id', entry.id)
