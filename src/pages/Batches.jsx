@@ -200,7 +200,7 @@ export default function Batches() {
     const [{ data: batchData }, { data: farmData }] = await Promise.all([
       supabase
         .from('batches')
-        .select('*, farms(name), sold_at, closed_at')
+        .select('*, farms(name)')
         .eq('organization_id', organization?.id)
         .order('start_date', { ascending: false }),
       supabase.from('farms').select('id, name').eq('organization_id', organization?.id).order('name'),
@@ -210,7 +210,7 @@ export default function Batches() {
     setLoading(false)
   }
 
-  useEffect(() => { if (organization?.id) fetchData() }, [organization?.id])
+  useEffect(() => { fetchData() }, [])
 
   // Open new-batch modal pre-selected if navigated from Farms page
   useEffect(() => {
