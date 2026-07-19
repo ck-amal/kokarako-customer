@@ -467,7 +467,7 @@ function GiveAdvanceModal({ farm, batches, initialBatchId, onClose, onSaved }) {
   const activeBatches = batches.filter(b => b.status === 'active')
 
   const [form, setForm] = useState({
-    batch_id:         initialBatchId ?? activeBatches[0]?.id ?? '',
+    batch_id:         initialBatchId ?? '',
     account_id:       '',
     amount:           '',
     payment_date:     today,
@@ -496,18 +496,18 @@ function GiveAdvanceModal({ farm, batches, initialBatchId, onClose, onSaved }) {
   async function handleSubmit(ev) {
     ev.preventDefault()
     setError('')
-    if (!form.batch_id) { setError('Select a batch'); return }
     const amt = parseFloat(form.amount)
     if (!amt || amt <= 0) { setError('Enter a valid amount'); return }
     if (!form.account_id) { setError('Select an account'); return }
 
     setSaving(true)
     const userName = user?.user_metadata?.full_name || user?.email || 'Unknown'
+    const batchId  = form.batch_id || null
 
-    // Insert advance
+    // Insert advance (batch_id may be null for farm-level advances)
     const { data: adv, error: advErr } = await supabase.from('growing_fee_advances').insert({
       farm_id:          farm.id,
-      batch_id:         form.batch_id,
+      batch_id:         batchId,
       amount:           amt,
       payment_date:     form.payment_date,
       payment_method:   form.payment_method || null,
@@ -521,19 +521,24 @@ function GiveAdvanceModal({ farm, batches, initialBatchId, onClose, onSaved }) {
 
     if (advErr) { setError(advErr.message); setSaving(false); return }
 
-    // Update batch total_advances
-    const { data: currentBatch } = await supabase.from('batches').select('total_advances').eq('id', form.batch_id).eq('organization_id', organization?.id).single()
-    await supabase.from('batches').update({
-      total_advances: Number(currentBatch?.total_advances || 0) + amt,
-    }).eq('id', form.batch_id)
+    // If linked to a batch, update its total_advances
+    if (batchId) {
+      const { data: currentBatch } = await supabase.from('batches').select('total_advances').eq('id', batchId).eq('organization_id', organization?.id).single()
+      await supabase.from('batches').update({
+        total_advances: Number(currentBatch?.total_advances || 0) + amt,
+      }).eq('id', batchId)
+    }
 
     // Insert transaction (cash out)
     const batchStartDate = selectedBatch?.start_date ? new Date(selectedBatch.start_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : ''
+    const description = batchId
+      ? `Growing fee advance — ${farm.owner_name || farm.name}${batchStartDate ? ', Batch ' + batchStartDate : ''}`
+      : `Farm advance — ${farm.owner_name || farm.name}`
     await supabase.from('transactions').insert({
       account_id:       form.account_id,
       transaction_type: 'out',
       category:         'growing_fee_advance',
-      description:      `Growing fee advance — ${farm.owner_name || farm.name}${batchStartDate ? ', Batch ' + batchStartDate : ''}`,
+      description,
       amount:           amt,
       transaction_date: form.payment_date,
       reference_type:   'growing_fee_advance',
@@ -545,23 +550,6 @@ function GiveAdvanceModal({ farm, batches, initialBatchId, onClose, onSaved }) {
 
     setSaving(false)
     onSaved()
-  }
-
-  if (activeBatches.length === 0) {
-    return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
-        <div className="w-full max-w-sm bg-white rounded-2xl shadow-xl p-6">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold text-gray-800">Growing Fee Advance</h2>
-            <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl">&times;</button>
-          </div>
-          <div className="rounded-xl bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-800">
-            No active batch for this farm. Advances can only be given during an active batch.
-          </div>
-          <button onClick={onClose} className="mt-4 w-full rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition">Close</button>
-        </div>
-      </div>
-    )
   }
 
   return (
@@ -580,20 +568,18 @@ function GiveAdvanceModal({ farm, batches, initialBatchId, onClose, onSaved }) {
         <form onSubmit={handleSubmit} className="space-y-4">
           {/* Batch selector */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Batch *</label>
-            {activeBatches.length === 1 ? (
-              <div className="rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-800 font-medium">
-                Batch {new Date(activeBatches[0].start_date + 'T12:00:00').toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })} — Day {Math.floor((Date.now() - new Date(activeBatches[0].start_date + 'T00:00:00')) / 86400000)} — {Number(activeBatches[0].chick_count).toLocaleString('en-IN')} chicks
-              </div>
-            ) : (
-              <select required value={form.batch_id} onChange={set('batch_id')}
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-400">
-                {activeBatches.map(b => {
-                  const day = Math.floor((Date.now() - new Date(b.start_date + 'T00:00:00')) / 86400000)
-                  const sd = new Date(b.start_date + 'T12:00:00').toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
-                  return <option key={b.id} value={b.id}>Batch {sd} — Day {day} — {Number(b.chick_count).toLocaleString('en-IN')} chicks</option>
-                })}
-              </select>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Link to Batch <span className="text-gray-400 font-normal">(optional)</span></label>
+            <select value={form.batch_id} onChange={set('batch_id')}
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-400">
+              <option value="">Farm-level advance (no batch)</option>
+              {activeBatches.map(b => {
+                const day = Math.floor((Date.now() - new Date(b.start_date + 'T00:00:00')) / 86400000)
+                const sd = new Date(b.start_date + 'T12:00:00').toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
+                return <option key={b.id} value={b.id}>Batch {sd} — Day {day} — {Number(b.chick_count).toLocaleString('en-IN')} chicks</option>
+              })}
+            </select>
+            {!form.batch_id && (
+              <p className="mt-1 text-xs text-amber-600">This advance will be held at farm level and applied when a new batch is created.</p>
             )}
           </div>
 
@@ -699,6 +685,7 @@ export default function FarmDetail() {
   const [growingFeeLedger,     setGrowingFeeLedger]    = useState([])
   const [farmStock,            setFarmStock]           = useState([])
   const [farmAdvances,         setFarmAdvances]        = useState([])
+  const [farmLevelAdvances,    setFarmLevelAdvances]   = useState([])
   const [loading,              setLoading]             = useState(true)
 
   const [advanceModal,         setAdvanceModal]         = useState(false)
@@ -787,12 +774,16 @@ export default function FarmDetail() {
     setCashCollection(cashResult.data || [])
     setGrowingFeeLedger(feeResult.data || [])
 
-    // Fetch advances for active batches
+    // Fetch advances for active batches + farm-level advances (batch_id IS NULL)
     const activeBatchIds = bList.filter(b => b.status === 'active').map(b => b.id)
-    const advResult = activeBatchIds.length
-      ? await supabase.from('growing_fee_advances').select('id, batch_id, amount, payment_date, payment_method').in('batch_id', activeBatchIds).eq('organization_id', organization?.id).order('payment_date')
-      : { data: [] }
+    const [advResult, farmLevelAdvResult] = await Promise.all([
+      activeBatchIds.length
+        ? supabase.from('growing_fee_advances').select('id, batch_id, amount, payment_date, payment_method').in('batch_id', activeBatchIds).eq('organization_id', organization?.id).order('payment_date')
+        : Promise.resolve({ data: [] }),
+      supabase.from('growing_fee_advances').select('id, amount, payment_date, payment_method, notes').is('batch_id', null).eq('farm_id', id).eq('organization_id', organization?.id).order('payment_date'),
+    ])
     setFarmAdvances(advResult.data || [])
+    setFarmLevelAdvances(farmLevelAdvResult.data || [])
 
     setLoading(false)
   }
@@ -1144,8 +1135,9 @@ export default function FarmDetail() {
             const totalPaid  = growingFeeLedger.reduce((s, r) => s + Number(r.amount_paid || 0), 0)
             const outstanding= growingFeeLedger.reduce((s, r) => s + Number(r.balance_due || 0), 0)
             const activeAdvTotal = farmAdvances.reduce((s, r) => s + Number(r.amount || 0), 0)
+            const farmLevelAdvTotal = farmLevelAdvances.reduce((s, r) => s + Number(r.amount || 0), 0)
 
-            if (!hasActiveBatch && growingFeeLedger.length === 0) return null
+            if (!canEdit && !hasActiveBatch && growingFeeLedger.length === 0 && farmLevelAdvances.length === 0) return null
             return (
               <div style={{ backgroundColor: 'var(--surface)', borderColor: outstanding > 0 ? '#fca5a5' : 'var(--border)' }} className="rounded-xl border shadow-sm p-5">
                 <div className="flex items-center justify-between mb-3">
@@ -1183,13 +1175,33 @@ export default function FarmDetail() {
                     <span className="font-semibold text-amber-700">{formatCurrency(activeAdvTotal)}</span>
                   </div>
                 )}
+                {farmLevelAdvances.length > 0 && (
+                  <div className="mb-3 border border-amber-200 rounded-lg bg-amber-50 px-3 py-3">
+                    <p className="text-xs font-semibold text-amber-800 mb-2">Pending Farm Advances (unlinked)</p>
+                    <div className="space-y-1">
+                      {farmLevelAdvances.map(adv => (
+                        <div key={adv.id} className="flex justify-between text-sm">
+                          <span className="text-amber-700">{fmtDate(adv.payment_date)}{adv.notes ? ` · ${adv.notes}` : ''}</span>
+                          <span className="font-semibold text-amber-800">{formatCurrency(adv.amount)}</span>
+                        </div>
+                      ))}
+                      {farmLevelAdvances.length > 1 && (
+                        <div className="flex justify-between text-sm pt-1 border-t border-amber-200">
+                          <span className="text-amber-700 font-medium">Total</span>
+                          <span className="font-bold text-amber-800">{formatCurrency(farmLevelAdvTotal)}</span>
+                        </div>
+                      )}
+                    </div>
+                    <p className="text-xs text-amber-600 mt-2">Will be auto-applied when a new growing fee is created for this farm.</p>
+                  </div>
+                )}
                 <div className="flex gap-2">
                   {outstanding > 0 && (
                     <a href="/growing-fees" className="flex-1 text-center rounded-lg bg-blue-600 hover:bg-blue-700 px-4 py-2 text-sm font-semibold text-white transition">
                       {t('farms.recordPaymentArrow')}
                     </a>
                   )}
-                  {hasActiveBatch && outstanding === 0 && canEdit && (
+                  {canEdit && (
                     <button
                       onClick={() => { setAdvanceBatchId(null); setAdvanceModal(true) }}
                       className="flex-1 rounded-lg border border-green-600 text-green-700 hover:bg-green-50 px-4 py-2 text-sm font-semibold transition"
