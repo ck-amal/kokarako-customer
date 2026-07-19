@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { supabase } from '../lib/supabaseClient'
-import { ledgerOut, getAverageCostPerUnit, getProcurementLots } from '../lib/stockLedger'
+import { ledgerOut, getProcurementLots } from '../lib/stockLedger'
 import { roundCurrency } from '../utils/format'
 import { formatDate } from '../utils/dateFormat'
 import { useAuth } from '../contexts/AuthContext'
@@ -148,15 +148,17 @@ export default function DistributionModal({ farmId, initialBatchId, onClose, onS
     setSaving(true)
     setError('')
     const userName = user?.user_metadata?.full_name || user?.email || 'Unknown'
-    const resolvedBatch = activeBatches.find(b => b.id === batchId)
 
-    // Build list of (procurementId | null, qty) rows to insert
+    // Build list of (procurementId | null, qty, costPerUnit) rows to insert
     const allocRows = multiLot
-      ? Object.entries(lotAllocs).filter(([, qty]) => Number(qty) > 0).map(([id, qty]) => ({ procId: id, qty: Number(qty) }))
-      : [{ procId: procLots[0]?.id || null, qty: canonicalQty }]
+      ? Object.entries(lotAllocs).filter(([, qty]) => Number(qty) > 0).map(([id, qty]) => {
+          const lot = procLots.find(l => l.id === id)
+          return { procId: id, qty: Number(qty), costPerUnit: lot?.costPerUnit || 0 }
+        })
+      : [{ procId: procLots[0]?.id || null, qty: canonicalQty, costPerUnit: procLots[0]?.costPerUnit || 0 }]
 
     let anyFailed = false
-    for (const { procId, qty } of allocRows) {
+    for (const { procId, qty, costPerUnit } of allocRows) {
       const { data: dist, error: distErr } = await supabase.from('distributions').insert({
         farm_id:         farmId,
         batch_id:        batchId || null,
@@ -182,15 +184,11 @@ export default function DistributionModal({ farmId, initialBatchId, onClose, onS
         date: form.date, organizationId: organization?.id,
       })
 
-      const avgCpu = await getAverageCostPerUnit(selectedItem.name, {
-        batchId: batchId || undefined, startDate: resolvedBatch?.start_date,
-        organizationId: organization?.id,
-      })
       await supabase.from('farm_expenses').insert({
         farm_id: farmId, batch_id: batchId || null, distribution_id: dist.id,
         item_name: selectedItem.name, item_type: typeName,
         quantity: qty, unit: selectedItem.unit,
-        cost_per_unit: avgCpu, total_cost: roundCurrency(qty * avgCpu),
+        cost_per_unit: costPerUnit, total_cost: roundCurrency(qty * costPerUnit),
         date: form.date, organization_id: organization?.id,
         created_by_id: user?.id, created_by_name: userName,
       })
