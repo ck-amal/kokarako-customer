@@ -29,6 +29,7 @@ function SaleModal({ batches, vendors, onClose, onSaved, sale = null }) {
     chicken_count: isEdit ? String(sale.chicken_count ?? '') : '',
     kg_sold:       isEdit ? String(sale.kg_sold ?? '')       : '',
     price_per_kg:  isEdit ? String(sale.price_per_kg ?? '')  : '',
+    final_amount:  isEdit ? String(sale.final_amount ?? '')  : '',
     date:          isEdit ? sale.date                        : new Date().toISOString().slice(0, 10),
     notes:         isEdit ? (sale.notes ?? '')               : '',
   })
@@ -57,27 +58,36 @@ function SaleModal({ batches, vendors, onClose, onSaved, sale = null }) {
 
   function set(field) { return e => setForm(prev => ({ ...prev, [field]: e.target.value })) }
 
-  const total = form.kg_sold && form.price_per_kg
-    ? (parseFloat(form.kg_sold) * parseFloat(form.price_per_kg)).toFixed(2)
+  const calcTotal = form.kg_sold && form.price_per_kg
+    ? parseFloat(form.kg_sold) * parseFloat(form.price_per_kg)
     : null
+  const finalAmtVal = parseFloat(form.final_amount)
+  const hasOverride = isEdit && calcTotal != null && !isNaN(finalAmtVal) && Math.abs(finalAmtVal - calcTotal) > 0.01
 
   async function handleSubmit(e) {
     e.preventDefault()
     setError('')
     const count = parseInt(form.chicken_count)
     if (!count || count <= 0) { setError('Enter number of chickens'); return }
-    if (count > available) {
+    if (!isEdit && count > available) {
       setError(`Only ${available.toLocaleString('en-IN')} birds available (${batchLive.toLocaleString('en-IN')} live − ${alreadySold.toLocaleString('en-IN')} already sold)`)
       return
     }
+    const kg    = parseFloat(form.kg_sold)
+    const price = parseFloat(form.price_per_kg)
+    const autoAmt  = kg * price
+    const finalAmt = parseFloat(form.final_amount)
+    const overrideAmt = isEdit && !isNaN(finalAmt) && Math.abs(finalAmt - autoAmt) > 0.01
+
     setSaving(true)
     let dbError
     if (isEdit) {
       const { error } = await supabase.from('sales').update({
         vendor_id:       form.vendor_id,
         chicken_count:   count,
-        kg_sold:         parseFloat(form.kg_sold),
-        price_per_kg:    parseFloat(form.price_per_kg),
+        kg_sold:         kg,
+        price_per_kg:    price,
+        final_amount:    overrideAmt ? finalAmt : null,
         date:            form.date,
         notes:           form.notes.trim() || null,
         updated_by_id:   user?.id,
@@ -90,8 +100,8 @@ function SaleModal({ batches, vendors, onClose, onSaved, sale = null }) {
         batch_id:        form.batch_id,
         vendor_id:       form.vendor_id,
         chicken_count:   count,
-        kg_sold:         parseFloat(form.kg_sold),
-        price_per_kg:    parseFloat(form.price_per_kg),
+        kg_sold:         kg,
+        price_per_kg:    price,
         date:            form.date,
         notes:           form.notes.trim() || null,
         created_by_id:   user?.id,
@@ -156,7 +166,7 @@ function SaleModal({ batches, vendors, onClose, onSaved, sale = null }) {
                   value={form.chicken_count} onChange={set('chicken_count')}
                   placeholder="e.g. 500" className={inputCls}
                 />
-                {selectedBatch && !loadingBatch && (
+                {!isEdit && selectedBatch && !loadingBatch && (
                   <p className={`text-xs mt-1 font-medium ${chickensEntered > available ? 'text-red-600' : 'text-gray-400'}`}>
                     {chickensEntered > available
                       ? `⚠ Exceeds available (${available.toLocaleString('en-IN')})`
@@ -183,13 +193,46 @@ function SaleModal({ batches, vendors, onClose, onSaved, sale = null }) {
             </div>
 
             <div className={`rounded-xl px-4 py-3 flex items-center justify-between ${
-              total ? 'bg-green-50 border border-green-200' : 'bg-gray-50 border border-gray-100'
+              calcTotal ? 'bg-green-50 border border-green-200' : 'bg-gray-50 border border-gray-100'
             }`}>
-              <span className="text-sm font-medium text-gray-600">{t('sales.totalAmount')}</span>
-              <span className={`text-lg font-bold ${total ? 'text-green-700' : 'text-gray-300'}`}>
-                {total ? formatCurrency(total) : '—'}
+              <span className="text-sm font-medium text-gray-600">
+                {isEdit ? 'Calculated Amount' : t('sales.totalAmount')}
+              </span>
+              <span className={`text-lg font-bold ${calcTotal ? (hasOverride ? 'line-through text-gray-400 text-base' : 'text-green-700') : 'text-gray-300'}`}>
+                {calcTotal ? formatCurrency(calcTotal) : '—'}
               </span>
             </div>
+
+            {isEdit && (
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-sm font-medium text-gray-700">
+                    Final Amount (₹) <span className="text-xs text-gray-400 font-normal">— override if needed</span>
+                  </label>
+                  {hasOverride && (
+                    <button
+                      type="button"
+                      onClick={() => setForm(p => ({ ...p, final_amount: calcTotal != null ? calcTotal.toFixed(2) : '' }))}
+                      className="text-xs text-blue-500 hover:text-blue-700"
+                    >
+                      Reset to calculated
+                    </button>
+                  )}
+                </div>
+                <input
+                  type="number" min="0" step="0.01"
+                  value={form.final_amount}
+                  onChange={set('final_amount')}
+                  placeholder={calcTotal ? calcTotal.toFixed(2) : '0.00'}
+                  className={inputCls}
+                />
+                {hasOverride && (
+                  <p className="text-xs text-blue-600 mt-1">
+                    Final amount adjusted: {formatCurrency(finalAmtVal)} (auto: {formatCurrency(calcTotal)})
+                  </p>
+                )}
+              </div>
+            )}
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">{t('common.date')} *</label>
@@ -291,7 +334,7 @@ export default function Sales() {
       const d = new Date(s.date)
       return s.status === 'confirmed' && d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth()
     })
-    .reduce((sum, s) => sum + Number(s.total_amount || 0), 0)
+    .reduce((sum, s) => sum + Number((s.final_amount ?? s.total_amount) || 0), 0)
 
   const monthLabel = now.toLocaleDateString(i18n.language === 'ml' ? 'ml-IN' : 'en-IN', { month: 'long', year: 'numeric' })
 
@@ -385,7 +428,12 @@ export default function Sales() {
                     {formatCurrency(s.price_per_kg)}
                   </td>
                   <td className="px-5 py-4 text-right font-semibold text-gray-800">
-                    {formatCurrency(s.total_amount)}
+                    {formatCurrency(s.final_amount ?? s.total_amount)}
+                    {s.final_amount != null && Math.abs(Number(s.final_amount) - Number(s.total_amount)) > 0.01 && (
+                      <div className="text-xs text-gray-400 font-normal line-through">
+                        {formatCurrency(s.total_amount)}
+                      </div>
+                    )}
                   </td>
                   <td className="px-5 py-4 text-center">
                     <span className={`inline-block rounded-full px-2.5 py-0.5 text-xs font-semibold ${STATUS_STYLE[s.status] || STATUS_STYLE.pending}`}>
@@ -416,7 +464,7 @@ export default function Sales() {
                   {t('common.total')} (confirmed)
                 </td>
                 <td className="px-5 py-3 text-right font-bold text-gray-800">
-                  {formatCurrency(sales.filter(s => s.status === 'confirmed').reduce((sum, s) => sum + Number(s.total_amount || 0), 0))}
+                  {formatCurrency(sales.filter(s => s.status === 'confirmed').reduce((sum, s) => sum + Number((s.final_amount ?? s.total_amount) || 0), 0))}
                 </td>
                 <td colSpan={2} />
               </tr>

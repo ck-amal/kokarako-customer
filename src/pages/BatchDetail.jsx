@@ -3,7 +3,9 @@ import { useParams, Link, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { supabase } from '../lib/supabaseClient'
 import { formatCurrency, roundCurrency } from '../utils/format'
+import { getProcurementLots } from '../lib/stockLedger'
 import StockReturnModal from '../components/StockReturnModal'
+import EditDistributionModal from '../components/EditDistributionModal'
 import DistributionModal from '../components/DistributionModal'
 import AuditInfo from '../components/AuditInfo'
 import { useAuth } from '../contexts/AuthContext'
@@ -256,7 +258,7 @@ export default function BatchDetail() {
   }
   function openEditSale(s) {
     setEditingSale(s)
-    setSaleForm({ vendor_id: s.vendor_id, chicken_count: String(s.chicken_count ?? ''), kg_sold: String(s.kg_sold ?? ''), price_per_kg: String(s.price_per_kg ?? ''), date: s.date, notes: s.notes ?? '' })
+    setSaleForm({ vendor_id: s.vendor_id, chicken_count: String(s.chicken_count ?? ''), kg_sold: String(s.kg_sold ?? ''), price_per_kg: String(s.price_per_kg ?? ''), final_amount: String(s.final_amount ?? ''), date: s.date, notes: s.notes ?? '' })
     setActionError('')
     setSaleModal(true)
   }
@@ -281,19 +283,26 @@ export default function BatchDetail() {
   // ── Action state ──
   const [saving,         setSaving]         = useState(false)
   const [actionError,    setActionError]    = useState('')
-  const [editModal,      setEditModal]      = useState(false)
-  const [editForm,       setEditForm]       = useState({ chick_count: '', start_date: '' })
+  const [editModal,        setEditModal]        = useState(false)
+  const [editForm,         setEditForm]         = useState({ chick_count: '', start_date: '' })
+  const [editChickLots,    setEditChickLots]    = useState([])
+  const [editLotAllocs,    setEditLotAllocs]    = useState({})
+  const [editLotsLoading,  setEditLotsLoading]  = useState(false)
   const [mortalityModal, setMortalityModal] = useState(false)
   const [mortalityVal,   setMortalityVal]   = useState('')
   const [saleModal,      setSaleModal]      = useState(false)
   const [distModal,      setDistModal]      = useState(false)
-  const [saleForm,       setSaleForm]       = useState({ vendor_id: '', chicken_count: '', kg_sold: '', price_per_kg: '', date: new Date().toISOString().slice(0, 10) })
+  const [saleForm,       setSaleForm]       = useState({ vendor_id: '', chicken_count: '', kg_sold: '', price_per_kg: '', final_amount: '', date: new Date().toISOString().slice(0, 10) })
   const [confirmModal,   setConfirmModal]   = useState(null) // { label, newStatus }
   const [closeBatchLoading,setCloseBatchLoading]= useState(false)
   const [advanceModal,   setAdvanceModal]   = useState(false)
-  const [returnModal,    setReturnModal]    = useState(null)  // distribution row being returned
+  const [returnModal,    setReturnModal]    = useState(null)
+  const [editingDist,    setEditingDist]    = useState(null)
   const [postCloseModal, setPostCloseModal] = useState(false) // prompt after batch close
   const [expenseReturns, setExpenseReturns] = useState([])
+  const [showEditFeeModal, setShowEditFeeModal] = useState(false)
+  const [editFeeAmount,    setEditFeeAmount]    = useState('')
+  const [editFeeSaving,    setEditFeeSaving]    = useState(false)
 
   async function load() {
     const [
@@ -307,10 +316,10 @@ export default function BatchDetail() {
     ] = await Promise.all([
       supabase.from('farms').select('id, name, owner_name, owner_phone').eq('id', farmId).eq('organization_id', organization?.id).single(),
       supabase.from('batches').select('*').eq('id', batchId).eq('organization_id', organization?.id).single(),
-      supabase.from('distributions').select('*, created_by_name, created_at, updated_by_name, updated_at').eq('batch_id', batchId).eq('organization_id', organization?.id).order('date', { ascending: true }),
+      supabase.from('distributions').select('*, procurement:procurement_id(id, invoice_number, date), created_by_name, created_at, updated_by_name, updated_at').eq('batch_id', batchId).eq('organization_id', organization?.id).order('date', { ascending: true }),
       supabase.from('sales').select('*, vendors(name), created_by_name, created_at, updated_by_name, updated_at, confirmed_by_name, confirmed_at').eq('batch_id', batchId).eq('organization_id', organization?.id).order('date', { ascending: true }),
       supabase.from('farm_expenses').select('*').eq('batch_id', batchId).eq('organization_id', organization?.id),
-      supabase.from('batch_chick_purchases').select('id, quantity, price_per_chick, total_cost, source, notes').eq('batch_id', batchId).eq('organization_id', organization?.id).order('created_at'),
+      supabase.from('batch_chick_purchases').select('id, quantity, price_per_chick, total_cost, source, notes, procurement_id, procurement:procurement_id(id, invoice_number, date)').eq('batch_id', batchId).eq('organization_id', organization?.id).order('created_at'),
       supabase.from('vendors').select('id, name').eq('organization_id', organization?.id).order('name'),
     ])
     setFarm(farmData)
@@ -344,7 +353,7 @@ export default function BatchDetail() {
   async function refresh() {
     const [{ data: batchData }, { data: distData }, { data: salesData }, { data: expData }] = await Promise.all([
       supabase.from('batches').select('*').eq('id', batchId).eq('organization_id', organization?.id).single(),
-      supabase.from('distributions').select('*, created_by_name, created_at, updated_by_name, updated_at').eq('batch_id', batchId).eq('organization_id', organization?.id).order('date', { ascending: true }),
+      supabase.from('distributions').select('*, procurement:procurement_id(id, invoice_number, date), created_by_name, created_at, updated_by_name, updated_at').eq('batch_id', batchId).eq('organization_id', organization?.id).order('date', { ascending: true }),
       supabase.from('sales').select('*, vendors(name), created_by_name, created_at, updated_by_name, updated_at, confirmed_by_name, confirmed_at').eq('batch_id', batchId).eq('organization_id', organization?.id).order('date', { ascending: true }),
       supabase.from('farm_expenses').select('*').eq('batch_id', batchId).eq('organization_id', organization?.id),
     ])
@@ -386,16 +395,80 @@ export default function BatchDetail() {
   async function handleEditBatch(e) {
     e.preventDefault()
     setSaving(true)
+    setActionError('')
+
+    const newCount = Number(editForm.chick_count)
+    const oldCount = Number(batch.chick_count)
+    const qtyDiff  = newCount - oldCount
     const userName = user?.user_metadata?.full_name || user?.email || 'Unknown'
+
+    // Build new per-lot allocation rows
+    let allocRows
+    if (editChickLots.length > 1) {
+      allocRows = Object.entries(editLotAllocs)
+        .filter(([, qty]) => Number(qty) > 0)
+        .map(([procId, qty]) => {
+          const lot = editChickLots.find(l => l.id === procId)
+          return { procId, qty: Number(qty), cpu: lot?.costPerUnit ?? 0 }
+        })
+      const allocTotal = allocRows.reduce((s, r) => s + r.qty, 0)
+      if (Math.abs(allocTotal - newCount) > 0.5) {
+        setActionError(`Lot allocation (${allocTotal.toLocaleString('en-IN')}) must equal chick count (${newCount.toLocaleString('en-IN')})`)
+        setSaving(false)
+        return
+      }
+    } else {
+      const firstPurchase = chickPurchases[0]
+      const lot = editChickLots[0]
+      allocRows = [{ procId: firstPurchase?.procurement_id || lot?.id || null, qty: newCount, cpu: lot?.costPerUnit ?? Number(firstPurchase?.price_per_chick || 0) }]
+    }
+
+    // 1. Update batch row
     const { error } = await supabase.from('batches').update({
-      chick_count:     Number(editForm.chick_count),
+      chick_count:     newCount,
       start_date:      editForm.start_date,
       updated_by_id:   user?.id,
       updated_by_name: userName,
       updated_at:      new Date().toISOString(),
     }).eq('id', batchId)
+    if (error) { setActionError(error.message); setSaving(false); return }
+
+    // 2. Replace batch_chick_purchases
+    await supabase.from('batch_chick_purchases')
+      .delete().eq('batch_id', batchId).eq('organization_id', organization?.id)
+    for (const { procId, qty, cpu } of allocRows) {
+      await supabase.from('batch_chick_purchases').insert({
+        organization_id: organization?.id,
+        batch_id:        batchId,
+        quantity:        qty,
+        price_per_chick: roundCurrency(cpu),
+        total_cost:      roundCurrency(qty * cpu),
+        source:          'stock',
+        procurement_id:  procId,
+      })
+    }
+
+    // 3. If total count changed, sync stock_ledger and stock
+    if (qtyDiff !== 0) {
+      await supabase.from('stock_ledger')
+        .update({ quantity: newCount })
+        .eq('reference_type', 'batch')
+        .eq('reference_id', batchId)
+        .eq('organization_id', organization?.id)
+
+      const { data: stockRow } = await supabase.from('stock')
+        .select('id, quantity')
+        .ilike('item_name', 'chicks')
+        .eq('organization_id', organization?.id)
+        .maybeSingle()
+      if (stockRow) {
+        await supabase.from('stock').update({
+          quantity: Math.max(0, Number(stockRow.quantity) - qtyDiff),
+        }).eq('id', stockRow.id)
+      }
+    }
+
     setSaving(false)
-    if (error) { setActionError(error.message); return }
     setEditModal(false)
     refresh()
   }
@@ -426,6 +499,150 @@ export default function BatchDetail() {
     setConfirmModal({ label, newStatus })
   }
 
+  // ── Growing fee calculation (shared by handleMarkAsSold and recalcGrowingFee) ──
+  async function calculateGrowingFee({ fcr, totalSaleKg, forceRecalc }) {
+    if (fcr == null) { setActionError('Growing fee not calculated: FCR could not be determined (no confirmed sales or no feed kg data).'); return }
+    if (!forceRecalc && batch.growing_fee_id) return  // already exists, skip unless forced
+
+    const userName = user?.user_metadata?.full_name || user?.email || 'Unknown'
+
+    const { data: feeConfigs } = await supabase
+      .from('growing_fee_config')
+      .select('*')
+      .eq('is_active', true)
+      .eq('organization_id', organization?.id)
+      .order('fcr_from', { ascending: true })
+
+    if (!feeConfigs?.length) {
+      setActionError('No active growing fee configuration found. Set up fee tiers in Growing Fee Settings first.')
+      return
+    }
+
+    const tier = feeConfigs.find(c =>
+      fcr >= Number(c.fcr_from) && (c.fcr_to == null || fcr < Number(c.fcr_to))
+    )
+
+    if (!tier) {
+      setActionError(`No growing fee tier matched FCR ${fcr.toFixed(2)}. Check your fee configuration ranges.`)
+      return
+    }
+
+    const totalFee = roundCurrency(Number(tier.rate_per_kg) * totalSaleKg)
+    const tierDesc = `${tier.description || ''} (FCR ${Number(tier.fcr_from).toFixed(1)}–${tier.fcr_to != null ? Number(tier.fcr_to).toFixed(1) : '+'})`
+
+    const { data: farmData } = await supabase
+      .from('farms').select('owner_name').eq('id', farmId).eq('organization_id', organization?.id).single()
+
+    const { data: advRows } = await supabase
+      .from('growing_fee_advances').select('amount').eq('batch_id', batchId).eq('organization_id', organization?.id)
+    const totalAdvances = (advRows || []).reduce((s, r) => s + Number(r.amount), 0)
+
+    const rawBalance   = roundCurrency(totalFee - totalAdvances)
+    const balanceDue   = roundCurrency(Math.max(0, rawBalance))
+    const overpaid     = rawBalance < 0 ? roundCurrency(Math.abs(rawBalance)) : 0
+    const ledgerStatus = balanceDue <= 0 ? (overpaid > 0 ? 'overpaid' : 'paid') : 'pending'
+
+    // If recalculating, delete the old ledger row first
+    if (forceRecalc && batch.growing_fee_id) {
+      await supabase.from('growing_fee_ledger').delete().eq('id', batch.growing_fee_id)
+    }
+
+    const { data: ledgerRow, error: ledgerErr } = await supabase
+      .from('growing_fee_ledger')
+      .insert({
+        farm_id: farmId, batch_id: batchId, owner_name: farmData?.owner_name || null,
+        fcr, fcr_tier_description: tierDesc, rate_per_kg: Number(tier.rate_per_kg),
+        total_sale_kg: totalSaleKg, total_fee: totalFee, total_advances: totalAdvances,
+        overpaid_amount: overpaid, status: ledgerStatus, amount_paid: 0,
+        balance_due: balanceDue, organization_id: organization?.id,
+      })
+      .select('id').single()
+
+    if (ledgerErr) { setActionError('Growing fee calculation failed: ' + ledgerErr.message); return }
+
+    if (ledgerRow?.id) {
+      await supabase.from('batches').update({
+        growing_fee_id:     ledgerRow.id,
+        growing_fee_per_kg: Number(tier.rate_per_kg),
+        growing_fee_total:  totalFee,
+        updated_by_id:      user?.id,
+        updated_by_name:    userName,
+        updated_at:         new Date().toISOString(),
+      }).eq('id', batchId)
+    }
+  }
+
+  async function recalcGrowingFee() {
+    setActionError('')
+    setSaving(true)
+    // Re-fetch feed distributions to compute FCR fresh
+    const { data: feedDists } = await supabase
+      .from('distributions')
+      .select('id, item_name, quantity, returned_quantity, unit')
+      .eq('batch_id', batchId).eq('organization_id', organization?.id).eq('type', 'feed')
+    const itemNames = [...new Set((feedDists || []).map(d => d.item_name).filter(Boolean))]
+    const kgMap = {}
+    if (itemNames.length) {
+      const { data: itemRows } = await supabase.from('items').select('name, kg_per_unit').in('name', itemNames).eq('organization_id', organization?.id)
+      for (const item of (itemRows || [])) { if (item.kg_per_unit != null) kgMap[item.name] = item.kg_per_unit }
+    }
+    const totalSaleKg = sales.filter(r => r.status === 'confirmed').reduce((s, r) => s + Number(r.kg_sold || 0), 0)
+    const totalFeedKg = (feedDists || []).reduce((s, d) => {
+      const kpu    = kgMap[d.item_name] ?? null
+      const netQty = Math.max(0, Number(d.quantity) - Number(d.returned_quantity || 0))
+      return s + (kpu != null ? netQty * Number(kpu) : 0)
+    }, 0)
+    const userName = user?.user_metadata?.full_name || user?.email || 'Unknown'
+    const fcr = totalSaleKg > 0 && totalFeedKg > 0 ? +(totalFeedKg / totalSaleKg).toFixed(2) : null
+    const fcrRating = fcr == null ? null : fcr <= 1.8 ? 'Excellent' : fcr <= 2.1 ? 'Good' : fcr <= 2.5 ? 'Average' : 'Poor'
+    await supabase.from('batches').update({
+      total_feed_kg: totalFeedKg || null, total_sale_kg: totalSaleKg || null,
+      fcr, fcr_rating: fcrRating, updated_by_id: user?.id, updated_by_name: userName, updated_at: new Date().toISOString(),
+    }).eq('id', batchId)
+    await calculateGrowingFee({ fcr, totalSaleKg, forceRecalc: true })
+    setSaving(false)
+    refresh()
+  }
+
+  async function handleEditFeeSave() {
+    const newTotal = parseFloat(editFeeAmount)
+    if (isNaN(newTotal) || newTotal < 0) return
+    setEditFeeSaving(true)
+    try {
+      const ledger = batch.growing_fee_ledger
+      const totalAdv = Number(ledger?.total_advances ?? advances.reduce((s, a) => s + Number(a.amount), 0))
+      const postPaid = Number(ledger?.amount_paid || 0)
+      const totalPaid = totalAdv + postPaid
+      const newBalance  = Math.max(0, newTotal - totalPaid)
+      const newOverpaid = Math.max(0, totalPaid - newTotal)
+      const newStatus   = newBalance === 0 ? (newOverpaid > 0 ? 'overpaid' : 'paid') : totalPaid > 0 ? 'partial' : 'pending'
+
+      const userName = user?.user_metadata?.full_name || user?.email || 'Unknown'
+      const { error: bErr } = await supabase.from('batches').update({
+        growing_fee_total: newTotal,
+        updated_by_id: user?.id, updated_by_name: userName, updated_at: new Date().toISOString(),
+      }).eq('id', batchId)
+      if (bErr) throw bErr
+
+      if (batch.growing_fee_id) {
+        const { error: lErr } = await supabase.from('growing_fee_ledger').update({
+          total_fee: newTotal,
+          balance_due: newBalance,
+          overpaid_amount: newOverpaid,
+          status: newStatus,
+        }).eq('id', batch.growing_fee_id)
+        if (lErr) throw lErr
+      }
+
+      setShowEditFeeModal(false)
+      refresh()
+    } catch (err) {
+      setActionError(err.message || 'Failed to save growing fee')
+    } finally {
+      setEditFeeSaving(false)
+    }
+  }
+
   async function handleMarkAsSold() {
     setActionError('')
     setCloseBatchLoading(true)
@@ -447,7 +664,7 @@ export default function BatchDetail() {
     // Step 2: Calculate FCR
     const { data: feedDists } = await supabase
       .from('distributions')
-      .select('id, item_name, quantity, unit')
+      .select('id, item_name, quantity, returned_quantity, unit')
       .eq('batch_id', batchId)
       .eq('organization_id', organization?.id)
       .eq('type', 'feed')
@@ -467,8 +684,9 @@ export default function BatchDetail() {
 
     const totalSaleKg = sales.filter(r => r.status === 'confirmed').reduce((s, r) => s + Number(r.kg_sold || 0), 0)
     const totalFeedKg = (feedDists || []).reduce((s, d) => {
-      const kpu = kgMap[d.item_name] ?? null
-      return s + (kpu != null ? Number(d.quantity) * Number(kpu) : 0)
+      const kpu    = kgMap[d.item_name] ?? null
+      const netQty = Math.max(0, Number(d.quantity) - Number(d.returned_quantity || 0))
+      return s + (kpu != null ? netQty * Number(kpu) : 0)
     }, 0)
     const fcr       = totalSaleKg > 0 && totalFeedKg > 0 ? +(totalFeedKg / totalSaleKg).toFixed(2) : null
     const fcrRating = fcr == null ? null : fcr <= 1.8 ? 'Excellent' : fcr <= 2.1 ? 'Good' : fcr <= 2.5 ? 'Average' : 'Poor'
@@ -483,77 +701,8 @@ export default function BatchDetail() {
       updated_at:      new Date().toISOString(),
     }).eq('id', batchId)
 
-    // Step 3: Calculate Growing Fee (if FCR is known and no fee already recorded)
-    if (fcr != null && !batch.growing_fee_id) {
-      const { data: feeConfigs } = await supabase
-        .from('growing_fee_config')
-        .select('*')
-        .eq('is_active', true)
-        .eq('organization_id', organization?.id)
-        .order('fcr_from', { ascending: true })
-
-      const tier = (feeConfigs || []).find(c =>
-        fcr >= Number(c.fcr_from) && (c.fcr_to == null || fcr < Number(c.fcr_to))
-      )
-
-      if (tier) {
-        const totalFee = roundCurrency(Number(tier.rate_per_kg) * totalSaleKg)
-        const tierDesc = `${tier.description || ''} (FCR ${Number(tier.fcr_from).toFixed(1)}–${tier.fcr_to != null ? Number(tier.fcr_to).toFixed(1) : '+'})`
-
-        // Fetch farm owner name snapshot
-        const { data: farmData } = await supabase
-          .from('farms')
-          .select('owner_name')
-          .eq('id', farmId)
-          .eq('organization_id', organization?.id)
-          .single()
-
-        // Fetch total advances given for this batch
-        const { data: advRows } = await supabase
-          .from('growing_fee_advances')
-          .select('amount')
-          .eq('batch_id', batchId)
-          .eq('organization_id', organization?.id)
-        const totalAdvances = (advRows || []).reduce((s, r) => s + Number(r.amount), 0)
-
-        const rawBalance  = roundCurrency(totalFee - totalAdvances)
-        const balanceDue  = roundCurrency(Math.max(0, rawBalance))
-        const overpaid    = rawBalance < 0 ? roundCurrency(Math.abs(rawBalance)) : 0
-        const ledgerStatus = balanceDue <= 0 ? (overpaid > 0 ? 'overpaid' : 'paid') : 'pending'
-
-        const { data: ledgerRow } = await supabase
-          .from('growing_fee_ledger')
-          .insert({
-            farm_id:              farmId,
-            batch_id:             batchId,
-            owner_name:           farmData?.owner_name || null,
-            fcr,
-            fcr_tier_description: tierDesc,
-            rate_per_kg:          Number(tier.rate_per_kg),
-            total_sale_kg:        totalSaleKg,
-            total_fee:            totalFee,
-            total_advances:       totalAdvances,
-            overpaid_amount:      overpaid,
-            status:               ledgerStatus,
-            amount_paid:          0,
-            balance_due:          balanceDue,
-            organization_id:      organization?.id,
-          })
-          .select('id')
-          .single()
-
-        if (ledgerRow?.id) {
-          await supabase.from('batches').update({
-            growing_fee_id:     ledgerRow.id,
-            growing_fee_per_kg: Number(tier.rate_per_kg),
-            growing_fee_total:  totalFee,
-            updated_by_id:      user?.id,
-            updated_by_name:    userName,
-            updated_at:         new Date().toISOString(),
-          }).eq('id', batchId)
-        }
-      }
-    }
+    // Step 3: Calculate Growing Fee
+    await calculateGrowingFee({ fcr, totalSaleKg, forceRecalc: false })
 
     setCloseBatchLoading(false)
     refresh()
@@ -588,8 +737,11 @@ export default function BatchDetail() {
       setActionError(`Only ${available.toLocaleString('en-IN')} birds available (${live.toLocaleString('en-IN')} live − ${soldSoFar.toLocaleString('en-IN')} already sold)`)
       return
     }
-    const kg       = parseFloat(saleForm.kg_sold)
-    const price    = parseFloat(saleForm.price_per_kg)
+    const kg    = parseFloat(saleForm.kg_sold)
+    const price = parseFloat(saleForm.price_per_kg)
+    const autoAmt  = kg * price
+    const finalAmt = parseFloat(saleForm.final_amount)
+    const overrideAmt = editingSale && !isNaN(finalAmt) && Math.abs(finalAmt - autoAmt) > 0.01
     const userName = user?.user_metadata?.full_name || user?.email || 'Unknown'
     setSaving(true)
     let error
@@ -599,6 +751,7 @@ export default function BatchDetail() {
         chicken_count:   count,
         kg_sold:         kg,
         price_per_kg:    price,
+        final_amount:    overrideAmt ? finalAmt : null,
         date:            saleForm.date,
         notes:           saleForm.notes?.trim() || null,
         updated_by_id:   user?.id,
@@ -654,7 +807,7 @@ export default function BatchDetail() {
   const alive         = Number(batch.chick_count || 0) - Number(batch.mortality_count || 0)
 
   // Financial
-  const revenue   = sales.filter(r => r.status === 'confirmed').reduce((s, r) => s + Number(r.total_amount || 0), 0)
+  const revenue   = sales.filter(r => r.status === 'confirmed').reduce((s, r) => s + Number((r.final_amount ?? r.total_amount) || 0), 0)
 
   // Return credits keyed by distribution_id for per-row net display
   const returnCostByDist = {}
@@ -693,7 +846,7 @@ export default function BatchDetail() {
     ...sales.map(s => ({
       date:   s.date,
       icon:   '💰',
-      label:  `Sale to ${s.vendors?.name ?? '—'} — ${formatCurrency(s.total_amount)}`,
+      label:  `Sale to ${s.vendors?.name ?? '—'} — ${formatCurrency(s.final_amount ?? s.total_amount)}`,
       color:  '#dcfce7',
       border: '#86efac',
     })),
@@ -763,7 +916,25 @@ export default function BatchDetail() {
             <>
               {canEdit && (
                 <button
-                  onClick={() => { setEditForm({ chick_count: String(batch.chick_count), start_date: batch.start_date }); setActionError(''); setEditModal(true) }}
+                  onClick={async () => {
+                    setEditForm({ chick_count: String(batch.chick_count), start_date: batch.start_date })
+                    setActionError('')
+                    setEditChickLots([])
+                    setEditLotAllocs({})
+                    setEditLotsLoading(true)
+                    setEditModal(true)
+                    const lots = await getProcurementLots({ itemName: 'Chicks', organizationId: organization?.id })
+                    const currentAllocMap = {}
+                    for (const p of chickPurchases) {
+                      if (p.procurement_id) currentAllocMap[p.procurement_id] = Number(p.quantity)
+                    }
+                    const editLots = lots
+                      .map(l => ({ ...l, editAvail: l.remaining + (currentAllocMap[l.id] || 0) }))
+                      .filter(l => l.editAvail > 0 || currentAllocMap[l.id] > 0)
+                    setEditChickLots(editLots)
+                    setEditLotAllocs(currentAllocMap)
+                    setEditLotsLoading(false)
+                  }}
                   style={{ borderColor: '#d1d5db', color: '#374151' }}
                   className="rounded-lg border bg-white hover:bg-gray-50 px-3 py-1.5 text-xs font-semibold transition"
                 >
@@ -914,7 +1085,7 @@ export default function BatchDetail() {
       <div style={{ backgroundColor: 'var(--surface)', borderColor: 'var(--border)' }} className="rounded-xl border shadow-sm overflow-hidden">
         <div className="flex items-center justify-between px-5 py-4 border-b" style={{ borderColor: 'var(--border)' }}>
           <h3 style={{ color: 'var(--text)' }} className="text-sm font-semibold">
-            {t('batches.distributions')} ({distributions.length})
+            {t('batches.distributions')} ({distributions.length + chickPurchases.length})
           </h3>
           {canRecordOperations && (
             <button
@@ -925,11 +1096,11 @@ export default function BatchDetail() {
             </button>
           )}
         </div>
-        {distributions.length === 0 ? (
+        {distributions.length === 0 && chickPurchases.length === 0 ? (
           <p style={{ color: 'var(--text-muted)' }} className="text-sm text-center py-8">{t('batches.noDistributions')}</p>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-sm min-w-[640px]">
+            <table className="w-full text-sm min-w-[700px]">
               <thead>
                 <tr style={{ backgroundColor: 'var(--surface-2)', borderBottom: '1px solid var(--border)', color: 'var(--text-muted)' }}
                   className="text-left text-xs font-semibold uppercase tracking-wider">
@@ -939,11 +1110,51 @@ export default function BatchDetail() {
                   <th className="px-5 py-3 text-right">{t('batches.distributed')}</th>
                   <th className="px-5 py-3 text-right">{t('batches.returned')}</th>
                   {canViewFinancials && <th className="px-5 py-3 text-right">{t('batches.netCost')}</th>}
+                  <th className="px-5 py-3">Procurement</th>
                   <th className="px-4 py-3 w-8"></th>
                   <th className="px-5 py-3"></th>
                 </tr>
               </thead>
               <tbody>
+                {/* Chick placement rows from batch_chick_purchases */}
+                {chickPurchases.map((cp, i) => (
+                  <tr key={`chick-${cp.id}`}
+                    style={{ borderBottom: '1px solid var(--border)', backgroundColor: 'rgba(99,102,241,0.04)' }}>
+                    <td className="px-5 py-3" style={{ color: 'var(--text-muted)' }}>{fmtDate(batch?.start_date)}</td>
+                    <td className="px-5 py-3 font-medium" style={{ color: 'var(--text)' }}>
+                      Chick Placement
+                    </td>
+                    <td className="px-5 py-3">
+                      <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold bg-indigo-100 text-indigo-700">
+                        chick
+                      </span>
+                    </td>
+                    <td className="px-5 py-3 text-right" style={{ color: 'var(--text-muted)' }}>
+                      {Number(cp.quantity).toLocaleString('en-IN')} birds
+                    </td>
+                    <td className="px-5 py-3 text-right">
+                      <span style={{ color: '#d1d5db' }}>—</span>
+                    </td>
+                    {canViewFinancials && (
+                      <td className="px-5 py-3 text-right" style={{ color: 'var(--text-muted)' }}>
+                        {cp.total_cost > 0 ? formatCurrency(Number(cp.total_cost)) : '—'}
+                      </td>
+                    )}
+                    <td className="px-5 py-3">
+                      {cp.procurement ? (
+                        <button
+                          onClick={() => navigate('/procurement', { state: { openProcurementId: cp.procurement.id } })}
+                          className="text-xs text-indigo-600 hover:text-indigo-800 hover:underline font-medium"
+                        >
+                          {cp.procurement.invoice_number || fmtDate(cp.procurement.date)}
+                        </button>
+                      ) : <span style={{ color: '#d1d5db' }}>—</span>}
+                    </td>
+                    <td className="px-4 py-3"></td>
+                    <td className="px-5 py-3"></td>
+                  </tr>
+                ))}
+                {/* Regular distribution rows */}
                 {distributions.map((d, i) => {
                   const returned    = Number(d.returned_quantity || 0)
                   const returnCredit= returnCostByDist[d.id] || 0
@@ -976,16 +1187,36 @@ export default function BatchDetail() {
                           {grossCost > 0 ? formatCurrency(netCost) : '—'}
                         </td>
                       )}
+                      <td className="px-5 py-3">
+                        {d.procurement ? (
+                          <button
+                            onClick={() => navigate('/procurement', { state: { openProcurementId: d.procurement.id } })}
+                            className="text-xs text-indigo-600 hover:text-indigo-800 hover:underline font-medium"
+                          >
+                            {d.procurement.invoice_number || fmtDate(d.procurement.date)}
+                          </button>
+                        ) : <span style={{ color: '#d1d5db' }}>—</span>}
+                      </td>
                       <td className="px-4 py-3"><AuditInfo createdByName={d.created_by_name} createdAt={d.created_at} updatedByName={d.updated_by_name} updatedAt={d.updated_at} /></td>
                       <td className="px-5 py-3 text-right">
-                        {canReturn && canRecordOperations && (
-                          <button
-                            onClick={() => setReturnModal({ ...d, farm_id: farmId })}
-                            className="rounded px-2 py-1 text-xs font-medium bg-orange-50 text-orange-600 border border-orange-200 hover:bg-orange-100 transition"
-                          >
-                            {t('batches.return')}
-                          </button>
-                        )}
+                        <div className="flex items-center justify-end gap-1.5">
+                          {canEdit && (
+                            <button
+                              onClick={() => setEditingDist({ ...d, farm_id: farmId })}
+                              className="rounded px-2 py-1 text-xs font-medium bg-blue-50 text-blue-600 border border-blue-200 hover:bg-blue-100 transition"
+                            >
+                              Edit
+                            </button>
+                          )}
+                          {canReturn && canRecordOperations && (
+                            <button
+                              onClick={() => setReturnModal({ ...d, farm_id: farmId })}
+                              className="rounded px-2 py-1 text-xs font-medium bg-orange-50 text-orange-600 border border-orange-200 hover:bg-orange-100 transition"
+                            >
+                              {t('batches.return')}
+                            </button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   )
@@ -1036,7 +1267,14 @@ export default function BatchDetail() {
                     <td className="px-5 py-3 font-medium" style={{ color: 'var(--text)' }}>{s.vendors?.name ?? '—'}</td>
                     <td className="px-5 py-3 text-right" style={{ color: 'var(--text-muted)' }}>{Number(s.kg_sold).toLocaleString('en-IN')}</td>
                     <td className="px-5 py-3 text-right" style={{ color: 'var(--text-muted)' }}>₹{Number(s.price_per_kg).toLocaleString('en-IN')}</td>
-                    <td className="px-5 py-3 text-right font-bold" style={{ color: '#15803d' }}>{formatCurrency(s.total_amount)}</td>
+                    <td className="px-5 py-3 text-right font-bold" style={{ color: '#15803d' }}>
+                      {formatCurrency(s.final_amount ?? s.total_amount)}
+                      {s.final_amount != null && Math.abs(Number(s.final_amount) - Number(s.total_amount)) > 0.01 && (
+                        <div className="text-xs text-gray-400 font-normal line-through">
+                          {formatCurrency(s.total_amount)}
+                        </div>
+                      )}
+                    </td>
                     <td className="px-5 py-3 text-center">
                       <span className={`inline-block rounded-full px-2.5 py-0.5 text-xs font-semibold ${SALE_STATUS_STYLE[s.status] || SALE_STATUS_STYLE.pending}`}>
                         {SALE_STATUS_LABEL[s.status] || s.status}
@@ -1154,8 +1392,32 @@ export default function BatchDetail() {
       })()}
 
       {/* ── Growing Fee Section ──────────────────────────────────────── */}
+      {canViewFinancials && (batch.status === 'sold' || batch.status === 'closed') && batch.growing_fee_total == null && (
+        <div style={{ backgroundColor: 'var(--surface)', borderColor: 'var(--border)' }} className="rounded-xl border shadow-sm p-5">
+          <div className="flex items-center justify-between mb-2">
+            <h3 style={{ color: 'var(--text)' }} className="text-sm font-semibold">{t('growingFees.title')}</h3>
+          </div>
+          <p style={{ color: 'var(--text-muted)' }} className="text-xs mb-3">
+            Growing fee was not calculated automatically. This can happen if no fee configuration is set up, or if the FCR could not be determined.
+          </p>
+          {actionError && <p className="text-xs text-red-600 mb-3">{actionError}</p>}
+          {canEdit && (
+            <button
+              onClick={recalcGrowingFee}
+              disabled={saving}
+              className="rounded-lg bg-amber-500 hover:bg-amber-600 disabled:opacity-50 px-4 py-2 text-xs font-semibold text-white transition"
+            >
+              {saving ? 'Calculating…' : 'Calculate Growing Fee'}
+            </button>
+          )}
+        </div>
+      )}
       {canViewFinancials && (batch.status === 'sold' || batch.status === 'closed') && batch.growing_fee_total != null && (() => {
         const grossFee     = Number(batch.growing_fee_total)
+        const ratePerKg    = Number(batch.growing_fee_per_kg || 0)
+        const saleKg       = Number(batch.total_sale_kg || 0)
+        const realAmount   = ratePerKg * saleKg
+        const isEdited     = ratePerKg > 0 && Math.abs(grossFee - realAmount) > 0.01
         const totalAdv     = Number(batch.growing_fee_ledger?.total_advances ?? advances.reduce((s, a) => s + Number(a.amount), 0))
         const postClosePaid= Number(batch.growing_fee_ledger?.amount_paid || 0)
         const balance      = Number(batch.growing_fee_ledger?.balance_due ?? Math.max(0, grossFee - totalAdv))
@@ -1167,7 +1429,17 @@ export default function BatchDetail() {
           <div style={{ backgroundColor: 'var(--surface)', borderColor: 'var(--border)' }} className="rounded-xl border shadow-sm p-5">
             <div className="flex items-center justify-between mb-4">
               <h3 style={{ color: 'var(--text)' }} className="text-sm font-semibold">{t('growingFees.title')}</h3>
-              <span className="text-xs font-semibold rounded-full px-3 py-1 capitalize" style={{ backgroundColor: statusBg, color: statusColor }}>{status}</span>
+              <div className="flex items-center gap-2">
+                {canEdit && (
+                  <button
+                    onClick={() => { setEditFeeAmount(String(batch.growing_fee_total)); setActionError(''); setShowEditFeeModal(true) }}
+                    className="text-xs text-blue-600 hover:text-blue-800 px-2 py-1 rounded border border-blue-200 hover:bg-blue-50 transition"
+                  >
+                    Edit
+                  </button>
+                )}
+                <span className="text-xs font-semibold rounded-full px-3 py-1 capitalize" style={{ backgroundColor: statusBg, color: statusColor }}>{status}</span>
+              </div>
             </div>
             <div className="space-y-2 text-sm">
               {farm?.owner_name && (
@@ -1192,9 +1464,17 @@ export default function BatchDetail() {
               </div>
               <div className="pt-2 border-t border-gray-100 space-y-1.5">
                 <div className="flex justify-between">
-                  <span style={{ color: 'var(--text-muted)' }}>{t('growingFees.grossGrowingFee')}</span>
-                  <span className="font-bold text-base" style={{ color: 'var(--text)' }}>{formatCurrency(grossFee)}</span>
+                  <span style={{ color: 'var(--text-muted)' }}>{isEdited ? 'Auto-Calculated Fee' : t('growingFees.grossGrowingFee')}</span>
+                  <span className={isEdited ? 'font-medium line-through text-gray-400' : 'font-bold text-base'} style={isEdited ? {} : { color: 'var(--text)' }}>
+                    {formatCurrency(isEdited ? realAmount : grossFee)}
+                  </span>
                 </div>
+                {isEdited && (
+                  <div className="flex justify-between items-center">
+                    <span style={{ color: 'var(--text-muted)' }}>Final Amount <span className="text-xs text-blue-500">(adjusted)</span></span>
+                    <span className="font-bold text-base" style={{ color: 'var(--text)' }}>{formatCurrency(grossFee)}</span>
+                  </div>
+                )}
                 {totalAdv > 0 && (
                   <>
                     <div className="flex justify-between">
@@ -1244,6 +1524,15 @@ export default function BatchDetail() {
                 {t('growingFees.recordPaymentLink')}
               </a>
             )}
+            {canEdit && (
+              <button
+                onClick={recalcGrowingFee}
+                disabled={saving}
+                className="mt-2 w-full rounded-lg border border-gray-300 hover:bg-gray-50 disabled:opacity-50 px-4 py-2 text-xs font-medium text-gray-500 transition"
+              >
+                {saving ? 'Recalculating…' : 'Recalculate Growing Fee'}
+              </button>
+            )}
           </div>
         )
       })()}
@@ -1281,7 +1570,7 @@ export default function BatchDetail() {
     {/* ── Edit Batch Modal ──────────────────────────────────────────────── */}
     {editModal && (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
-        <div className="w-full max-w-sm bg-white rounded-2xl shadow-xl p-6">
+        <div className="w-full max-w-md bg-white rounded-2xl shadow-xl p-6 max-h-[90vh] overflow-y-auto">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-base font-semibold text-gray-800">{t('batches.editBatch')}</h2>
             <button onClick={() => setEditModal(false)} className="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
@@ -1299,6 +1588,45 @@ export default function BatchDetail() {
                 onChange={e => setEditForm(p => ({ ...p, chick_count: e.target.value }))}
                 className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400" />
             </div>
+
+            {/* Per-lot allocation */}
+            {editLotsLoading ? (
+              <div className="flex justify-center py-3">
+                <div className="h-5 w-5 rounded-full border-4 border-amber-400 border-t-transparent animate-spin" />
+              </div>
+            ) : editChickLots.length > 1 && (
+              (() => {
+                const newCount   = Number(editForm.chick_count) || 0
+                const allocTotal = Object.values(editLotAllocs).reduce((s, v) => s + Number(v || 0), 0)
+                const matches    = newCount > 0 && Math.abs(allocTotal - newCount) < 0.5
+                return (
+                  <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-3 space-y-2.5">
+                    <p className="text-xs font-semibold text-indigo-700">Procurement lot allocation:</p>
+                    {editChickLots.map(lot => (
+                      <div key={lot.id} className="flex items-center gap-2">
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-medium text-gray-700 truncate">{fmtDate(lot.date)}{lot.supplier ? ` — ${lot.supplier}` : ''}</p>
+                          <p className="text-xs text-gray-400">{lot.invoice ? `${lot.invoice} · ` : ''}{lot.editAvail.toLocaleString('en-IN')} birds available · ₹{lot.costPerUnit}/bird</p>
+                        </div>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <input
+                            type="number" min="0" max={lot.editAvail} step="1"
+                            value={editLotAllocs[lot.id] ?? ''}
+                            onChange={ev => setEditLotAllocs(prev => ({ ...prev, [lot.id]: parseInt(ev.target.value) || 0 }))}
+                            className="w-24 rounded-lg border border-gray-300 px-2 py-1.5 text-sm text-right focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                          />
+                          <span className="text-xs text-gray-400">birds</span>
+                        </div>
+                      </div>
+                    ))}
+                    <div className={`text-xs font-semibold pt-1 border-t border-indigo-200 ${matches ? 'text-green-600' : 'text-red-500'}`}>
+                      Total: {allocTotal.toLocaleString('en-IN')} / {newCount.toLocaleString('en-IN')} birds{matches ? ' ✓' : ' — must match chick count'}
+                    </div>
+                  </div>
+                )
+              })()
+            )}
+
             <div className="flex gap-3 pt-1">
               <button type="button" onClick={() => setEditModal(false)}
                 className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition">{t('common.cancel')}</button>
@@ -1456,14 +1784,57 @@ export default function BatchDetail() {
                   className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400" />
               </div>
             </div>
-            {saleForm.kg_sold && saleForm.price_per_kg && (
-              <div className="bg-green-50 border border-green-200 rounded-lg px-4 py-2.5 flex justify-between items-center">
-                <span className="text-xs font-medium text-green-700">{t('common.total')}</span>
-                <span className="text-base font-bold text-green-700">
-                  {formatCurrency(parseFloat(saleForm.kg_sold) * parseFloat(saleForm.price_per_kg))}
-                </span>
-              </div>
-            )}
+            {(() => {
+              const calcAmt = saleForm.kg_sold && saleForm.price_per_kg
+                ? parseFloat(saleForm.kg_sold) * parseFloat(saleForm.price_per_kg)
+                : null
+              const finalAmt  = parseFloat(saleForm.final_amount)
+              const isOverride = editingSale && calcAmt != null && !isNaN(finalAmt) && Math.abs(finalAmt - calcAmt) > 0.01
+              return (
+                <>
+                  {calcAmt != null && (
+                    <div className="bg-green-50 border border-green-200 rounded-lg px-4 py-2.5 flex justify-between items-center">
+                      <span className="text-xs font-medium text-green-700">
+                        {editingSale ? 'Calculated Amount' : t('common.total')}
+                      </span>
+                      <span className={`text-base font-bold ${isOverride ? 'line-through text-gray-400' : 'text-green-700'}`}>
+                        {formatCurrency(calcAmt)}
+                      </span>
+                    </div>
+                  )}
+                  {editingSale && (
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="text-sm font-medium text-gray-700">
+                          Final Amount (₹) <span className="text-xs text-gray-400 font-normal">— override if needed</span>
+                        </label>
+                        {isOverride && (
+                          <button
+                            type="button"
+                            onClick={() => setSaleForm(p => ({ ...p, final_amount: calcAmt != null ? calcAmt.toFixed(2) : '' }))}
+                            className="text-xs text-blue-500 hover:text-blue-700"
+                          >
+                            Reset to calculated
+                          </button>
+                        )}
+                      </div>
+                      <input
+                        type="number" min="0" step="0.01"
+                        value={saleForm.final_amount}
+                        onChange={e => setSaleForm(p => ({ ...p, final_amount: e.target.value }))}
+                        placeholder={calcAmt != null ? calcAmt.toFixed(2) : '0.00'}
+                        className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
+                      />
+                      {isOverride && (
+                        <p className="text-xs text-blue-600 mt-1">
+                          Final amount adjusted: {formatCurrency(finalAmt)} (auto: {formatCurrency(calcAmt)})
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </>
+              )
+            })()}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">{t('common.date')} *</label>
               <input required type="date" value={saleForm.date}
@@ -1493,7 +1864,52 @@ export default function BatchDetail() {
       />
     )}
 
+    {/* ── Edit Distribution Modal ────────────────────────────────────────── */}
+    {editingDist && (
+      <EditDistributionModal
+        distribution={editingDist}
+        onClose={() => setEditingDist(null)}
+        onSaved={() => { setEditingDist(null); refresh() }}
+      />
+    )}
+
     {/* ── Post-close Stock Return Prompt ────────────────────────────────── */}
+    {showEditFeeModal && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+        <div className="w-full max-w-sm bg-white rounded-2xl shadow-xl p-6">
+          <h2 className="text-base font-semibold text-gray-800 mb-1">Edit Growing Fee</h2>
+          <p className="text-xs text-gray-500 mb-4">Override the auto-calculated growing fee. Balance due will be recalculated.</p>
+          <label className="block text-xs font-medium text-gray-600 mb-1">Total Growing Fee (₹)</label>
+          <input
+            type="number"
+            min="0"
+            step="0.01"
+            value={editFeeAmount}
+            onChange={e => setEditFeeAmount(e.target.value)}
+            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 mb-4"
+            placeholder="0.00"
+          />
+          {actionError && <p className="text-xs text-red-600 mb-3">{actionError}</p>}
+          <div className="flex gap-3">
+            <button
+              onClick={() => { setShowEditFeeModal(false); setActionError('') }}
+              disabled={editFeeSaving}
+              className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 transition"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleEditFeeSave}
+              disabled={editFeeSaving || editFeeAmount === ''}
+              className="flex-1 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-50 px-4 py-2 text-sm font-semibold text-white transition"
+            >
+              {editFeeSaving ? 'Saving…' : 'Save'}
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+
     {postCloseModal && (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
         <div className="w-full max-w-sm bg-white rounded-2xl shadow-xl p-6">

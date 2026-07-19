@@ -459,6 +459,7 @@ export default function CatalogSettings() {
                 activeItems={active}
                 inactiveItems={inactive}
                 isEditing={isEditing}
+                isChickType={type.name.toLowerCase() === 'chick'}
                 typeNameDraft={typeNameDraft}
                 setTypeNameDraft={setTypeNameDraft}
                 typeDescDraft={typeDescDraft}
@@ -504,7 +505,8 @@ export default function CatalogSettings() {
 
 function TypeCard({
   type, activeItems, inactiveItems,
-  isEditing, typeNameDraft, setTypeNameDraft, typeDescDraft, setTypeDescDraft,
+  isEditing, isChickType,
+  typeNameDraft, setTypeNameDraft, typeDescDraft, setTypeDescDraft,
   typeNameError, typeNameSaving,
   onEnterEdit, onDone, onSaveTypeName, onDeleteType,
   itemForm, itemFormData, setItemFormData, itemFormError, itemSaving,
@@ -600,12 +602,22 @@ function TypeCard({
               </span>
             )}
           </div>
-          <button
-            onClick={onEnterEdit}
-            className="flex items-center gap-1.5 rounded-xl border border-gray-200 bg-white hover:bg-amber-50 hover:border-amber-300 hover:text-amber-700 px-3 py-1.5 text-xs font-medium text-gray-500 transition"
-          >
-            ✏️ {type.is_system ? 'Manage Items' : 'Edit'}
-          </button>
+          {!type.is_system && (
+            <button
+              onClick={onEnterEdit}
+              className="flex items-center gap-1.5 rounded-xl border border-gray-200 bg-white hover:bg-amber-50 hover:border-amber-300 hover:text-amber-700 px-3 py-1.5 text-xs font-medium text-gray-500 transition"
+            >
+              ✏️ Edit
+            </button>
+          )}
+          {type.is_system && !isChickType && (
+            <button
+              onClick={onEnterEdit}
+              className="flex items-center gap-1.5 rounded-xl border border-gray-200 bg-white hover:bg-amber-50 hover:border-amber-300 hover:text-amber-700 px-3 py-1.5 text-xs font-medium text-gray-500 transition"
+            >
+              + Manage Items
+            </button>
+          )}
         </div>
       )}
 
@@ -622,6 +634,7 @@ function TypeCard({
               key={item.id}
               item={item}
               isEditing={isEditing}
+              isChickType={isChickType}
               itemForm={itemForm}
               itemFormData={itemFormData}
               setItemFormData={setItemFormData}
@@ -646,6 +659,7 @@ function TypeCard({
                   key={item.id}
                   item={item}
                   isEditing={isEditing}
+                  isChickType={isChickType}
                   itemForm={itemForm}
                   itemFormData={itemFormData}
                   setItemFormData={setItemFormData}
@@ -661,8 +675,8 @@ function TypeCard({
             </>
           )}
 
-          {/* Add item inline form */}
-          {isEditing && itemForm?.mode === 'add' && itemForm?.typeId === type.id && (
+          {/* Add item inline form — not shown for Chick type */}
+          {isEditing && !isChickType && itemForm?.mode === 'add' && itemForm?.typeId === type.id && (
             <div className="px-5 py-4 bg-green-50 border-t border-green-100">
               <p className="text-xs font-semibold text-green-700 mb-3">New Item</p>
               <ItemForm
@@ -677,8 +691,8 @@ function TypeCard({
             </div>
           )}
 
-          {/* Add item button — only in edit mode */}
-          {isEditing && !(itemForm?.mode === 'add' && itemForm?.typeId === type.id) && (
+          {/* Add item button — hidden for Chick type */}
+          {isEditing && !isChickType && !(itemForm?.mode === 'add' && itemForm?.typeId === type.id) && (
             <div className="px-5 py-3 bg-gray-50/60">
               <button
                 onClick={onOpenAddItem}
@@ -686,6 +700,13 @@ function TypeCard({
               >
                 + Add Item
               </button>
+            </div>
+          )}
+
+          {/* Chick type: fixed note */}
+          {isEditing && isChickType && (
+            <div className="px-5 py-3 bg-gray-50/60">
+              <p className="text-xs text-gray-400 italic">Chick type has a fixed single item. No additional items can be added.</p>
             </div>
           )}
         </div>
@@ -697,7 +718,7 @@ function TypeCard({
 // ─── ItemRow ──────────────────────────────────────────────────────────────────
 
 function ItemRow({
-  item, isEditing,
+  item, isEditing, isChickType,
   itemForm, itemFormData, setItemFormData, itemFormError, itemSaving,
   onEdit, onDelete, onToggleActive, onSaveItem, onCancelItemForm,
 }) {
@@ -748,10 +769,12 @@ function ItemRow({
               className="inline-flex items-center gap-1.5 rounded-lg border border-amber-200 bg-amber-50 hover:bg-amber-100 px-3 py-1.5 text-xs font-semibold text-amber-700 transition">
               ✏️ Edit
             </button>
-            <button onClick={onDelete}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 bg-red-50 hover:bg-red-100 px-3 py-1.5 text-xs font-semibold text-red-600 transition">
-              🗑️ Delete
-            </button>
+            {!isChickType && (
+              <button onClick={onDelete}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 bg-red-50 hover:bg-red-100 px-3 py-1.5 text-xs font-semibold text-red-600 transition">
+                🗑️ Delete
+              </button>
+            )}
           </>
         )}
       </div>

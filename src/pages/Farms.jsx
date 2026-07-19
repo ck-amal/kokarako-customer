@@ -5,6 +5,7 @@ import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
 import { useOnboarding } from '../contexts/OnboardingContext'
 import { formatDate } from '../utils/dateFormat'
+import NewBatchModal from '../components/NewBatchModal'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -513,6 +514,7 @@ export default function Farms() {
   const [editingFarm,  setEditingFarm]  = useState(null)
   const [deletingFarm, setDeletingFarm] = useState(null)
   const [advanceFarm,  setAdvanceFarm]  = useState(null)
+  const [newBatchFarm, setNewBatchFarm] = useState(null)
 
   // Filters
   const [search,         setSearch]         = useState('')
@@ -695,7 +697,7 @@ export default function Farms() {
               onEdit={() => { setEditingFarm(farm); setModalOpen(true) }}
               onDelete={() => setDeletingFarm(farm)}
               onAdvance={() => setAdvanceFarm(farm)}
-              onAddBatch={() => navigate('/batches', { state: { openNew: true, farmId: farm.id } })}
+              onAddBatch={() => setNewBatchFarm(farm)}
               canEdit={canEdit}
               canDelete={canDelete}
             />
@@ -724,6 +726,13 @@ export default function Farms() {
           farm={advanceFarm}
           onClose={() => setAdvanceFarm(null)}
           onSaved={() => setAdvanceFarm(null)}
+        />
+      )}
+      {newBatchFarm && (
+        <NewBatchModal
+          farmId={newBatchFarm.id}
+          onClose={() => setNewBatchFarm(null)}
+          onSaved={() => { setNewBatchFarm(null); fetchData() }}
         />
       )}
     </div>

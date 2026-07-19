@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState } from 'react'
+import { createContext, useContext, useEffect, useRef, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { getSubscriptionState } from '../lib/subscription'
 
@@ -11,17 +11,24 @@ export function AuthProvider({ children }) {
   const [serviceBlocked,  setServiceBlocked]  = useState(null) // null | 'suspended' | 'cancelled'
   const [loading,         setLoading]         = useState(true)
 
+  // true after the first loadOrgContext completes — prevents spinner on background reloads
+  // (token refresh, tab focus, refreshOrg calls)
+  const initialized = useRef(false)
+
   // Load org + role for a given auth user
   async function loadOrgContext(authUser) {
     if (!authUser) {
       setUser(null)
       setOrganization(null)
       setUserRole(null)
+      setServiceBlocked(null)
       setLoading(false)
       return
     }
 
-    setLoading(true)
+    // Only show the full-screen loading spinner on the very first load.
+    // After that, data refreshes happen silently in the background.
+    if (!initialized.current) setLoading(true)
     setUser(authUser)
 
     const { data: ouRows } = await supabase
@@ -60,6 +67,7 @@ export function AuthProvider({ children }) {
     }
 
     setLoading(false)
+    initialized.current = true
   }
 
   // Switch active organization (for multi-org users)
@@ -80,13 +88,27 @@ export function AuthProvider({ children }) {
   }
 
   useEffect(() => {
-    // Initial session check
-    supabase.auth.getSession().then(({ data }) => {
-      loadOrgContext(data.session?.user ?? null)
-    })
+    // onAuthStateChange fires INITIAL_SESSION on subscribe, so no need for a
+    // separate getSession() call — that would double-invoke loadOrgContext.
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'TOKEN_REFRESHED' || event === 'USER_UPDATED') {
+        // JWT silently refreshed (happens on tab focus or every ~50 min).
+        // Just keep the user object current — no loading state, no DB re-fetch.
+        if (session?.user) setUser(session.user)
+        return
+      }
 
-    // Listen for auth state changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (event === 'SIGNED_OUT') {
+        initialized.current = false // allow spinner on next login
+        setUser(null)
+        setOrganization(null)
+        setUserRole(null)
+        setServiceBlocked(null)
+        setLoading(false)
+        return
+      }
+
+      // INITIAL_SESSION, SIGNED_IN, PASSWORD_RECOVERY — full org context load
       loadOrgContext(session?.user ?? null)
     })
 
