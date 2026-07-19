@@ -767,6 +767,7 @@ export default function BatchDetail() {
         price_per_kg:    price,
         date:            saleForm.date,
         notes:           saleForm.notes?.trim() || null,
+        status:          'pending',
         organization_id: organization?.id,
         created_by_id:   user?.id,
         created_by_name: userName,

@@ -304,6 +304,7 @@ function SaleModal({ activeBatch, vendors, onClose, onSaved }) {
       kg_sold:         parseFloat(form.kg_sold),
       price_per_kg:    parseFloat(form.price_per_kg),
       date:            form.date,
+      status:          'pending',
       organization_id: organization?.id,
       created_by_id:   user?.id,
       created_by_name: userName,
