@@ -149,16 +149,16 @@ export default function DistributionModal({ farmId, initialBatchId, onClose, onS
     setError('')
     const userName = user?.user_metadata?.full_name || user?.email || 'Unknown'
 
-    // Build list of (procurementId | null, qty, costPerUnit) rows to insert
+    // Build list of (procurementId | null, qty, costPerUnit, extraExpensePerUnit) rows to insert
     const allocRows = multiLot
       ? Object.entries(lotAllocs).filter(([, qty]) => Number(qty) > 0).map(([id, qty]) => {
           const lot = procLots.find(l => l.id === id)
-          return { procId: id, qty: Number(qty), costPerUnit: lot?.costPerUnit || 0 }
+          return { procId: id, qty: Number(qty), costPerUnit: lot?.costPerUnit || 0, extraExpensePerUnit: lot?.extraExpensePerUnit || 0 }
         })
-      : [{ procId: procLots[0]?.id || null, qty: canonicalQty, costPerUnit: procLots[0]?.costPerUnit || 0 }]
+      : [{ procId: procLots[0]?.id || null, qty: canonicalQty, costPerUnit: procLots[0]?.costPerUnit || 0, extraExpensePerUnit: procLots[0]?.extraExpensePerUnit || 0 }]
 
     let anyFailed = false
-    for (const { procId, qty, costPerUnit } of allocRows) {
+    for (const { procId, qty, costPerUnit, extraExpensePerUnit } of allocRows) {
       const { data: dist, error: distErr } = await supabase.from('distributions').insert({
         farm_id:         farmId,
         batch_id:        batchId || null,
@@ -189,6 +189,8 @@ export default function DistributionModal({ farmId, initialBatchId, onClose, onS
         item_name: selectedItem.name, item_type: typeName,
         quantity: qty, unit: selectedItem.unit,
         cost_per_unit: costPerUnit, total_cost: roundCurrency(qty * costPerUnit),
+        extra_cost_per_unit: extraExpensePerUnit,
+        extra_total_cost: extraExpensePerUnit > 0 ? roundCurrency(qty * extraExpensePerUnit) : 0,
         date: form.date, organization_id: organization?.id,
         created_by_id: user?.id, created_by_name: userName,
       })

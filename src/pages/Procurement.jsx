@@ -93,7 +93,7 @@ function ProcurementModal({ onClose, onSaved }) {
   const [suppliers, setSuppliers]   = useState([])
   const [accounts, setAccounts]     = useState([])
   const [supplierOutstanding, setSupplierOutstanding] = useState(null)
-  const newLine = () => ({ item_type_id: '', item_id: '', quantity: '', cost_per_unit: '', cost: '', items: [] })
+  const newLine = () => ({ item_type_id: '', item_id: '', quantity: '', cost_per_unit: '', cost: '', items: [], extra_enabled: false, extra_per_unit: '0' })
   const [lines, setLines] = useState([newLine()])
   const [header, setHeader] = useState({
     supplier_id:    '',
@@ -123,7 +123,7 @@ function ProcurementModal({ onClose, onSaved }) {
   useEffect(() => {
     async function loadInitial() {
       const [{ data: types }, { data: sups }, { data: accs }] = await Promise.all([
-        supabase.from('item_types').select('id, name').order('name'),
+        supabase.from('item_types').select('id, name, has_extra_expense, extra_expense_type, extra_expense_value').order('name'),
         supabase.from('suppliers').select('id, name, business_name').eq('is_active', true).order('name'),
         supabase.from('accounts').select('id, name, type').eq('is_active', true).order('name'),
       ])
@@ -145,11 +145,16 @@ function ProcurementModal({ onClose, onSaved }) {
     setLines(prev => prev.map((ln, idx) => (idx === i ? { ...ln, ...patch } : ln)))
   }
 
-  // When a line's item type changes: reload its catalog items
+  // When a line's item type changes: reload its catalog items and seed ancillary expense
   async function handleLineTypeChange(i, typeId) {
-    updateLine(i, { item_type_id: typeId, item_id: '', cost_per_unit: '', cost: '', items: [] })
+    updateLine(i, { item_type_id: typeId, item_id: '', cost_per_unit: '', cost: '', items: [], extra_enabled: false, extra_per_unit: '0' })
     const items = await fetchItems(typeId)
-    updateLine(i, { items, item_id: items[0]?.id || '' })
+    const typeRule = itemTypes.find(t => t.id === typeId)
+    const hasRule = typeRule?.has_extra_expense && typeRule?.extra_expense_type && typeRule?.extra_expense_value != null
+    const autoPerUnit = hasRule && typeRule.extra_expense_type === 'fixed_per_unit'
+      ? String(typeRule.extra_expense_value)
+      : '0'
+    updateLine(i, { items, item_id: items[0]?.id || '', extra_enabled: hasRule, extra_per_unit: autoPerUnit })
   }
 
   // Per-line field setter with auto-calc for quantity / cost_per_unit
@@ -161,6 +166,14 @@ function ProcurementModal({ onClose, onSaved }) {
         const qty = parseFloat(field === 'quantity' ? value : ln.quantity) || 0
         const cpu = parseFloat(field === 'cost_per_unit' ? value : ln.cost_per_unit) || 0
         next.cost = qty && cpu ? String(roundCurrency(qty * cpu)) : next.cost
+      }
+      // Auto-recompute percentage ancillary when cost_per_unit changes
+      if (field === 'cost_per_unit' && next.extra_enabled) {
+        const typeRule = itemTypes.find(t => t.id === ln.item_type_id)
+        if (typeRule?.extra_expense_type === 'percentage' && typeRule?.extra_expense_value != null) {
+          const cpu = parseFloat(value) || 0
+          next.extra_per_unit = String(roundCurrency(cpu * typeRule.extra_expense_value / 100))
+        }
       }
       return next
     }))
@@ -277,7 +290,9 @@ function ProcurementModal({ onClose, onSaved }) {
       if (!cost || cost < 0) { setError(`${t('procurement.totalCost')} *`); return }
       const cpu = parseFloat(ln.cost_per_unit) || (qty > 0 ? roundCurrency(cost / qty) : 0)
       const typeName = itemTypes.find(it => it.id === ln.item_type_id)?.name?.toLowerCase() ?? 'other'
-      prepared.push({ item, item_id: ln.item_id, qty, cost, cpu, typeName })
+      const extraEnabled = !!ln.extra_enabled
+      const extraPerUnit = extraEnabled ? (parseFloat(ln.extra_per_unit) || 0) : 0
+      prepared.push({ item, item_id: ln.item_id, qty, cost, cpu, typeName, extraEnabled, extraPerUnit })
     }
 
     setSaving(true)
@@ -297,6 +312,8 @@ function ProcurementModal({ onClose, onSaved }) {
         date:          header.date,
         invoice_number: header.invoice_number.trim() || null,
         notes:         header.notes.trim() || null,
+        has_extra_expense:     p.extraEnabled,
+        extra_expense_per_unit: p.extraPerUnit,
         created_by_id:   user?.id,
         created_by_name: userName,
       }).select('id').single()
@@ -595,6 +612,44 @@ function ProcurementModal({ onClose, onSaved }) {
                       />
                     </div>
                   </div>
+
+                  {/* Ancillary expense — shown only if item type has a rule configured */}
+                  {(() => {
+                    const typeRule = itemTypes.find(t => t.id === ln.item_type_id)
+                    if (!typeRule?.has_extra_expense) return null
+                    const qty = parseFloat(ln.quantity) || 0
+                    const epu = parseFloat(ln.extra_per_unit) || 0
+                    return (
+                      <div className="mt-2 rounded-lg border border-orange-200 bg-orange-50 px-3 py-2.5">
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input type="checkbox" checked={ln.extra_enabled}
+                            onChange={e => updateLine(i, { extra_enabled: e.target.checked })}
+                            className="h-4 w-4 rounded border-gray-300 accent-amber-500"
+                          />
+                          <span className="text-xs font-semibold text-orange-700">Add ancillary expense? (transport, loading/unloading)</span>
+                        </label>
+                        {ln.extra_enabled && (
+                          <div className="mt-2 flex items-center gap-2 flex-wrap">
+                            <div className="flex items-center gap-1.5">
+                              <input
+                                type="number" min="0" step="0.01"
+                                value={ln.extra_per_unit}
+                                onChange={e => updateLine(i, { extra_per_unit: e.target.value })}
+                                placeholder="0"
+                                className="w-24 rounded-lg border border-orange-300 bg-white px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400"
+                              />
+                              <span className="text-xs text-gray-500">₹ per {item?.unit || 'unit'}</span>
+                            </div>
+                            {qty > 0 && epu > 0 && (
+                              <span className="text-xs font-semibold text-orange-700">
+                                Total ancillary: {formatCurrency(qty * epu)}
+                              </span>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })()}
                 </div>
               )
             })}

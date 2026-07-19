@@ -877,10 +877,13 @@ export default function BatchDetail() {
   const feedCost  = roundCurrency(expenses.filter(e => e.item_type === 'feed').reduce((s, e) => s + Number(e.total_cost || 0), 0) - feedReturnCredit)
   const medCost   = roundCurrency(expenses.filter(e => e.item_type === 'medicine').reduce((s, e) => s + Number(e.total_cost || 0), 0) - medReturnCredit)
 
+  const feedAncillaryCost = roundCurrency(expenses.filter(e => e.item_type === 'feed').reduce((s, e) => s + Number(e.extra_total_cost || 0), 0))
+  const medAncillaryCost  = roundCurrency(expenses.filter(e => e.item_type === 'medicine').reduce((s, e) => s + Number(e.extra_total_cost || 0), 0))
+
   const chickCost = roundCurrency(chickPurchases.reduce((s, p) => s + Number(p.total_cost || 0), 0))
 
   const growingFee    = (!isActive && batch.growing_fee_total != null) ? Number(batch.growing_fee_total) : 0
-  const totalExpenses = chickCost + feedCost + medCost + growingFee
+  const totalExpenses = chickCost + feedCost + medCost + growingFee + feedAncillaryCost + medAncillaryCost
   const profit        = revenue - totalExpenses
   const margin        = revenue > 0 ? (profit / revenue) * 100 : 0
 
@@ -1099,7 +1102,9 @@ export default function BatchDetail() {
               { label: t('batches.revenue'),        value: formatCurrency(revenue),                                      color: '#15803d', bold: false },
               { label: t('batches.chickCost'),      value: formatCurrency(chickCost),                                   color: '#dc2626', bold: false, breakdown: chickPurchases },
               { label: t('batches.feedCost'),       value: formatCurrency(feedCost),                                    color: '#dc2626', bold: false },
+              ...(feedAncillaryCost > 0 ? [{ label: 'Feed ancillary (transport/labour)', value: formatCurrency(feedAncillaryCost), color: '#ea580c', bold: false }] : []),
               { label: t('batches.medicineCost'),   value: formatCurrency(medCost),                                     color: '#dc2626', bold: false },
+              ...(medAncillaryCost > 0 ? [{ label: 'Medicine ancillary', value: formatCurrency(medAncillaryCost), color: '#ea580c', bold: false }] : []),
               ...(growingFee > 0 ? [{ label: t('growingFees.title'), value: formatCurrency(growingFee), color: '#7c3aed', bold: false }] : []),
               { label: t('batches.totalExpenses'),  value: formatCurrency(totalExpenses),                               color: '#dc2626', bold: true },
               { label: t('batches.grossProfit'),    value: (profit < 0 ? '−' : '') + formatCurrency(Math.abs(profit)),  color: profit >= 0 ? '#15803d' : '#dc2626', bold: true },

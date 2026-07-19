@@ -88,6 +88,10 @@ export default function CatalogSettings() {
   const [typeDescDraft, setTypeDescDraft] = useState('')
   const [typeNameError, setTypeNameError] = useState('')
   const [typeNameSaving, setTypeNameSaving] = useState(false)
+  // Ancillary expense draft for the type being edited
+  const [typeExtraHas,   setTypeExtraHas]   = useState(false)
+  const [typeExtraType,  setTypeExtraType]  = useState('fixed_per_unit')
+  const [typeExtraValue, setTypeExtraValue] = useState('')
 
   // Item form (add or edit), belongs to a specific card
   const [itemForm, setItemForm] = useState(null)   // { mode: 'add'|'edit', typeId, itemId? }
@@ -104,7 +108,7 @@ export default function CatalogSettings() {
     if (!orgId) return
     setLoading(true)
     const [{ data: types }, { data: items }] = await Promise.all([
-      supabase.from('item_types').select('id, name, description, is_system').eq('organization_id', orgId).order('name'),
+      supabase.from('item_types').select('id, name, description, is_system, has_extra_expense, extra_expense_type, extra_expense_value').eq('organization_id', orgId).order('name'),
       supabase.from('items').select('id, item_type_id, name, unit, description, is_active, kg_per_unit, ml_per_unit').eq('organization_id', orgId).order('name'),
     ])
     const grouped = {}
@@ -187,6 +191,9 @@ export default function CatalogSettings() {
     setTypeNameDraft(type.name)
     setTypeDescDraft(type.description || '')
     setTypeNameError('')
+    setTypeExtraHas(type.has_extra_expense || false)
+    setTypeExtraType(type.extra_expense_type || 'fixed_per_unit')
+    setTypeExtraValue(type.extra_expense_value != null ? String(type.extra_expense_value) : '')
     setItemForm(null)
   }
 
@@ -197,13 +204,27 @@ export default function CatalogSettings() {
 
   async function handleSaveTypeName(typeId) {
     const type = itemTypes.find(t => t.id === typeId)
-    if (type?.is_system) return
+    const extraPayload = {
+      has_extra_expense:  typeExtraHas,
+      extra_expense_type:  typeExtraHas ? typeExtraType : null,
+      extra_expense_value: typeExtraHas && typeExtraValue !== '' ? parseFloat(typeExtraValue) : null,
+    }
+
+    if (type?.is_system) {
+      setTypeNameSaving(true)
+      await supabase.from('item_types').update(extraPayload).eq('id', typeId)
+      setTypeNameSaving(false)
+      await loadAll()
+      return
+    }
+
     setTypeNameError('')
     if (!typeNameDraft.trim()) { setTypeNameError(t('errors.required')); return }
     setTypeNameSaving(true)
     const { error } = await supabase.from('item_types').update({
       name: typeNameDraft.trim(),
       description: typeDescDraft.trim() || null,
+      ...extraPayload,
     }).eq('id', typeId)
     setTypeNameSaving(false)
     if (error) { setTypeNameError(error.message); return }
@@ -466,6 +487,12 @@ export default function CatalogSettings() {
                 setTypeDescDraft={setTypeDescDraft}
                 typeNameError={typeNameError}
                 typeNameSaving={typeNameSaving}
+                typeExtraHas={typeExtraHas}
+                setTypeExtraHas={setTypeExtraHas}
+                typeExtraType={typeExtraType}
+                setTypeExtraType={setTypeExtraType}
+                typeExtraValue={typeExtraValue}
+                setTypeExtraValue={setTypeExtraValue}
                 onEnterEdit={() => enterEditMode(type)}
                 onDone={exitEditMode}
                 onSaveTypeName={() => handleSaveTypeName(type.id)}
@@ -508,6 +535,7 @@ function TypeCard({
   isEditing, isChickType,
   typeNameDraft, setTypeNameDraft, typeDescDraft, setTypeDescDraft,
   typeNameError, typeNameSaving,
+  typeExtraHas, setTypeExtraHas, typeExtraType, setTypeExtraType, typeExtraValue, setTypeExtraValue,
   onEnterEdit, onDone, onSaveTypeName, onDeleteType,
   itemForm, itemFormData, setItemFormData, itemFormError, itemSaving,
   onOpenAddItem, onOpenEditItem, onCancelItemForm, onSaveItem,
@@ -557,15 +585,13 @@ function TypeCard({
               )}
             </div>
             <div className="flex gap-2 shrink-0 mt-0.5">
-              {!type.is_system && (
-                <button
-                  onClick={onSaveTypeName}
-                  disabled={typeNameSaving}
-                  className="rounded-xl bg-amber-500 hover:bg-amber-600 disabled:opacity-60 px-3 py-2 text-xs font-semibold text-white transition"
-                >
-                  {typeNameSaving ? '…' : '✓ Save'}
-                </button>
-              )}
+              <button
+                onClick={onSaveTypeName}
+                disabled={typeNameSaving}
+                className="rounded-xl bg-amber-500 hover:bg-amber-600 disabled:opacity-60 px-3 py-2 text-xs font-semibold text-white transition"
+              >
+                {typeNameSaving ? '…' : '✓ Save'}
+              </button>
               <button
                 onClick={onDone}
                 className="rounded-xl border border-gray-300 bg-white hover:bg-gray-50 px-3 py-2 text-xs font-medium text-gray-600 transition"
@@ -583,6 +609,45 @@ function TypeCard({
               )}
             </div>
           </div>
+
+          {/* Ancillary expense config */}
+          <div className="mt-3 rounded-xl border border-orange-200 bg-orange-50 px-4 py-3 space-y-2">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" checked={typeExtraHas} onChange={e => setTypeExtraHas(e.target.checked)}
+                className="h-4 w-4 rounded border-gray-300 accent-amber-500" />
+              <span className="text-xs font-semibold text-orange-700">Enable ancillary expense (transport, labour, etc.)</span>
+            </label>
+            {typeExtraHas && (
+              <div className="space-y-2 pt-1">
+                <div className="flex gap-4">
+                  <label className="flex items-center gap-1.5 cursor-pointer">
+                    <input type="radio" name={`extra-type-${type.id}`} value="fixed_per_unit"
+                      checked={typeExtraType === 'fixed_per_unit'} onChange={() => setTypeExtraType('fixed_per_unit')}
+                      className="accent-amber-500" />
+                    <span className="text-xs text-gray-700">Fixed ₹ per unit</span>
+                  </label>
+                  <label className="flex items-center gap-1.5 cursor-pointer">
+                    <input type="radio" name={`extra-type-${type.id}`} value="percentage"
+                      checked={typeExtraType === 'percentage'} onChange={() => setTypeExtraType('percentage')}
+                      className="accent-amber-500" />
+                    <span className="text-xs text-gray-700">% of unit price</span>
+                  </label>
+                </div>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number" min="0" step="0.01"
+                    value={typeExtraValue}
+                    onChange={e => setTypeExtraValue(e.target.value)}
+                    placeholder={typeExtraType === 'percentage' ? 'e.g. 20' : 'e.g. 50'}
+                    className="w-28 rounded-lg border border-orange-300 bg-white px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400"
+                  />
+                  <span className="text-xs text-gray-500">
+                    {typeExtraType === 'percentage' ? '% of unit price' : '₹ per unit'}
+                  </span>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       ) : (
         /* View mode header */
@@ -599,6 +664,11 @@ function TypeCard({
             {type.is_system && (
               <span className="rounded-full bg-blue-50 border border-blue-200 px-2 py-0.5 text-xs font-medium text-blue-600" title="System type — name cannot be changed or deleted">
                 🔒 System
+              </span>
+            )}
+            {type.has_extra_expense && type.extra_expense_value != null && (
+              <span className="rounded-full bg-orange-50 border border-orange-200 px-2 py-0.5 text-xs font-medium text-orange-600">
+                +{type.extra_expense_type === 'percentage' ? `${type.extra_expense_value}%` : `₹${type.extra_expense_value}`} ancillary
               </span>
             )}
           </div>

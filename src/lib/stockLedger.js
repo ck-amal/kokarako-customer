@@ -117,7 +117,7 @@ export async function getProcurementLots({ itemId, itemName, organizationId }) {
 
   let query = supabase
     .from('procurement')
-    .select('id, date, quantity, unit, cost_per_unit, invoice_number, suppliers(name)')
+    .select('id, date, quantity, unit, cost_per_unit, invoice_number, suppliers(name), has_extra_expense, extra_expense_per_unit')
     .eq('organization_id', organizationId)
     .order('date', { ascending: true })
 
@@ -146,15 +146,16 @@ export async function getProcurementLots({ itemId, itemName, organizationId }) {
     const consumed  = consumedMap[p.id] || 0
     const procured  = Number(p.quantity)
     return {
-      id:          p.id,
-      date:        p.date,
-      supplier:    p.suppliers?.name || null,
-      invoice:     p.invoice_number || null,
+      id:                  p.id,
+      date:                p.date,
+      supplier:            p.suppliers?.name || null,
+      invoice:             p.invoice_number || null,
       procured,
-      unit:        p.unit,
-      costPerUnit: Number(p.cost_per_unit || 0),
+      unit:                p.unit,
+      costPerUnit:         Number(p.cost_per_unit || 0),
+      extraExpensePerUnit: p.has_extra_expense ? Number(p.extra_expense_per_unit || 0) : 0,
       consumed,
-      remaining:   Math.max(0, procured - consumed),
+      remaining:           Math.max(0, procured - consumed),
     }
   })
 }
