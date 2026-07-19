@@ -1431,7 +1431,7 @@ export default function BatchDetail() {
             <div className="flex items-center justify-between mb-4">
               <h3 style={{ color: 'var(--text)' }} className="text-sm font-semibold">{t('growingFees.title')}</h3>
               <div className="flex items-center gap-2">
-                {canEdit && (
+                {canEdit && status !== 'paid' && status !== 'overpaid' && (
                   <button
                     onClick={() => { setEditFeeAmount(String(batch.growing_fee_total)); setActionError(''); setShowEditFeeModal(true) }}
                     className="text-xs text-blue-600 hover:text-blue-800 px-2 py-1 rounded border border-blue-200 hover:bg-blue-50 transition"
@@ -1525,7 +1525,7 @@ export default function BatchDetail() {
                 {t('growingFees.recordPaymentLink')}
               </a>
             )}
-            {canEdit && (
+            {canEdit && status !== 'paid' && status !== 'overpaid' && (
               <button
                 onClick={recalcGrowingFee}
                 disabled={saving}
