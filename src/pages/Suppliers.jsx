@@ -21,29 +21,43 @@ function currentMonthRange() {
 function SupplierModal({ supplier, onClose, onSaved }) {
   const { organization } = useAuth()
   const { t } = useTranslation()
-  const [form, setForm] = useState({
-    name:            supplier?.name            ?? '',
-    phone:           supplier?.phone           ?? '',
-    address:         supplier?.address         ?? '',
-    notes:           supplier?.notes           ?? '',
-    opening_balance: supplier?.opening_balance != null ? String(supplier.opening_balance) : '0',
-  })
-  const [saving, setSaving] = useState(false)
-  const [error, setError]   = useState('')
 
   const isEdit = !!supplier
+
+  // On edit: pre-fill with computed outstanding so the user sees the live balance.
+  // On create: pre-fill with 0 (pure opening balance, no transactions yet).
+  const initialBalance = isEdit
+    ? String(supplier.outstanding ?? supplier.opening_balance ?? 0)
+    : '0'
+
+  const [form, setForm] = useState({
+    name:    supplier?.name    ?? '',
+    phone:   supplier?.phone   ?? '',
+    address: supplier?.address ?? '',
+    notes:   supplier?.notes   ?? '',
+    balance: initialBalance,
+  })
+  const [saving,   setSaving]   = useState(false)
+  const [error,    setError]    = useState('')
+  const [confirm,  setConfirm]  = useState(false) // pending-confirm state
 
   function set(field) {
     return e => setForm(f => ({ ...f, [field]: e.target.value }))
   }
 
-  async function handleSubmit(e) {
-    e.preventDefault()
+  async function doSave() {
     setError('')
-    if (!form.name.trim()) { setError(t('errors.required')); return }
     setSaving(true)
 
-    const openingBal = parseFloat(form.opening_balance) || 0
+    const enteredBalance = parseFloat(form.balance) || 0
+
+    // On edit: back-calculate opening_balance so that
+    //   opening_balance + totalPurchased - totalPaid = enteredBalance
+    // On create: totalPurchased = totalPaid = 0, so opening_balance = enteredBalance
+    const totalPurchased = Number(supplier?.totalPurchased || 0)
+    const totalPaid      = Number(supplier?.totalPaid      || 0)
+    const openingBal     = enteredBalance - totalPurchased + totalPaid
+
     const payload = {
       name:            form.name.trim(),
       phone:           form.phone.trim()   || null,
@@ -60,6 +74,20 @@ function SupplierModal({ supplier, onClose, onSaved }) {
     onSaved()
   }
 
+  function handleSubmit(e) {
+    e.preventDefault()
+    if (!form.name.trim()) { setError(t('errors.required')); return }
+
+    // Show confirmation if outstanding balance changed
+    const enteredBalance = parseFloat(form.balance) || 0
+    const originalBalance = parseFloat(initialBalance) || 0
+    if (isEdit && Math.abs(enteredBalance - originalBalance) > 0.005) {
+      setConfirm(true)
+      return
+    }
+    doSave()
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
       <div className="w-full max-w-md bg-white rounded-2xl shadow-xl p-6">
@@ -69,6 +97,30 @@ function SupplierModal({ supplier, onClose, onSaved }) {
           </h2>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
         </div>
+
+        {/* Confirmation overlay */}
+        {confirm && (
+          <div className="mb-4 rounded-xl bg-amber-50 border border-amber-200 p-4">
+            <p className="text-sm font-semibold text-amber-800 mb-1">Confirm balance change</p>
+            <p className="text-sm text-amber-700 mb-3">
+              Outstanding will change from{' '}
+              <strong>₹{Math.abs(parseFloat(initialBalance)).toLocaleString('en-IN')}{parseFloat(initialBalance) < 0 ? ' (credit)' : ''}</strong>
+              {' '}to{' '}
+              <strong>₹{Math.abs(parseFloat(form.balance) || 0).toLocaleString('en-IN')}{(parseFloat(form.balance) || 0) < 0 ? ' (credit)' : ''}</strong>.
+              Are you sure?
+            </p>
+            <div className="flex gap-2">
+              <button type="button" onClick={() => setConfirm(false)}
+                className="flex-1 rounded-lg border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 transition">
+                Cancel
+              </button>
+              <button type="button" onClick={doSave} disabled={saving}
+                className="flex-1 rounded-lg bg-amber-500 hover:bg-amber-600 disabled:opacity-60 px-3 py-1.5 text-sm font-semibold text-white transition">
+                {saving ? 'Saving…' : 'Yes, update'}
+              </button>
+            </div>
+          </div>
+        )}
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
@@ -106,18 +158,21 @@ function SupplierModal({ supplier, onClose, onSaved }) {
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              Opening Balance (₹) <span className="text-gray-400 font-normal">(optional)</span>
+              {isEdit ? 'Outstanding Balance (₹)' : 'Opening Balance (₹)'}
+              {' '}<span className="text-gray-400 font-normal">(optional)</span>
             </label>
             <div className="relative">
               <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">₹</span>
               <input
-                type="number" step="0.01" value={form.opening_balance} onChange={set('opening_balance')}
+                type="number" step="0.01" value={form.balance} onChange={set('balance')}
                 placeholder="0"
                 className="w-full rounded-lg border border-gray-300 pl-7 pr-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
               />
             </div>
             <p className="text-xs text-gray-400 mt-1">
-              Positive = amount owed to supplier before using this system. Negative = advance already given to supplier.
+              {isEdit
+                ? 'Current outstanding balance. Positive = we owe supplier, Negative = advance credit.'
+                : 'Positive = amount owed to supplier before using this system. Negative = advance already given.'}
             </p>
           </div>
 
