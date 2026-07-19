@@ -788,6 +788,21 @@ function EditProcurementModal({ proc, onClose, onSaved }) {
       }
     }
 
+    // 3. If cost_per_unit changed, update farm_expenses for all distributions from this procurement
+    if (newCpu !== Number(proc.cost_per_unit)) {
+      const { data: dists } = await supabase.from('distributions')
+        .select('id, quantity')
+        .eq('procurement_id', proc.id)
+        .eq('organization_id', organization?.id)
+
+      for (const dist of (dists || [])) {
+        await supabase.from('farm_expenses').update({
+          cost_per_unit: newCpu,
+          total_cost:    roundCurrency(Number(dist.quantity) * newCpu),
+        }).eq('distribution_id', dist.id).eq('organization_id', organization?.id)
+      }
+    }
+
     onSaved()
   }
 

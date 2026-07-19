@@ -303,6 +303,8 @@ export default function BatchDetail() {
   const [showEditFeeModal, setShowEditFeeModal] = useState(false)
   const [editFeeAmount,    setEditFeeAmount]    = useState('')
   const [editFeeSaving,    setEditFeeSaving]    = useState(false)
+  const [pendingFarmAdvs,  setPendingFarmAdvs]  = useState(null) // { advances: [], recalcData: {} }
+
 
   async function load() {
     const [
@@ -583,10 +585,7 @@ export default function BatchDetail() {
     }
   }
 
-  async function recalcGrowingFee() {
-    setActionError('')
-    setSaving(true)
-    // Re-fetch feed distributions to compute FCR fresh
+  async function _computeFCRData() {
     const { data: feedDists } = await supabase
       .from('distributions')
       .select('id, item_name, quantity, returned_quantity, unit')
@@ -603,14 +602,58 @@ export default function BatchDetail() {
       const netQty = Math.max(0, Number(d.quantity) - Number(d.returned_quantity || 0))
       return s + (kpu != null ? netQty * Number(kpu) : 0)
     }, 0)
-    const userName = user?.user_metadata?.full_name || user?.email || 'Unknown'
-    const fcr = totalSaleKg > 0 && totalFeedKg > 0 ? +(totalFeedKg / totalSaleKg).toFixed(2) : null
+    const userName  = user?.user_metadata?.full_name || user?.email || 'Unknown'
+    const fcr       = totalSaleKg > 0 && totalFeedKg > 0 ? +(totalFeedKg / totalSaleKg).toFixed(2) : null
     const fcrRating = fcr == null ? null : fcr <= 1.8 ? 'Excellent' : fcr <= 2.1 ? 'Good' : fcr <= 2.5 ? 'Average' : 'Poor'
+    return { feedDists, totalSaleKg, totalFeedKg, userName, fcr, fcrRating }
+  }
+
+  async function _doRecalc({ totalSaleKg, totalFeedKg, userName, fcr, fcrRating, farmLevelAdvsToApply }) {
+    // Link any farm-level advances to this batch before recalculating (so calculateGrowingFee picks them up)
+    if (farmLevelAdvsToApply?.length) {
+      const totalFarmAdv = farmLevelAdvsToApply.reduce((s, a) => s + Number(a.amount), 0)
+      await supabase.from('growing_fee_advances').update({ batch_id: batchId }).in('id', farmLevelAdvsToApply.map(a => a.id))
+      const { data: cb } = await supabase.from('batches').select('total_advances').eq('id', batchId).eq('organization_id', organization?.id).single()
+      await supabase.from('batches').update({ total_advances: Number(cb?.total_advances || 0) + totalFarmAdv }).eq('id', batchId)
+    }
     await supabase.from('batches').update({
       total_feed_kg: totalFeedKg || null, total_sale_kg: totalSaleKg || null,
       fcr, fcr_rating: fcrRating, updated_by_id: user?.id, updated_by_name: userName, updated_at: new Date().toISOString(),
     }).eq('id', batchId)
     await calculateGrowingFee({ fcr, totalSaleKg, forceRecalc: true })
+  }
+
+  async function recalcGrowingFee() {
+    setActionError('')
+    setSaving(true)
+    const fcrData = await _computeFCRData()
+
+    // Check for unlinked farm-level advances
+    const { data: farmLevelAdvs } = await supabase
+      .from('growing_fee_advances')
+      .select('id, amount, payment_date')
+      .is('batch_id', null)
+      .eq('farm_id', farmId)
+      .eq('organization_id', organization?.id)
+
+    if (farmLevelAdvs?.length) {
+      // Pause and ask the user
+      setPendingFarmAdvs({ advances: farmLevelAdvs, recalcData: fcrData })
+      setSaving(false)
+      return
+    }
+
+    await _doRecalc({ ...fcrData, farmLevelAdvsToApply: [] })
+    setSaving(false)
+    refresh()
+  }
+
+  async function handleFarmAdvDecision(apply) {
+    if (!pendingFarmAdvs) return
+    setSaving(true)
+    const { advances, recalcData } = pendingFarmAdvs
+    setPendingFarmAdvs(null)
+    await _doRecalc({ ...recalcData, farmLevelAdvsToApply: apply ? advances : [] })
     setSaving(false)
     refresh()
   }
@@ -1916,6 +1959,45 @@ export default function BatchDetail() {
               className="flex-1 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-50 px-4 py-2 text-sm font-semibold text-white transition"
             >
               {editFeeSaving ? 'Saving…' : 'Save'}
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+
+    {pendingFarmAdvs && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+        <div className="w-full max-w-sm bg-white rounded-2xl shadow-xl p-6">
+          <div className="text-center mb-4">
+            <p className="text-3xl mb-2">💰</p>
+            <h2 className="text-lg font-semibold text-gray-800 mb-1">Apply Pending Farm Advances?</h2>
+            <p className="text-sm text-gray-600">
+              This farm has {pendingFarmAdvs.advances.length} pending advance{pendingFarmAdvs.advances.length > 1 ? 's' : ''} totalling{' '}
+              <strong>{formatCurrency(pendingFarmAdvs.advances.reduce((s, a) => s + Number(a.amount), 0))}</strong>{' '}
+              not linked to any batch.
+            </p>
+          </div>
+          <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-4 space-y-1">
+            {pendingFarmAdvs.advances.map(a => (
+              <div key={a.id} className="flex justify-between text-sm">
+                <span className="text-amber-700">{a.payment_date}</span>
+                <span className="font-semibold text-amber-800">{formatCurrency(a.amount)}</span>
+              </div>
+            ))}
+          </div>
+          <p className="text-xs text-gray-500 mb-4 text-center">Applying will link these to this batch and reduce the growing fee balance.</p>
+          <div className="flex gap-3">
+            <button
+              onClick={() => handleFarmAdvDecision(false)}
+              className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 transition"
+            >
+              Skip
+            </button>
+            <button
+              onClick={() => handleFarmAdvDecision(true)}
+              className="flex-1 rounded-lg bg-green-600 hover:bg-green-700 px-4 py-2 text-sm font-semibold text-white transition"
+            >
+              Apply {formatCurrency(pendingFarmAdvs.advances.reduce((s, a) => s + Number(a.amount), 0))}
             </button>
           </div>
         </div>
