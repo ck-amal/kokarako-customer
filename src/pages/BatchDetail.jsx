@@ -256,6 +256,64 @@ export default function BatchDetail() {
     const { error } = await supabase.from('sales').delete().eq('id', s.id)
     if (error) window.alert(error.message); else refresh()
   }
+
+  async function deleteDistribution(d) {
+    const orgId = organization?.id
+    const hasReturns = Number(d.returned_quantity || 0) > 0
+    const msg = hasReturns
+      ? `Delete distribution of ${Number(d.quantity).toLocaleString('en-IN')} ${d.unit} of ${d.item_name}?\n\nThis distribution has returns recorded against it. All associated returns will also be deleted and stock will be fully adjusted.`
+      : `Delete distribution of ${Number(d.quantity).toLocaleString('en-IN')} ${d.unit} of ${d.item_name}?\n\nStock will be restored. This cannot be undone.`
+    if (!window.confirm(msg)) return
+
+    // Fetch all stock_returns linked to this distribution
+    const { data: stockReturns } = await supabase
+      .from('stock_returns')
+      .select('id, quantity, return_to_stock')
+      .eq('distribution_id', d.id)
+      .eq('organization_id', orgId)
+    const returns = stockReturns || []
+
+    // Net qty to restore = full distributed qty minus what returns already put back
+    const returnedToStockQty = returns
+      .filter(r => r.return_to_stock)
+      .reduce((s, r) => s + Number(r.quantity || 0), 0)
+    const netRestore = Number(d.quantity) - returnedToStockQty
+
+    // Delete ledger entries for each return
+    for (const sr of returns) {
+      await supabase.from('stock_ledger')
+        .delete().eq('reference_type', 'stock_return').eq('reference_id', sr.id).eq('organization_id', orgId)
+    }
+
+    // Delete farm_expense_returns, stock_returns, and the distribution's ledger entry
+    await supabase.from('farm_expense_returns').delete().eq('distribution_id', d.id).eq('organization_id', orgId)
+    await supabase.from('stock_returns').delete().eq('distribution_id', d.id).eq('organization_id', orgId)
+    await supabase.from('stock_ledger').delete().eq('reference_type', 'distribution').eq('reference_id', d.id).eq('organization_id', orgId)
+    await supabase.from('farm_expenses').delete().eq('distribution_id', d.id).eq('organization_id', orgId)
+
+    // Restore net quantity back to warehouse stock
+    if (netRestore > 0) {
+      const { data: stockRow } = await supabase.from('stock')
+        .select('id, quantity').ilike('item_name', d.item_name).eq('organization_id', orgId).maybeSingle()
+      if (stockRow) {
+        await supabase.from('stock')
+          .update({ quantity: Number(stockRow.quantity) + netRestore })
+          .eq('id', stockRow.id).eq('organization_id', orgId)
+      }
+      // Subtract net qty from farm_stock
+      const { data: fsRow } = await supabase.from('farm_stock')
+        .select('id, quantity_on_hand').eq('organization_id', orgId).eq('farm_id', d.farm_id).eq('item_name', d.item_name).maybeSingle()
+      if (fsRow) {
+        await supabase.from('farm_stock')
+          .update({ quantity_on_hand: Math.max(0, Number(fsRow.quantity_on_hand) - netRestore) })
+          .eq('id', fsRow.id).eq('organization_id', orgId)
+      }
+    }
+
+    const { error } = await supabase.from('distributions').delete().eq('id', d.id).eq('organization_id', orgId)
+    if (error) { window.alert(error.message); return }
+    refresh()
+  }
   function openEditSale(s) {
     setEditingSale(s)
     setSaleForm({ vendor_id: s.vendor_id, chicken_count: String(s.chicken_count ?? ''), kg_sold: String(s.kg_sold ?? ''), price_per_kg: String(s.price_per_kg ?? ''), final_amount: String(s.final_amount ?? ''), date: s.date, notes: s.notes ?? '' })
@@ -1274,6 +1332,14 @@ export default function BatchDetail() {
                               className="rounded px-2 py-1 text-xs font-medium bg-orange-50 text-orange-600 border border-orange-200 hover:bg-orange-100 transition"
                             >
                               {t('batches.return')}
+                            </button>
+                          )}
+                          {canDelete && (
+                            <button
+                              onClick={() => deleteDistribution({ ...d, farm_id: farmId })}
+                              className="rounded px-2 py-1 text-xs font-medium bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 transition"
+                            >
+                              Delete
                             </button>
                           )}
                         </div>
