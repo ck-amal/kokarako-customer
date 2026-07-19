@@ -1,0 +1,33 @@
+name: Deploy UAT
+
+on:
+  push:
+    branches:
+      - develop
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      VERCEL_ORG_ID: team_0s4Edhls0Q9hLBhlLXpQhl9W
+      VERCEL_PROJECT_ID: prj_oL2eubUlNIF1Ixn0DWRwyfdP6ZpA
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install Vercel CLI
+        run: npm install -g vercel@latest
+
+      - name: Pull Vercel environment
+        run: vercel pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }}
+
+      - name: Build
+        run: vercel build --prod --token=${{ secrets.VERCEL_TOKEN }}
+
+      - name: Deploy to UAT
+        run: vercel deploy --prebuilt --prod --token=${{ secrets.VERCEL_TOKEN }}
