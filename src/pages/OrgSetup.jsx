@@ -31,8 +31,9 @@ export default function OrgSetup() {
     })
     if (orgErr) { setError(orgErr.message); setLoading(false); return }
 
-    // Org created → next step: choose a plan.
-    window.location.href = '/choose-plan'
+    // Refresh auth context so ProtectedRoute sees the new org, then navigate.
+    await refreshOrg()
+    navigate('/choose-plan')
   }
 
   async function handleJoin(e) {
