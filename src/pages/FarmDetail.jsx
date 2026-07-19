@@ -7,6 +7,7 @@ import NewBatchModal from '../components/NewBatchModal'
 import { formatCurrency, roundCurrency } from '../utils/format'
 import { formatDate } from '../utils/dateFormat'
 import StockReturnModal from '../components/StockReturnModal'
+import EditDistributionModal from '../components/EditDistributionModal'
 import AuditInfo from '../components/AuditInfo'
 import { useAuth } from '../contexts/AuthContext'
 
@@ -1057,10 +1058,15 @@ export default function FarmDetail() {
   const [editModal,          setEditModal]          = useState(false)
   const [batchModal,         setBatchModal]         = useState(false)
   const [editingBatch,       setEditingBatch]       = useState(null)
+  const [deletingBatch,      setDeletingBatch]      = useState(null) // batch row to confirm-delete
+  const [deleteConfirmText,  setDeleteConfirmText]  = useState('')
+  const [deletingBatchBusy,  setDeletingBatchBusy]  = useState(false)
+  const [deleteBatchError,   setDeleteBatchError]   = useState('')
   const [distModal,          setDistModal]          = useState(false)
   const [saleModal,          setSaleModal]          = useState(false)
   const [editingFarmStock,   setEditingFarmStock]   = useState(null) // {id,item_name,unit,quantity_on_hand}
-  const [returnModal,        setReturnModal]        = useState(null) // distribution row being returned
+  const [returnModal,        setReturnModal]        = useState(null)
+  const [editingDist,        setEditingDist]        = useState(null)
 
   const [activeTab,        setActiveTab]        = useState('overview')
   const [distFilter,       setDistFilter]       = useState('all')
@@ -1096,11 +1102,11 @@ export default function FarmDetail() {
       { data: farmStockData },
       salesResult,
     ] = await Promise.all([
-      supabase.from('distributions').select('*, batches(start_date), created_by_name, created_at, updated_by_name, updated_at').eq('farm_id', id).eq('organization_id', organization?.id).order('date', { ascending: false }),
+      supabase.from('distributions').select('*, procurement:procurement_id(id, invoice_number, date), batches(start_date), created_by_name, created_at, updated_by_name, updated_at').eq('farm_id', id).eq('organization_id', organization?.id).order('date', { ascending: false }),
       supabase.from('stock').select('id, item_name, quantity, unit').eq('organization_id', organization?.id).gt('quantity', 0).order('item_name'),
       supabase.from('vendors').select('id, name').eq('organization_id', organization?.id).order('name'),
       batchIds.length
-        ? supabase.from('procurement').select('cost').eq('type', 'chicks').eq('organization_id', organization?.id).in('batch_id', batchIds)
+        ? supabase.from('batch_chick_purchases').select('id, batch_id, quantity, price_per_chick, total_cost, procurement_id, procurement:procurement_id(id, invoice_number, date)').in('batch_id', batchIds).eq('organization_id', organization?.id).order('created_at')
         : Promise.resolve({ data: [] }),
       supabase.from('farm_expenses').select('*').eq('farm_id', id).eq('organization_id', organization?.id),
       supabase.from('farm_expense_returns').select('distribution_id, item_type, total_cost').eq('farm_id', id).eq('organization_id', organization?.id),
@@ -1189,10 +1195,21 @@ export default function FarmDetail() {
     if (d.type === 'medicine') batchMedQty[key] = (batchMedQty[key] || 0) + Number(d.quantity || 0)
   }
 
-  // Per-batch total expenses
+  // Per-batch total expenses (feed+medicine net of returns + chick cost)
+  const returnByDist = {}
+  for (const fer of farmExpenseReturns) {
+    returnByDist[fer.distribution_id] = (returnByDist[fer.distribution_id] || 0) + Number(fer.total_cost || 0)
+  }
   const batchExpenses = {}
   for (const e of farmExpenses) {
-    if (e.batch_id) batchExpenses[e.batch_id] = (batchExpenses[e.batch_id] || 0) + Number(e.total_cost || 0)
+    if (!e.batch_id) continue
+    const returnCredit = returnByDist[e.distribution_id] || 0
+    const netCost = Math.max(0, Number(e.total_cost || 0) - returnCredit)
+    batchExpenses[e.batch_id] = (batchExpenses[e.batch_id] || 0) + netCost
+  }
+  for (const p of allChickProcurement) {
+    if (!p.batch_id) continue
+    batchExpenses[p.batch_id] = (batchExpenses[p.batch_id] || 0) + Number(p.total_cost || 0)
   }
 
   // ─── P&L ──────────────────────────────────────────────────────────────────
@@ -1206,7 +1223,7 @@ export default function FarmDetail() {
   const medicineCost = roundCurrency(farmExpenses.filter(e => e.item_type === 'medicine').reduce((s, e) => s + Number(e.total_cost || 0), 0) - medicineReturnCredit)
 
   // Chick cost — direct sum of procurement records linked to this farm's batches (via batch_id)
-  const chickCost = allChickProcurement.reduce((s, p) => s + Number(p.cost || 0), 0)
+  const chickCost = roundCurrency(allChickProcurement.reduce((s, p) => s + Number(p.total_cost || 0), 0))
 
   const growingFeeCost = growingFeeLedger.reduce((s, r) => s + Number(r.total_fee || 0), 0)
   const totalCost   = chickCost + feedCost + medicineCost + growingFeeCost
@@ -1784,6 +1801,14 @@ export default function FarmDetail() {
                                 {t('common.edit')}
                               </button>
                             )}
+                            {canDelete && (
+                              <button
+                                onClick={() => { setDeletingBatch(b); setDeleteConfirmText(''); setDeleteBatchError('') }}
+                                className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-medium text-red-500 hover:bg-red-50 transition"
+                              >
+                                Delete
+                              </button>
+                            )}
                           </div>
                         </td>
                       </tr>
@@ -1800,7 +1825,7 @@ export default function FarmDetail() {
       {activeTab === 'distributions' && (
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
           <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
-            <h2 className="text-base font-semibold text-gray-800">{t('distributions.historyTitle', { count: distributions.length })}</h2>
+            <h2 className="text-base font-semibold text-gray-800">{t('distributions.historyTitle', { count: distributions.length + allChickProcurement.length })}</h2>
             {canRecordOperations && (
               <button
                 onClick={() => setDistModal(true)}
@@ -1823,14 +1848,14 @@ export default function FarmDetail() {
             ))}
           </div>
 
-          {filteredDists.length === 0 ? (
+          {filteredDists.length === 0 && allChickProcurement.length === 0 ? (
             <div className="py-14 text-center text-gray-400">
               <p className="text-4xl mb-2">📦</p>
               <p className="text-sm">{t('distributions.noDistributions')}</p>
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full text-sm min-w-[760px]">
+              <table className="w-full text-sm min-w-[820px]">
                 <thead>
                   <tr className="bg-gray-50 border-b border-gray-100 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
                     <th className="px-5 py-3">{t('common.date')}</th>
@@ -1840,11 +1865,52 @@ export default function FarmDetail() {
                     <th className="px-5 py-3 text-right">{t('batches.distributed')}</th>
                     <th className="px-5 py-3 text-right">{t('batches.returned')}</th>
                     <th className="px-5 py-3 text-right">{t('batches.netCost')}</th>
+                    <th className="px-5 py-3">Procurement</th>
                     <th className="px-4 py-3 w-8"></th>
                     <th className="px-5 py-3"></th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-50">
+                  {/* Chick placement rows */}
+                  {(distFilter === 'all') && allChickProcurement.map(cp => {
+                    const batchObj = batches.find(b => b.id === cp.batch_id)
+                    return (
+                      <tr key={`chick-${cp.id}`} className="hover:bg-indigo-50 transition" style={{ backgroundColor: 'rgba(99,102,241,0.04)' }}>
+                        <td className="px-5 py-3 text-gray-600">{fmtDate(batchObj?.start_date)}</td>
+                        <td className="px-5 py-3 text-xs text-gray-500">
+                          {batchObj?.start_date ? `Batch ${fmtDate(batchObj.start_date)}` : '—'}
+                        </td>
+                        <td className="px-5 py-3">
+                          <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold bg-indigo-100 text-indigo-700">
+                            chick
+                          </span>
+                        </td>
+                        <td className="px-5 py-3 font-medium text-gray-800">Chick Placement</td>
+                        <td className="px-5 py-3 text-right text-gray-700">
+                          {Number(cp.quantity).toLocaleString('en-IN')} birds
+                        </td>
+                        <td className="px-5 py-3 text-right">
+                          <span className="text-gray-300">—</span>
+                        </td>
+                        <td className="px-5 py-3 text-right text-gray-700">
+                          {cp.total_cost > 0 ? formatCurrency(Number(cp.total_cost)) : '—'}
+                        </td>
+                        <td className="px-5 py-3">
+                          {cp.procurement ? (
+                            <button
+                              onClick={() => navigate('/procurement', { state: { openProcurementId: cp.procurement.id } })}
+                              className="text-xs text-indigo-600 hover:text-indigo-800 hover:underline font-medium"
+                            >
+                              {cp.procurement.invoice_number || fmtDate(cp.procurement.date)}
+                            </button>
+                          ) : <span className="text-gray-300">—</span>}
+                        </td>
+                        <td className="px-4 py-3"></td>
+                        <td className="px-5 py-3"></td>
+                      </tr>
+                    )
+                  })}
+                  {/* Regular distribution rows */}
                   {filteredDists.map(d => {
                     const returned    = Number(d.returned_quantity || 0)
                     const netQty      = Number(d.quantity) - returned
@@ -1879,16 +1945,36 @@ export default function FarmDetail() {
                         <td className="px-5 py-3 text-right text-gray-700">
                           {formatCurrency(netCost)}
                         </td>
+                        <td className="px-5 py-3">
+                          {d.procurement ? (
+                            <button
+                              onClick={() => navigate('/procurement', { state: { openProcurementId: d.procurement.id } })}
+                              className="text-xs text-indigo-600 hover:text-indigo-800 hover:underline font-medium"
+                            >
+                              {d.procurement.invoice_number || fmtDate(d.procurement.date)}
+                            </button>
+                          ) : <span className="text-gray-300">—</span>}
+                        </td>
                         <td className="px-4 py-3"><AuditInfo createdByName={d.created_by_name} createdAt={d.created_at} updatedByName={d.updated_by_name} updatedAt={d.updated_at} /></td>
                         <td className="px-5 py-3 text-right">
-                          {canReturn && canRecordOperations && (
-                            <button
-                              onClick={() => setReturnModal(d)}
-                              className="rounded px-2 py-1 text-xs font-medium bg-orange-50 text-orange-600 border border-orange-200 hover:bg-orange-100 transition"
-                            >
-                              {t('distributions.returnBtn')}
-                            </button>
-                          )}
+                          <div className="flex items-center justify-end gap-1.5">
+                            {canEdit && (
+                              <button
+                                onClick={() => setEditingDist(d)}
+                                className="rounded px-2 py-1 text-xs font-medium bg-blue-50 text-blue-600 border border-blue-200 hover:bg-blue-100 transition"
+                              >
+                                Edit
+                              </button>
+                            )}
+                            {canReturn && canRecordOperations && (
+                              <button
+                                onClick={() => setReturnModal(d)}
+                                className="rounded px-2 py-1 text-xs font-medium bg-orange-50 text-orange-600 border border-orange-200 hover:bg-orange-100 transition"
+                              >
+                                {t('distributions.returnBtn')}
+                              </button>
+                            )}
+                          </div>
                         </td>
                       </tr>
                     )
@@ -1896,7 +1982,7 @@ export default function FarmDetail() {
                 </tbody>
                 <tfoot>
                   <tr className="border-t-2 border-gray-200 bg-gray-50">
-                    <td colSpan={6} className="px-5 py-3 text-sm font-semibold text-gray-700 text-right">{t('distributions.totalNetCost')}</td>
+                    <td colSpan={7} className="px-5 py-3 text-sm font-semibold text-gray-700 text-right">{t('distributions.totalNetCost')}</td>
                     <td className="px-5 py-3 text-right font-bold text-red-600">{formatCurrency(feedCost + medicineCost)}</td>
                     <td></td>
                     <td></td>
@@ -2041,6 +2127,83 @@ export default function FarmDetail() {
       {editModal    && <FarmEditModal  farm={farm}          onClose={() => setEditModal(false)}    onSaved={() => { setEditModal(false);    refresh() }} />}
       {batchModal   && <NewBatchModal farmId={id}          onClose={() => setBatchModal(false)}   onSaved={() => { setBatchModal(false);   refresh() }} />}
       {editingBatch && <EditBatchModal batch={editingBatch} onClose={() => setEditingBatch(null)} onSaved={() => { setEditingBatch(null); refresh() }} />}
+
+      {/* ── Delete batch confirmation ── */}
+      {deletingBatch && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+          <div className="w-full max-w-md bg-white rounded-2xl shadow-xl p-6">
+            <div className="flex items-start gap-3 mb-4">
+              <div className="shrink-0 w-9 h-9 rounded-full bg-red-100 flex items-center justify-center text-red-600 font-bold text-sm">!</div>
+              <div>
+                <h2 className="text-base font-semibold text-gray-800">Delete Batch?</h2>
+                <p className="text-sm text-gray-500 mt-0.5">
+                  Batch started <strong>{deletingBatch.start_date}</strong> · {Number(deletingBatch.chick_count).toLocaleString('en-IN')} chicks
+                </p>
+              </div>
+            </div>
+
+            <div className="rounded-xl bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700 mb-4 space-y-1">
+              <p className="font-semibold">This will permanently delete:</p>
+              <ul className="list-disc list-inside text-xs space-y-0.5 mt-1">
+                <li>All distributions (feed, medicine) for this batch</li>
+                <li>All sales records for this batch</li>
+                <li>All expenses and growing fee records</li>
+                <li>Chick stock will be returned to inventory</li>
+                <li>Distributed item stock will be returned to inventory</li>
+              </ul>
+              <p className="text-xs font-medium mt-2">This action cannot be undone.</p>
+            </div>
+
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Type <strong>DELETE</strong> to confirm
+              </label>
+              <input
+                autoFocus
+                value={deleteConfirmText}
+                onChange={e => setDeleteConfirmText(e.target.value)}
+                placeholder="DELETE"
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-400"
+              />
+            </div>
+
+            {deleteBatchError && (
+              <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 mb-3">{deleteBatchError}</p>
+            )}
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => { setDeletingBatch(null); setDeleteConfirmText(''); setDeleteBatchError('') }}
+                className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition"
+              >
+                Cancel
+              </button>
+              <button
+                disabled={deleteConfirmText !== 'DELETE' || deletingBatchBusy}
+                onClick={async () => {
+                  setDeletingBatchBusy(true)
+                  setDeleteBatchError('')
+                  const { error } = await supabase.rpc('delete_batch', {
+                    p_batch_id: deletingBatch.id,
+                    p_org_id:   organization?.id,
+                  })
+                  setDeletingBatchBusy(false)
+                  if (error) {
+                    setDeleteBatchError(error.message)
+                  } else {
+                    setDeletingBatch(null)
+                    setDeleteConfirmText('')
+                    refresh()
+                  }
+                }}
+                className="flex-1 rounded-lg bg-red-600 hover:bg-red-700 disabled:opacity-50 px-4 py-2 text-sm font-semibold text-white transition"
+              >
+                {deletingBatchBusy ? 'Deleting…' : 'Delete Batch'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {distModal  && <DistributionModal farmId={id} stock={stock} onClose={() => setDistModal(false)} onSaved={() => { setDistModal(false); refresh() }} />}
       {saleModal  && <SaleModal        activeBatch={activeBatch} vendors={vendors} onClose={() => setSaleModal(false)} onSaved={() => { setSaleModal(false); refresh() }} />}
       {editingFarmStock && (
@@ -2064,6 +2227,13 @@ export default function FarmDetail() {
           distribution={returnModal}
           onClose={() => setReturnModal(null)}
           onSaved={() => { setReturnModal(null); refresh() }}
+        />
+      )}
+      {editingDist && (
+        <EditDistributionModal
+          distribution={editingDist}
+          onClose={() => setEditingDist(null)}
+          onSaved={() => { setEditingDist(null); fetchAll() }}
         />
       )}
     </div>

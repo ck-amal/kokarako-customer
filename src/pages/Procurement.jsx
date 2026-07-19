@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useLocation } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { supabase } from '../lib/supabaseClient'
 import { addToStock } from '../lib/stockHelpers'
@@ -95,11 +96,12 @@ function ProcurementModal({ onClose, onSaved }) {
   const newLine = () => ({ item_type_id: '', item_id: '', quantity: '', cost_per_unit: '', cost: '', items: [] })
   const [lines, setLines] = useState([newLine()])
   const [header, setHeader] = useState({
-    supplier_id: '',
-    date: new Date().toISOString().slice(0, 10),
-    notes: '',
-    pay_now:    false,
-    account_id: '',
+    supplier_id:    '',
+    date:           new Date().toISOString().slice(0, 10),
+    invoice_number: '',
+    notes:          '',
+    pay_now:        false,
+    account_id:     '',
   })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -293,6 +295,7 @@ function ProcurementModal({ onClose, onSaved }) {
         cost_per_unit: p.cpu,
         supplier_id:   header.supplier_id || null,
         date:          header.date,
+        invoice_number: header.invoice_number.trim() || null,
         notes:         header.notes.trim() || null,
         created_by_id:   user?.id,
         created_by_name: userName,
@@ -392,6 +395,18 @@ function ProcurementModal({ onClose, onSaved }) {
                 className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
               />
             </div>
+          </div>
+
+          {/* Invoice number */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Invoice Number</label>
+            <input
+              type="text"
+              value={header.invoice_number}
+              onChange={e => setHeader(h => ({ ...h, invoice_number: e.target.value }))}
+              placeholder="e.g. INV-2024-001"
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
+            />
           </div>
 
           {/* Item lines */}
@@ -672,23 +687,213 @@ function ProcurementModal({ onClose, onSaved }) {
   )
 }
 
+// ─── Edit Procurement Modal ───────────────────────────────────────────────────
+
+function EditProcurementModal({ proc, onClose, onSaved }) {
+  const { organization, user } = useAuth()
+  const { t, i18n } = useTranslation()
+  const [suppliers, setSuppliers] = useState([])
+  const [form, setForm] = useState({
+    date:           proc.date,
+    supplier_id:    proc.supplier_id || '',
+    invoice_number: proc.invoice_number || '',
+    notes:          proc.notes || '',
+    quantity:       String(proc.quantity),
+    cost_per_unit:  String(proc.cost_per_unit ?? (Number(proc.cost) / Number(proc.quantity) || 0)),
+  })
+  const [saving,   setSaving]   = useState(false)
+  const [error,    setError]    = useState('')
+  const [consumed, setConsumed] = useState(null)
+
+  useEffect(() => {
+    Promise.all([
+      supabase.from('suppliers').select('id, name').eq('organization_id', organization?.id).order('name'),
+      supabase.from('distributions').select('quantity, returned_quantity').eq('procurement_id', proc.id),
+      supabase.from('batch_chick_purchases').select('quantity').eq('procurement_id', proc.id),
+    ]).then(([{ data: suppData }, { data: distRows }, { data: batchRows }]) => {
+      setSuppliers(suppData || [])
+      const distConsumed  = (distRows  || []).reduce((s, r) => s + Math.max(0, Number(r.quantity) - Number(r.returned_quantity || 0)), 0)
+      const batchConsumed = (batchRows || []).reduce((s, r) => s + Number(r.quantity), 0)
+      setConsumed(distConsumed + batchConsumed)
+    })
+  }, [organization?.id, proc.id])
+
+  function set(f) { return e => setForm(p => ({ ...p, [f]: e.target.value })) }
+
+  async function handleSave(e) {
+    e.preventDefault()
+    const newQty  = parseFloat(form.quantity)
+    const newCpu  = parseFloat(form.cost_per_unit)
+    if (!newQty || newQty <= 0)  { setError('Quantity must be > 0'); return }
+    if (newCpu < 0)              { setError('Cost per unit cannot be negative'); return }
+    if (consumed !== null && newQty < consumed) {
+      setError(`Cannot reduce quantity below already distributed amount (${consumed.toLocaleString('en-IN')} ${proc.unit} used so far)`)
+      return
+    }
+
+    setSaving(true)
+    setError('')
+    const userName = user?.user_metadata?.full_name || user?.email || 'Unknown'
+    const newCost  = roundCurrency(newQty * newCpu)
+    const oldQty   = Number(proc.quantity)
+    const qtyDiff  = newQty - oldQty
+
+    // 1. Update the procurement row
+    const { error: upErr } = await supabase.from('procurement').update({
+      date:            form.date,
+      supplier_id:     form.supplier_id || null,
+      invoice_number:  form.invoice_number.trim() || null,
+      notes:           form.notes.trim() || null,
+      quantity:        newQty,
+      cost:            newCost,
+      cost_per_unit:   newCpu,
+      updated_by_id:   user?.id,
+      updated_by_name: userName,
+    }).eq('id', proc.id).eq('organization_id', organization?.id)
+
+    if (upErr) { setError(upErr.message); setSaving(false); return }
+
+    // 2. If quantity or cost changed, sync stock and ledger
+    if (qtyDiff !== 0 || newCpu !== Number(proc.cost_per_unit)) {
+      // Update the stock_ledger entry quantity
+      if (qtyDiff !== 0) {
+        await supabase.from('stock_ledger')
+          .update({ quantity: newQty })
+          .eq('reference_type', 'procurement')
+          .eq('reference_id', proc.id)
+          .eq('organization_id', organization?.id)
+      }
+
+      // Recalculate avg_cost from ALL procurements for this item (now includes updated row)
+      const { data: allProcs } = await supabase.from('procurement')
+        .select('quantity, cost')
+        .ilike('item_name', proc.item_name)
+        .eq('organization_id', organization?.id)
+
+      const totalQty  = (allProcs || []).reduce((s, r) => s + Number(r.quantity), 0)
+      const totalCost = (allProcs || []).reduce((s, r) => s + Number(r.cost), 0)
+      const newAvg    = totalQty > 0 ? roundCurrency(totalCost / totalQty) : 0
+
+      const { data: stockRow } = await supabase.from('stock')
+        .select('id, quantity')
+        .ilike('item_name', proc.item_name)
+        .eq('organization_id', organization?.id)
+        .maybeSingle()
+
+      if (stockRow) {
+        await supabase.from('stock').update({
+          quantity: Math.max(0, Number(stockRow.quantity) + qtyDiff),
+          avg_cost: newAvg,
+        }).eq('id', stockRow.id)
+      }
+    }
+
+    onSaved()
+  }
+
+  const inputCls = "w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+      <div className="w-full max-w-md bg-white rounded-2xl shadow-xl p-6">
+        <div className="flex items-center justify-between mb-5">
+          <div>
+            <h2 className="text-base font-semibold text-gray-800">Edit Procurement</h2>
+            <p className="text-xs text-gray-400 mt-0.5">{proc.item_name} · {proc.unit}</p>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
+        </div>
+
+        <form onSubmit={handleSave} className="space-y-4">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Quantity *</label>
+              <input required type="number" min="0.01" step="any"
+                value={form.quantity} onChange={set('quantity')} className={inputCls} />
+              {consumed !== null && consumed > 0 && (
+                <p className={`text-xs mt-1 ${parseFloat(form.quantity) < consumed ? 'text-red-500 font-semibold' : 'text-gray-400'}`}>
+                  {consumed.toLocaleString('en-IN')} {proc.unit} already distributed — minimum allowed
+                </p>
+              )}
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Cost per Unit *</label>
+              <input required type="number" min="0" step="any"
+                value={form.cost_per_unit} onChange={set('cost_per_unit')} className={inputCls} />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">{t('procurement.supplier')}</label>
+            <select value={form.supplier_id} onChange={set('supplier_id')} className={inputCls + ' bg-white'}>
+              <option value="">— No supplier —</option>
+              {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </select>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">{t('common.date')} *</label>
+              <input required type="date" value={form.date} onChange={set('date')} className={inputCls} />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Invoice No.</label>
+              <input value={form.invoice_number} onChange={set('invoice_number')} className={inputCls} />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">{t('common.notes')}</label>
+            <input value={form.notes} onChange={set('notes')} placeholder="Optional" className={inputCls} />
+          </div>
+
+          {form.quantity && form.cost_per_unit && Number(form.quantity) > 0 && (
+            <p className="text-xs text-gray-400">
+              Total cost: {formatCurrency(parseFloat(form.quantity) * parseFloat(form.cost_per_unit))}
+            </p>
+          )}
+
+          {error && <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</p>}
+
+          <div className="flex gap-3 pt-1">
+            <button type="button" onClick={onClose}
+              className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition">
+              {t('common.cancel')}
+            </button>
+            <button type="submit" disabled={saving}
+              className="flex-1 rounded-lg bg-amber-500 hover:bg-amber-600 disabled:opacity-60 px-4 py-2 text-sm font-semibold text-white transition">
+              {saving ? 'Saving…' : t('common.save')}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
 // ─── Main page ────────────────────────────────────────────────────────────────
 
 export default function Procurement() {
   const { t, i18n } = useTranslation()
-  const { organization, canEdit } = useAuth()
+  const { organization, canEdit, canDelete } = useAuth()
   const { currentStep, stepDone } = useOnboarding()
+  const location = useLocation()
 
   const [records, setRecords]       = useState([])
   const [itemTypes, setItemTypes]   = useState([])
   const [loading, setLoading]       = useState(true)
-  const [modalOpen, setModalOpen]   = useState(false)
+  const [modalOpen, setModalOpen]   = useState(() => !!location.state?.openModal)
+  const [editingProc,       setEditingProc]       = useState(null)
+  const [deletingProc,      setDeletingProc]      = useState(null)
+  const [deleteConfirmText, setDeleteConfirmText] = useState('')
+  const [deletingBusy,      setDeletingBusy]      = useState(false)
+  const [deleteError,       setDeleteError]       = useState('')
   const [typeFilter, setTypeFilter] = useState('all')
   const [dateFrom,   setDateFrom]   = useState(currentMonthRange().start) // 1st of this month
   const [dateTo,     setDateTo]     = useState(new Date().toISOString().slice(0, 10)) // today
   const [page,       setPage]       = useState(1)
   const [attByRow,   setAttByRow]   = useState({})
-  const [viewRowId,  setViewRowId]  = useState(null)
+  const [viewRowId,  setViewRowId]  = useState(() => location.state?.openProcurementId || null)
 
   async function fetchData() {
     setLoading(true)
@@ -846,6 +1051,7 @@ export default function Procurement() {
                   <th className="px-5 py-3">{t('procurement.unit')}</th>
                   <th className="px-5 py-3 text-right">{t('procurement.totalCost')}</th>
                   <th className="px-5 py-3">{t('procurement.supplier')}</th>
+                  <th className="px-5 py-3">Invoice No.</th>
                   <th className="px-5 py-3">{t('common.date')}</th>
                   <th className="px-5 py-3">{t('common.notes')}</th>
                   <th className="w-8 px-5 py-3">
@@ -853,6 +1059,7 @@ export default function Procurement() {
                       <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clipRule="evenodd" />
                     </svg>
                   </th>
+                  {(canEdit || canDelete) && <th className="px-4 py-3"></th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
@@ -870,6 +1077,7 @@ export default function Procurement() {
                       {formatCurrency(r.cost)}
                     </td>
                     <td className="px-5 py-3.5 text-gray-600">{r.suppliers?.name || '—'}</td>
+                    <td className="px-5 py-3.5 text-gray-500">{r.invoice_number || '—'}</td>
                     <td className="px-5 py-3.5 text-gray-500 whitespace-nowrap">{formatDate(r.date, i18n.language)}</td>
                     <td className="px-5 py-3.5 text-gray-400 max-w-[140px] truncate" title={r.notes || ''}>
                       {r.notes || '—'}
@@ -877,6 +1085,28 @@ export default function Procurement() {
                     <td className="px-5 py-3.5">
                       <AuditInfo createdByName={r.created_by_name} createdAt={r.created_at} updatedByName={r.updated_by_name} updatedAt={r.updated_at} />
                     </td>
+                    {(canEdit || canDelete) && (
+                      <td className="px-4 py-3.5" onClick={e => e.stopPropagation()}>
+                        <div className="flex items-center gap-1.5">
+                          {canEdit && (
+                            <button
+                              onClick={() => setEditingProc(r)}
+                              className="rounded-lg border border-gray-200 px-2.5 py-1 text-xs font-medium text-gray-600 hover:bg-gray-50 transition"
+                            >
+                              Edit
+                            </button>
+                          )}
+                          {canDelete && (
+                            <button
+                              onClick={() => { setDeletingProc(r); setDeleteConfirmText(''); setDeleteError('') }}
+                              className="rounded-lg border border-red-200 px-2.5 py-1 text-xs font-medium text-red-500 hover:bg-red-50 transition"
+                            >
+                              Delete
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
@@ -954,6 +1184,12 @@ export default function Procurement() {
                   {formatCurrency(viewRow.cost_per_unit)}
                 </div>
               )}
+              {viewRow.invoice_number && (
+                <div>
+                  <span className="text-gray-400 text-xs block mb-0.5">Invoice No.</span>
+                  {viewRow.invoice_number}
+                </div>
+              )}
               {viewRow.notes && (
                 <div className="col-span-2 sm:col-span-3">
                   <span className="text-gray-400 text-xs block mb-0.5">{t('common.notes')}</span>
@@ -973,6 +1209,89 @@ export default function Procurement() {
           onClose={() => setModalOpen(false)}
           onSaved={() => { setModalOpen(false); fetchData(); if (currentStep?.id === 'procurement') stepDone('procurement') }}
         />
+      )}
+
+      {editingProc && (
+        <EditProcurementModal
+          proc={editingProc}
+          onClose={() => setEditingProc(null)}
+          onSaved={() => { setEditingProc(null); fetchData() }}
+        />
+      )}
+
+      {deletingProc && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+          <div className="w-full max-w-md bg-white rounded-2xl shadow-xl p-6">
+            <div className="flex items-start gap-3 mb-4">
+              <div className="shrink-0 w-9 h-9 rounded-full bg-red-100 flex items-center justify-center text-red-600 font-bold text-sm">!</div>
+              <div>
+                <h2 className="text-base font-semibold text-gray-800">Delete Procurement?</h2>
+                <p className="text-sm text-gray-500 mt-0.5">
+                  {deletingProc.item_name} · {Number(deletingProc.quantity).toLocaleString('en-IN')} {deletingProc.unit} · {formatCurrency(deletingProc.cost)}
+                </p>
+              </div>
+            </div>
+
+            <div className="rounded-xl bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700 mb-4 space-y-1">
+              <p className="font-semibold">This will permanently:</p>
+              <ul className="list-disc list-inside text-xs space-y-0.5 mt-1">
+                <li>Remove {Number(deletingProc.quantity).toLocaleString('en-IN')} {deletingProc.unit} from stock</li>
+                <li>Delete the stock ledger IN entry</li>
+                <li>Delete any linked payment transaction</li>
+                <li>Unlink any distributions that used this procurement lot</li>
+              </ul>
+              <p className="text-xs font-medium mt-2">This action cannot be undone.</p>
+            </div>
+
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Type <strong>DELETE</strong> to confirm
+              </label>
+              <input
+                autoFocus
+                value={deleteConfirmText}
+                onChange={e => setDeleteConfirmText(e.target.value)}
+                placeholder="DELETE"
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-400"
+              />
+            </div>
+
+            {deleteError && (
+              <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 mb-3">{deleteError}</p>
+            )}
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => { setDeletingProc(null); setDeleteConfirmText(''); setDeleteError('') }}
+                className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition"
+              >
+                {t('common.cancel')}
+              </button>
+              <button
+                disabled={deleteConfirmText !== 'DELETE' || deletingBusy}
+                onClick={async () => {
+                  setDeletingBusy(true)
+                  setDeleteError('')
+                  const { error } = await supabase.rpc('delete_procurement', {
+                    p_proc_id: deletingProc.id,
+                    p_org_id:  organization?.id,
+                  })
+                  setDeletingBusy(false)
+                  if (error) {
+                    setDeleteError(error.message)
+                  } else {
+                    setDeletingProc(null)
+                    setDeleteConfirmText('')
+                    fetchData()
+                  }
+                }}
+                className="flex-1 rounded-lg bg-red-600 hover:bg-red-700 disabled:opacity-50 px-4 py-2 text-sm font-semibold text-white transition"
+              >
+                {deletingBusy ? 'Deleting…' : 'Delete'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )

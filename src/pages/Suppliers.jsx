@@ -22,11 +22,10 @@ function SupplierModal({ supplier, onClose, onSaved }) {
   const { organization } = useAuth()
   const { t } = useTranslation()
   const [form, setForm] = useState({
-    name:          supplier?.name          ?? '',
-    business_name: supplier?.business_name ?? '',
-    phone:         supplier?.phone         ?? '',
-    address:       supplier?.address       ?? '',
-    notes:         supplier?.notes         ?? '',
+    name:    supplier?.name    ?? '',
+    phone:   supplier?.phone   ?? '',
+    address: supplier?.address ?? '',
+    notes:   supplier?.notes   ?? '',
   })
   const [saving, setSaving] = useState(false)
   const [error, setError]   = useState('')
@@ -44,11 +43,10 @@ function SupplierModal({ supplier, onClose, onSaved }) {
     setSaving(true)
 
     const payload = {
-      name:          form.name.trim(),
-      business_name: form.business_name.trim() || null,
-      phone:         form.phone.trim()         || null,
-      address:       form.address.trim()       || null,
-      notes:         form.notes.trim()         || null,
+      name:    form.name.trim(),
+      phone:   form.phone.trim()   || null,
+      address: form.address.trim() || null,
+      notes:   form.notes.trim()   || null,
     }
 
     const { error: err } = isEdit
@@ -75,14 +73,6 @@ function SupplierModal({ supplier, onClose, onSaved }) {
             <input
               required value={form.name} onChange={set('name')}
               placeholder="e.g. Rajan Feed Suppliers"
-              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">{t('suppliers.businessName')}</label>
-            <input
-              value={form.business_name} onChange={set('business_name')}
-              placeholder="e.g. Rajan & Co."
               className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
             />
           </div>

@@ -1,34 +1,36 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { supabase } from '../lib/supabaseClient'
-import { ledgerOut, getAverageCostPerUnit } from '../lib/stockLedger'
+import { ledgerOut, getAverageCostPerUnit, getProcurementLots } from '../lib/stockLedger'
 import { roundCurrency } from '../utils/format'
 import { formatDate } from '../utils/dateFormat'
 import { useAuth } from '../contexts/AuthContext'
 
-function fmtDate(d, lang = 'en') {
-  return formatDate(d, lang)
-}
+function fmtDate(d, lang = 'en') { return formatDate(d, lang) }
+function fmtQty(n) { return Number(n || 0).toLocaleString('en-IN', { maximumFractionDigits: 3 }) }
 
 export default function DistributionModal({ farmId, initialBatchId, onClose, onSaved }) {
   const { organization, user } = useAuth()
   const { t, i18n } = useTranslation()
-  const [stock,           setStock]           = useState([])
-  const [activeBatches,   setActiveBatches]   = useState([])
-  const [batchId,         setBatchId]         = useState(initialBatchId || '')
-  const [batchesLoading,  setBatchesLoading]  = useState(true)
-  const [itemTypes,       setItemTypes]       = useState([])
-  const [typeId,          setTypeId]          = useState('')
-  const [catalogItems,    setCatalogItems]    = useState([])
-  const [canonCount,      setCanonCount]      = useState('') // bags / bottles / units
-  const [subCount,        setSubCount]        = useState('') // kg / ml
+  const [stock,          setStock]          = useState([])
+  const [activeBatches,  setActiveBatches]  = useState([])
+  const [batchId,        setBatchId]        = useState(initialBatchId || '')
+  const [batchesLoading, setBatchesLoading] = useState(true)
+  const [itemTypes,      setItemTypes]      = useState([])
+  const [typeId,         setTypeId]         = useState('')
+  const [catalogItems,   setCatalogItems]   = useState([])
+  const [canonCount,     setCanonCount]     = useState('')
+  const [subCount,       setSubCount]       = useState('')
   const [form, setForm] = useState({
     item_id: '',
     date:    new Date().toISOString().slice(0, 10),
     notes:   '',
   })
-  const [saving, setSaving] = useState(false)
-  const [error,  setError]  = useState('')
+  const [procLots,    setProcLots]    = useState([])  // lots with remaining > 0
+  const [lotAllocs,   setLotAllocs]   = useState({})  // { [procId]: number }
+  const [lotsLoading, setLotsLoading] = useState(false)
+  const [saving,      setSaving]      = useState(false)
+  const [error,       setError]       = useState('')
 
   useEffect(() => {
     if (!organization?.id) return
@@ -39,9 +41,7 @@ export default function DistributionModal({ farmId, initialBatchId, onClose, onS
   useEffect(() => {
     supabase.from('batches')
       .select('id, start_date, chick_count')
-      .eq('farm_id', farmId)
-      .eq('organization_id', organization?.id)
-      .eq('status', 'active')
+      .eq('farm_id', farmId).eq('organization_id', organization?.id).eq('status', 'active')
       .order('start_date', { ascending: false })
       .then(({ data }) => {
         const list = data || []
@@ -51,10 +51,7 @@ export default function DistributionModal({ farmId, initialBatchId, onClose, onS
       })
 
     supabase.from('item_types')
-      .select('id, name')
-      .eq('is_distributable', true)
-      .eq('organization_id', organization?.id)
-      .order('name')
+      .select('id, name').eq('is_distributable', true).eq('organization_id', organization?.id).order('name')
       .then(({ data }) => {
         const types = data || []
         setItemTypes(types)
@@ -66,10 +63,7 @@ export default function DistributionModal({ farmId, initialBatchId, onClose, onS
     if (!typeId) { setCatalogItems([]); return }
     supabase.from('items')
       .select('id, name, unit, kg_per_unit, ml_per_unit')
-      .eq('item_type_id', typeId)
-      .eq('is_active', true)
-      .eq('organization_id', organization?.id)
-      .order('name')
+      .eq('item_type_id', typeId).eq('is_active', true).eq('organization_id', organization?.id).order('name')
       .then(({ data }) => {
         const items = data || []
         setCatalogItems(items)
@@ -78,10 +72,18 @@ export default function DistributionModal({ farmId, initialBatchId, onClose, onS
       })
   }, [typeId])
 
-  // Reset quantity inputs when item changes
+  useEffect(() => { setCanonCount(''); setSubCount('') }, [form.item_id])
+
+  // Fetch procurement lots when item changes
   useEffect(() => {
-    setCanonCount(''); setSubCount('')
-  }, [form.item_id])
+    if (!form.item_id || !organization?.id) { setProcLots([]); setLotAllocs({}); return }
+    setLotsLoading(true)
+    getProcurementLots({ itemId: form.item_id, organizationId: organization?.id })
+      .then(lots => {
+        setProcLots(lots.filter(l => l.remaining > 0))
+        setLotsLoading(false)
+      })
+  }, [form.item_id, organization?.id])
 
   function set(f) { return e => setForm(p => ({ ...p, [f]: e.target.value })) }
 
@@ -98,15 +100,30 @@ export default function DistributionModal({ farmId, initialBatchId, onClose, onS
   const canonLabel = selectedItem?.unit ?? 'units'
   const factor     = isBag ? Number(selectedItem.kg_per_unit) : isBottle ? Number(selectedItem.ml_per_unit) : 1
 
-  // Canonical qty = full bags/bottles + fractional bags/bottles from sub-unit input
   const canonicalQty = hasSubUnit
     ? (parseFloat(canonCount) || 0) + (parseFloat(subCount) || 0) / factor
     : (parseFloat(canonCount) || 0)
 
-  // Summary line shown below inputs
-  const totalSubEquiv  = canonicalQty > 0 ? canonicalQty * factor : null
-  const hasNoBatches   = !batchesLoading && activeBatches.length === 0
-  const formDisabled   = hasNoBatches
+  const totalSubEquiv = canonicalQty > 0 ? canonicalQty * factor : null
+  const hasNoBatches  = !batchesLoading && activeBatches.length === 0
+  const formDisabled  = hasNoBatches
+
+  // Recompute FIFO allocations when qty or lots change
+  useEffect(() => {
+    if (!procLots.length || canonicalQty <= 0) { setLotAllocs({}); return }
+    const allocs = {}
+    let rem = canonicalQty
+    for (const lot of procLots) {
+      const take = Math.min(lot.remaining, rem)
+      if (take > 0) { allocs[lot.id] = take; rem -= take }
+      if (rem <= 0) break
+    }
+    setLotAllocs(allocs)
+  }, [canonicalQty, procLots])
+
+  const allocTotal   = Object.values(lotAllocs).reduce((s, v) => s + Number(v || 0), 0)
+  const allocMatches = canonicalQty > 0 && Math.abs(allocTotal - canonicalQty) < 0.001
+  const multiLot     = procLots.length > 1
 
   async function handleSubmit(e) {
     e.preventDefault()
@@ -120,61 +137,75 @@ export default function DistributionModal({ farmId, initialBatchId, onClose, onS
     }
     if (canonicalQty <= 0) { setError('Enter a valid quantity'); return }
     if (canonicalQty > availableQty) {
-      const avail = availableQty.toLocaleString('en-IN')
-      const availSub = hasSubUnit
-        ? ` (${(availableQty * factor).toLocaleString('en-IN', { maximumFractionDigits: 1 })} ${subLabel})`
-        : ''
-      setError(`Only ${avail} ${canonLabel}${availSub} available in stock`)
+      setError(`Only ${availableQty.toLocaleString('en-IN')} ${canonLabel} available in stock`)
+      return
+    }
+    if (multiLot && !allocMatches) {
+      setError(`Lot allocation must total ${fmtQty(canonicalQty)} ${canonLabel}. Currently: ${fmtQty(allocTotal)}`)
       return
     }
 
     setSaving(true)
+    setError('')
     const userName = user?.user_metadata?.full_name || user?.email || 'Unknown'
+    const resolvedBatch = activeBatches.find(b => b.id === batchId)
 
-    const { data: distInserted, error: distErr } = await supabase.from('distributions').insert({
-      farm_id:         farmId,
-      batch_id:        batchId || null,
-      stock_id:        selectedStock?.id || null,
-      item_name:       selectedItem.name,
-      type:            typeName,
-      quantity:        canonicalQty,
-      unit:            selectedItem.unit,
-      date:            form.date,
-      notes:           form.notes.trim() || null,
-      organization_id: organization?.id,
-      created_by_id:   user?.id,
-      created_by_name: userName,
-    }).select('id').single()
+    // Build list of (procurementId | null, qty) rows to insert
+    const allocRows = multiLot
+      ? Object.entries(lotAllocs).filter(([, qty]) => Number(qty) > 0).map(([id, qty]) => ({ procId: id, qty: Number(qty) }))
+      : [{ procId: procLots[0]?.id || null, qty: canonicalQty }]
 
-    if (distErr) { setError(distErr.message); setSaving(false); return }
+    let anyFailed = false
+    for (const { procId, qty } of allocRows) {
+      const { data: dist, error: distErr } = await supabase.from('distributions').insert({
+        farm_id:         farmId,
+        batch_id:        batchId || null,
+        stock_id:        selectedStock?.id || null,
+        item_name:       selectedItem.name,
+        type:            typeName,
+        quantity:        qty,
+        unit:            selectedItem.unit,
+        date:            form.date,
+        notes:           form.notes.trim() || null,
+        organization_id: organization?.id,
+        procurement_id:  procId,
+        created_by_id:   user?.id,
+        created_by_name: userName,
+      }).select('id').single()
 
-    await ledgerOut({
-      itemName: selectedItem.name, itemType: typeName,
-      quantity: canonicalQty, unit: selectedItem.unit,
-      referenceType: 'distribution', referenceId: distInserted.id,
-      date: form.date, organizationId: organization?.id,
-    })
+      if (distErr) { anyFailed = true; continue }
 
+      await ledgerOut({
+        itemName: selectedItem.name, itemType: typeName,
+        quantity: qty, unit: selectedItem.unit,
+        referenceType: 'distribution', referenceId: dist.id,
+        date: form.date, organizationId: organization?.id,
+      })
+
+      const avgCpu = await getAverageCostPerUnit(selectedItem.name, {
+        batchId: batchId || undefined, startDate: resolvedBatch?.start_date,
+        organizationId: organization?.id,
+      })
+      await supabase.from('farm_expenses').insert({
+        farm_id: farmId, batch_id: batchId || null, distribution_id: dist.id,
+        item_name: selectedItem.name, item_type: typeName,
+        quantity: qty, unit: selectedItem.unit,
+        cost_per_unit: avgCpu, total_cost: roundCurrency(qty * avgCpu),
+        date: form.date, organization_id: organization?.id,
+        created_by_id: user?.id, created_by_name: userName,
+      })
+    }
+
+    if (anyFailed) { setError('Some records failed to save'); setSaving(false); return }
+
+    // Update central stock once (total qty)
     if (selectedStock) {
       await supabase.from('stock')
         .update({ quantity: Math.max(0, Number(selectedStock.quantity) - canonicalQty) })
         .eq('id', selectedStock.id).eq('organization_id', organization?.id)
     }
 
-    const resolvedBatch = activeBatches.find(b => b.id === batchId)
-    const avgCpu = await getAverageCostPerUnit(selectedItem.name, {
-      batchId: batchId || undefined, startDate: resolvedBatch?.start_date,
-      organizationId: organization?.id,
-    })
-    await supabase.from('farm_expenses').insert({
-      farm_id: farmId, batch_id: batchId || null, distribution_id: distInserted.id,
-      item_name: selectedItem.name, item_type: typeName,
-      quantity: canonicalQty, unit: selectedItem.unit,
-      cost_per_unit: avgCpu, total_cost: roundCurrency(canonicalQty * avgCpu),
-      date: form.date, organization_id: organization?.id,
-      created_by_id: user?.id, created_by_name: userName,
-    })
-
+    // Update farm-level stock once
     const { data: fsCurrent } = await supabase.from('farm_stock')
       .select('id, quantity_on_hand').eq('farm_id', farmId)
       .eq('organization_id', organization?.id).eq('item_name', selectedItem.name).maybeSingle()
@@ -196,7 +227,7 @@ export default function DistributionModal({ farmId, initialBatchId, onClose, onS
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
-      <div className="w-full max-w-md bg-white rounded-2xl shadow-xl p-6">
+      <div className="w-full max-w-md bg-white rounded-2xl shadow-xl p-6 max-h-[92vh] overflow-y-auto">
         <div className="flex items-center justify-between mb-5">
           <h2 className="text-lg font-semibold text-gray-800">{t('farms.recordDistribution')}</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
@@ -278,29 +309,15 @@ export default function DistributionModal({ farmId, initialBatchId, onClose, onS
                 {hasSubUnit ? (
                   <>
                     <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <div className="relative">
-                          <input
-                            type="number" min="0" step="1"
-                            value={canonCount} onChange={e => setCanonCount(e.target.value)}
-                            placeholder="0" className={inputCls + ' pr-12'}
-                          />
-                          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-medium text-gray-400 pointer-events-none">
-                            {canonLabel}
-                          </span>
-                        </div>
+                      <div className="relative">
+                        <input type="number" min="0" step="1" value={canonCount}
+                          onChange={e => setCanonCount(e.target.value)} placeholder="0" className={inputCls + ' pr-12'} />
+                        <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-medium text-gray-400 pointer-events-none">{canonLabel}</span>
                       </div>
-                      <div>
-                        <div className="relative">
-                          <input
-                            type="number" min="0" step="any"
-                            value={subCount} onChange={e => setSubCount(e.target.value)}
-                            placeholder="0" className={inputCls + ' pr-10'}
-                          />
-                          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-medium text-gray-400 pointer-events-none">
-                            {subLabel}
-                          </span>
-                        </div>
+                      <div className="relative">
+                        <input type="number" min="0" step="any" value={subCount}
+                          onChange={e => setSubCount(e.target.value)} placeholder="0" className={inputCls + ' pr-10'} />
+                        <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-medium text-gray-400 pointer-events-none">{subLabel}</span>
                       </div>
                     </div>
                     {canonicalQty > 0 && (
@@ -312,17 +329,53 @@ export default function DistributionModal({ farmId, initialBatchId, onClose, onS
                   </>
                 ) : (
                   <div className="relative">
-                    <input
-                      required type="number" min="0.01" step="any"
-                      value={canonCount} onChange={e => setCanonCount(e.target.value)}
-                      placeholder={`e.g. 5 ${canonLabel}`} className={inputCls + ' pr-16'}
-                    />
-                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-medium text-gray-400 pointer-events-none">
-                      {canonLabel}
-                    </span>
+                    <input required type="number" min="0.01" step="any" value={canonCount}
+                      onChange={e => setCanonCount(e.target.value)}
+                      placeholder={`e.g. 5 ${canonLabel}`} className={inputCls + ' pr-16'} />
+                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-medium text-gray-400 pointer-events-none">{canonLabel}</span>
                   </div>
                 )}
               </div>
+
+              {/* Procurement lot allocation — shown when multiple lots available */}
+              {!lotsLoading && multiLot && canonicalQty > 0 && (
+                <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-3 space-y-2.5">
+                  <p className="text-xs font-semibold text-indigo-700">Allocate from procurement lots (FIFO pre-filled):</p>
+                  {procLots.map(lot => (
+                    <div key={lot.id} className="flex items-center gap-2">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-medium text-gray-700 truncate">
+                          {fmtDate(lot.date, i18n.language)}
+                          {lot.supplier && ` — ${lot.supplier}`}
+                        </p>
+                        <p className="text-xs text-gray-400">
+                          {lot.invoice && `${lot.invoice} · `}{fmtQty(lot.remaining)} {lot.unit} available
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <input
+                          type="number" min="0" max={lot.remaining} step="any"
+                          value={lotAllocs[lot.id] ?? ''}
+                          onChange={e => setLotAllocs(prev => ({ ...prev, [lot.id]: parseFloat(e.target.value) || 0 }))}
+                          className="w-24 rounded-lg border border-gray-300 px-2 py-1.5 text-sm text-right focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                        />
+                        <span className="text-xs text-gray-400 whitespace-nowrap">{canonLabel}</span>
+                      </div>
+                    </div>
+                  ))}
+                  <div className={`text-xs font-semibold pt-1 border-t border-indigo-200 ${allocMatches ? 'text-green-600' : 'text-red-500'}`}>
+                    Total allocated: {fmtQty(allocTotal)} / {fmtQty(canonicalQty)} {canonLabel}
+                    {allocMatches ? ' ✓' : ' — must match quantity above'}
+                  </div>
+                </div>
+              )}
+              {!lotsLoading && !multiLot && procLots.length === 1 && (
+                <p className="text-xs text-gray-400">
+                  Will be deducted from: {fmtDate(procLots[0].date, i18n.language)}
+                  {procLots[0].supplier && ` (${procLots[0].supplier})`}
+                  {procLots[0].invoice && ` · ${procLots[0].invoice}`}
+                </p>
+              )}
 
               {/* Date */}
               <div>

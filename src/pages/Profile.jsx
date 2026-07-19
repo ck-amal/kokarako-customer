@@ -61,40 +61,66 @@ function RoleBadge({ role }) {
 
 function InviteModal({ orgId, inviterId, maxUsers, onClose, onSaved }) {
   const { t } = useTranslation()
-  const [form,       setForm]       = useState({ email: '', role: 'manager', message: '' })
-  const [saving,     setSaving]     = useState(false)
-  const [error,      setError]      = useState('')
-  const [success,    setSuccess]    = useState(false)
-  const [existingInv, setExistingInv] = useState(null)
+  const [form,        setForm]        = useState({ email: '', role: 'manager' })
+  const [saving,      setSaving]      = useState(false)
+  const [error,       setError]       = useState('')
+  const [inviteToken, setInviteToken] = useState(null) // shown after creation
+  const [copied,      setCopied]      = useState(false)
 
   function setField(f) { return e => setForm(p => ({ ...p, [f]: e.target.value })) }
 
-  async function checkEmail(email) {
-    if (!email.includes('@')) return
-    const { data } = await supabase
-      .from('invitations').select('id')
-      .eq('organization_id', orgId).eq('email', email.trim().toLowerCase())
-      .is('accepted_at', null).gt('expires_at', new Date().toISOString()).maybeSingle()
-    setExistingInv(data)
-  }
-
   async function handleSubmit(e) {
     e.preventDefault()
-    if (!form.email.trim()) { setError(t('errors.required')); return }
+    const email = form.email.trim().toLowerCase()
+    if (!email || !/\S+@\S+\.\S+/.test(email)) { setError('Enter a valid email address'); return }
     setSaving(true); setError('')
+
+    // Check for existing pending invitation for this email in this org
+    const { data: dupInv } = await supabase
+      .from('invitations')
+      .select('id')
+      .eq('organization_id', orgId)
+      .eq('email', email)
+      .is('accepted_at', null)
+      .gt('expires_at', new Date().toISOString())
+      .maybeSingle()
+    if (dupInv) { setError('A pending invitation already exists for this email.'); setSaving(false); return }
+
+    // Check if this email already belongs to an active member
+    const { data: memberRows } = await supabase
+      .from('organization_users')
+      .select('id, users:user_id(email)')
+      .eq('organization_id', orgId)
+      .eq('is_active', true)
+    if ((memberRows || []).some(m => m.users?.email === email)) {
+      setError('This email is already an active member of the organisation.')
+      setSaving(false); return
+    }
+
     const { data: inv, error: invErr } = await supabase
       .from('invitations')
-      .insert({ organization_id: orgId, email: form.email.trim().toLowerCase(), role: form.role, invited_by: inviterId })
-      .select('id').single()
+      .insert({ organization_id: orgId, email, role: form.role, invited_by: inviterId })
+      .select('id, token').single()
     if (invErr) {
       const msg = invErr.message?.includes('USER_LIMIT_REACHED')
         ? (maxUsers != null ? `User limit reached (${maxUsers} / ${maxUsers}). Upgrade your plan.` : 'User limit reached.')
         : invErr.message
       setError(msg); setSaving(false); return
     }
-    await supabase.functions.invoke('send-invitation', { body: { invitation_id: inv.id, app_url: window.location.origin } })
-    setSuccess(true)
-    setTimeout(() => { onSaved(); onClose() }, 1500)
+
+    // Send invitation email (non-blocking)
+    supabase.functions.invoke('send-invitation', {
+      body: { invitation_id: inv.id, app_url: window.location.origin },
+    }).catch(console.error)
+
+    setInviteToken(inv.token)
+    onSaved()
+    setSaving(false)
+  }
+
+  function copyLink() {
+    const url = `${window.location.origin}/invite/${inviteToken}`
+    navigator.clipboard.writeText(url).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000) })
   }
 
   return (
@@ -104,25 +130,44 @@ function InviteModal({ orgId, inviterId, maxUsers, onClose, onSaved }) {
           <h2 className="text-lg font-semibold text-gray-800">{t('team.inviteMember')}</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
         </div>
-        {success ? (
-          <div className="py-8 text-center">
-            <p className="text-4xl mb-3">✅</p>
-            <p className="font-semibold text-gray-800">{t('toasts.inviteSent')}</p>
-            <p className="text-sm text-gray-500 mt-1">{form.email}</p>
+
+        {inviteToken ? (
+          /* ── Success: show the invite link for sharing ── */
+          <div className="space-y-4">
+            <div className="text-center py-2">
+              <p className="text-4xl mb-2">✅</p>
+              <p className="font-semibold text-gray-800">Invitation sent!</p>
+              <p className="text-sm text-gray-500 mt-1">An email was sent to {form.email}</p>
+            </div>
+            <div className="bg-gray-50 border border-gray-200 rounded-xl p-3">
+              <p className="text-xs text-gray-500 mb-1 font-medium">Invite link (backup)</p>
+              <p className="text-xs text-gray-700 break-all font-mono">
+                {window.location.origin}/invite/{inviteToken}
+              </p>
+            </div>
+            <button onClick={copyLink}
+              className="w-full rounded-lg bg-amber-500 hover:bg-amber-600 px-4 py-2.5 text-sm font-semibold text-white transition">
+              {copied ? '✓ Copied!' : 'Copy Invite Link'}
+            </button>
+            <p className="text-xs text-gray-400 text-center">
+              Link expires in 7 days.
+            </p>
+            <button onClick={onClose}
+              className="w-full rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 transition">
+              Done
+            </button>
           </div>
         ) : (
+          /* ── Invite form ── */
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">{t('team.inviteEmail')} *</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Email Address *</label>
               <input required type="email" value={form.email}
-                onChange={e => { setField('email')(e); checkEmail(e.target.value) }}
-                placeholder="colleague@example.com"
+                onChange={e => setForm(p => ({ ...p, email: e.target.value }))}
+                placeholder="invitee@example.com"
+                autoComplete="off"
                 className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400" />
-              {existingInv && (
-                <p className="mt-1.5 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-                  ⚠ A pending invitation already exists for this email.
-                </p>
-              )}
+              <p className="text-xs text-gray-400 mt-1">An invitation email will be sent automatically</p>
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">{t('team.inviteRole')} *</label>
@@ -131,16 +176,7 @@ function InviteModal({ orgId, inviterId, maxUsers, onClose, onSaved }) {
                 {ROLES.map(r => <option key={r} value={r}>{ROLE_META[r].label} — {ROLE_META[r].desc}</option>)}
               </select>
             </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">{t('team.inviteMessage')}</label>
-              <textarea value={form.message} onChange={setField('message')} rows={2}
-                placeholder="Add a note to the invitation email"
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 resize-none" />
-            </div>
             {error && <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</p>}
-            <p className="text-xs text-blue-800 bg-blue-50 border border-blue-200 rounded-xl px-4 py-3">
-              An invitation email will be sent to the address above.
-            </p>
             <div className="flex gap-3">
               <button type="button" onClick={onClose}
                 className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 transition">
@@ -148,7 +184,7 @@ function InviteModal({ orgId, inviterId, maxUsers, onClose, onSaved }) {
               </button>
               <button type="submit" disabled={saving}
                 className="flex-1 rounded-lg bg-amber-500 hover:bg-amber-600 disabled:opacity-50 px-4 py-2 text-sm font-semibold text-white transition">
-                {saving ? '…' : t('team.inviteMember')}
+                {saving ? '…' : 'Send Invitation'}
               </button>
             </div>
           </form>
@@ -742,7 +778,9 @@ function TeamSection() {
     const newToken  = crypto.randomUUID().replace(/-/g, '') + crypto.randomUUID().replace(/-/g, '')
     const { error } = await supabase.from('invitations').update({ expires_at: newExpiry, token: newToken }).eq('id', invId)
     if (error) { setError(error.message); return }
-    await supabase.functions.invoke('send-invitation', { body: { invitation_id: invId, app_url: window.location.origin } })
+    supabase.functions.invoke('send-invitation', {
+      body: { invitation_id: invId, app_url: window.location.origin },
+    }).catch(console.error)
     fetchData()
   }
 
@@ -887,7 +925,9 @@ function TeamSection() {
                   const expiry  = daysUntil(inv.expires_at)
                   return (
                     <tr key={inv.id} className="hover:bg-gray-50/60 transition">
-                      <td className="px-5 py-3 font-medium text-gray-800">{inv.email}</td>
+                      <td className="px-5 py-3 text-sm text-gray-800">
+                        {inv.email || '—'}
+                      </td>
                       <td className="px-5 py-3"><RoleBadge role={inv.role} /></td>
                       <td className="px-5 py-3 text-xs text-gray-400">{daysAgo(inv.created_at)}</td>
                       <td className="px-5 py-3">
