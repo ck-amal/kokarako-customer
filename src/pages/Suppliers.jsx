@@ -24,18 +24,18 @@ function SupplierModal({ supplier, onClose, onSaved }) {
 
   const isEdit = !!supplier
 
-  // On edit: pre-fill with computed outstanding so the user sees the live balance.
-  // On create: pre-fill with 0 (pure opening balance, no transactions yet).
-  const initialBalance = isEdit
-    ? String(supplier.outstanding ?? supplier.opening_balance ?? 0)
-    : '0'
+  // On edit: show the current computed outstanding (opening_balance + purchases - payments).
+  // On create: default to 0 — user enters the opening balance with the supplier.
+  const currentOutstanding = isEdit
+    ? Number(supplier.outstanding != null ? supplier.outstanding : (Number(supplier.opening_balance || 0) + Number(supplier.totalPurchased || 0) - Number(supplier.totalPaid || 0)))
+    : 0
 
   const [form, setForm] = useState({
     name:    supplier?.name    ?? '',
     phone:   supplier?.phone   ?? '',
     address: supplier?.address ?? '',
     notes:   supplier?.notes   ?? '',
-    balance: initialBalance,
+    balance: String(currentOutstanding),
   })
   const [saving,   setSaving]   = useState(false)
   const [error,    setError]    = useState('')
@@ -80,8 +80,7 @@ function SupplierModal({ supplier, onClose, onSaved }) {
 
     // Show confirmation if outstanding balance changed
     const enteredBalance = parseFloat(form.balance) || 0
-    const originalBalance = parseFloat(initialBalance) || 0
-    if (isEdit && Math.abs(enteredBalance - originalBalance) > 0.005) {
+    if (isEdit && Math.abs(enteredBalance - currentOutstanding) > 0.005) {
       setConfirm(true)
       return
     }
@@ -104,7 +103,7 @@ function SupplierModal({ supplier, onClose, onSaved }) {
             <p className="text-sm font-semibold text-amber-800 mb-1">Confirm balance change</p>
             <p className="text-sm text-amber-700 mb-3">
               Outstanding will change from{' '}
-              <strong>₹{Math.abs(parseFloat(initialBalance)).toLocaleString('en-IN')}{parseFloat(initialBalance) < 0 ? ' (credit)' : ''}</strong>
+              <strong>₹{Math.abs(currentOutstanding).toLocaleString('en-IN')}{currentOutstanding < 0 ? ' (credit)' : ''}</strong>
               {' '}to{' '}
               <strong>₹{Math.abs(parseFloat(form.balance) || 0).toLocaleString('en-IN')}{(parseFloat(form.balance) || 0) < 0 ? ' (credit)' : ''}</strong>.
               Are you sure?
@@ -158,7 +157,7 @@ function SupplierModal({ supplier, onClose, onSaved }) {
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              {isEdit ? 'Outstanding Balance (₹)' : 'Opening Balance (₹)'}
+              Balance with Supplier (₹)
               {' '}<span className="text-gray-400 font-normal">(optional)</span>
             </label>
             <div className="relative">
@@ -171,8 +170,8 @@ function SupplierModal({ supplier, onClose, onSaved }) {
             </div>
             <p className="text-xs text-gray-400 mt-1">
               {isEdit
-                ? 'Current outstanding balance. Positive = we owe supplier, Negative = advance credit.'
-                : 'Positive = amount owed to supplier before using this system. Negative = advance already given.'}
+                ? 'Current outstanding with this supplier. Positive = we owe them, Negative = they owe us (advance given).'
+                : 'What is owed to this supplier before using this system. Positive = we owe them, Negative = advance already given.'}
             </p>
           </div>
 
