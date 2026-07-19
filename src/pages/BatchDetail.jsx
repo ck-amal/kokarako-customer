@@ -323,7 +323,18 @@ export default function BatchDetail() {
       supabase.from('vendors').select('id, name').eq('organization_id', organization?.id).order('name'),
     ])
     setFarm(farmData)
-    setBatch(batchData)
+
+    // Fetch growing fee ledger separately
+    let ledgerData = null
+    if (batchData?.growing_fee_id) {
+      const { data } = await supabase
+        .from('growing_fee_ledger')
+        .select('status, amount_paid, balance_due, fcr_tier_description')
+        .eq('id', batchData.growing_fee_id)
+        .single()
+      ledgerData = data
+    }
+    setBatch(batchData ? { ...batchData, growing_fee_ledger: ledgerData } : batchData)
     setDistributions(distData || [])
     setSales(salesData || [])
     setExpenses(expData || [])
