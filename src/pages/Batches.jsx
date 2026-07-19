@@ -210,7 +210,7 @@ export default function Batches() {
     setLoading(false)
   }
 
-  useEffect(() => { fetchData() }, [])
+  useEffect(() => { if (organization?.id) fetchData() }, [organization?.id])
 
   // Open new-batch modal pre-selected if navigated from Farms page
   useEffect(() => {
