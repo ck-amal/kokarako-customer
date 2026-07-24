@@ -414,7 +414,7 @@ export default function BatchDetail() {
     // Fetch farm_expense_returns for net cost display
     const { data: ferData } = await supabase
       .from('farm_expense_returns')
-      .select('distribution_id, item_type, total_cost, cost_per_unit')
+      .select('distribution_id, item_type, total_cost, cost_per_unit, handling_charges, quantity, unit')
       .eq('batch_id', batchId)
       .eq('organization_id', organization?.id)
     setExpenseReturns(ferData || [])
@@ -451,7 +451,7 @@ export default function BatchDetail() {
     // Refresh expense returns too
     const { data: ferData } = await supabase
       .from('farm_expense_returns')
-      .select('distribution_id, item_type, total_cost, cost_per_unit')
+      .select('distribution_id, item_type, total_cost, cost_per_unit, handling_charges, quantity, unit')
       .eq('batch_id', batchId)
       .eq('organization_id', organization?.id)
     setExpenseReturns(ferData || [])
@@ -1175,6 +1175,18 @@ export default function BatchDetail() {
               { label: t('batches.profitMargin'),  value: `${margin.toFixed(1)}%`,                                    color: margin >= 0 ? '#15803d' : '#dc2626', bold: false },
             ]
 
+            // Build return detail map per distribution: { returnCredit, handlingCharges, returnedQty, unit }
+            const returnDetailByDist = {}
+            for (const fer of expenseReturns) {
+              if (!fer.distribution_id) continue
+              if (!returnDetailByDist[fer.distribution_id]) {
+                returnDetailByDist[fer.distribution_id] = { returnCredit: 0, handlingCharges: 0, returnedQty: 0, unit: fer.unit }
+              }
+              returnDetailByDist[fer.distribution_id].returnCredit    += Number(fer.total_cost      || 0)
+              returnDetailByDist[fer.distribution_id].handlingCharges += Number(fer.handling_charges || 0)
+              returnDetailByDist[fer.distribution_id].returnedQty     += Number(fer.quantity         || 0)
+            }
+
             const toggleRow = (label) => setExpandedPLRows(prev => {
               const next = new Set(prev)
               next.has(label) ? next.delete(label) : next.add(label)
@@ -1214,12 +1226,40 @@ export default function BatchDetail() {
                               <span>{formatCurrency(line.total_cost)}</span>
                             </div>
                           ))}
-                          {row.breakdownType === 'expense' && row.breakdown.map(line => (
-                            <div key={line.id} className="flex justify-between items-center text-xs" style={{ color: 'var(--text-muted)' }}>
-                              <span>{line.item_name} — {Number(line.quantity).toLocaleString('en-IN')} {line.unit} @ {formatCurrency(line.cost_per_unit)}/{line.unit}</span>
-                              <span>{formatCurrency(line.total_cost)}</span>
-                            </div>
-                          ))}
+                          {row.breakdownType === 'expense' && row.breakdown.map(line => {
+                            const ret = returnDetailByDist[line.id]
+                            const originalCost = Number(line.total_cost || 0)
+                            const returnCredit = ret ? ret.returnCredit : 0
+                            const handlingCharges = ret ? ret.handlingCharges : 0
+                            const netCost = originalCost - returnCredit + handlingCharges
+                            const hasReturn = returnCredit > 0
+                            return (
+                              <div key={line.id} className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>
+                                <div className="flex justify-between items-center">
+                                  <span>{line.item_name} — {Number(line.quantity).toLocaleString('en-IN')} {line.unit} @ {formatCurrency(line.cost_per_unit)}/{line.unit}</span>
+                                  <span>{formatCurrency(originalCost)}</span>
+                                </div>
+                                {hasReturn && (
+                                  <div className="flex justify-between items-center pl-3" style={{ color: '#16a34a' }}>
+                                    <span>↳ Returned {Number(ret.returnedQty).toLocaleString('en-IN')} {ret.unit}</span>
+                                    <span>−{formatCurrency(returnCredit)}</span>
+                                  </div>
+                                )}
+                                {handlingCharges > 0 && (
+                                  <div className="flex justify-between items-center pl-3" style={{ color: '#ea580c' }}>
+                                    <span>↳ Handling charges</span>
+                                    <span>+{formatCurrency(handlingCharges)}</span>
+                                  </div>
+                                )}
+                                {hasReturn && (
+                                  <div className="flex justify-between items-center pl-3 font-semibold" style={{ color: 'var(--text)' }}>
+                                    <span>Net cost</span>
+                                    <span>{formatCurrency(netCost)}</span>
+                                  </div>
+                                )}
+                              </div>
+                            )
+                          })}
                           {row.breakdownType === 'ancillary' && row.breakdown.map(line => (
                             <div key={line.id} className="flex justify-between items-center text-xs" style={{ color: 'var(--text-muted)' }}>
                               <span>{line.item_name}</span>
