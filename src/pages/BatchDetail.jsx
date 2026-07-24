@@ -969,6 +969,204 @@ export default function BatchDetail() {
     })),
   ].sort((a, b) => new Date(a.date) - new Date(b.date))
 
+  function printBatchReport() {
+    const fmt = (n) => '₹' + Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+    const fmtNum = (n) => Number(n || 0).toLocaleString('en-IN')
+    const today = new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
+
+    // Build return detail map per distribution
+    const retByDist = {}
+    for (const fer of expenseReturns) {
+      if (!fer.distribution_id) continue
+      if (!retByDist[fer.distribution_id]) retByDist[fer.distribution_id] = { returnCredit: 0, handlingCharges: 0, returnedQty: 0, unit: fer.unit }
+      retByDist[fer.distribution_id].returnCredit    += Number(fer.total_cost      || 0)
+      retByDist[fer.distribution_id].handlingCharges += Number(fer.handling_charges || 0)
+      retByDist[fer.distribution_id].returnedQty     += Number(fer.quantity         || 0)
+    }
+
+    const feedExpenses = expenses.filter(e => e.item_type === 'feed')
+    const medExpenses  = expenses.filter(e => e.item_type === 'medicine')
+
+    const expenseRow = (line) => {
+      const ret = retByDist[line.distribution_id]
+      const orig = Number(line.total_cost || 0)
+      const retCredit = ret ? ret.returnCredit : 0
+      const hc = ret ? ret.handlingCharges : 0
+      const net = orig - retCredit + hc
+      const hasReturn = retCredit > 0
+      return `
+        <tr>
+          <td>${fmtDate(line.date || '')}</td>
+          <td>${line.item_name || '—'}</td>
+          <td style="text-align:right">${fmtNum(line.quantity)} ${line.unit || ''}</td>
+          <td style="text-align:right">${fmt(line.cost_per_unit)}/${line.unit || ''}</td>
+          <td style="text-align:right">${fmt(orig)}</td>
+          <td style="text-align:right;color:#16a34a">${hasReturn ? '−' + fmt(retCredit) : '—'}</td>
+          <td style="text-align:right;color:#ea580c">${hc > 0 ? '+' + fmt(hc) : '—'}</td>
+          <td style="text-align:right;font-weight:600">${hasReturn ? fmt(net) : '—'}</td>
+        </tr>`
+    }
+
+    const salesRows = sales.map(s => `
+      <tr>
+        <td>${fmtDate(s.date)}</td>
+        <td>${s.vendors?.name || '—'}</td>
+        <td style="text-align:right">${fmtNum(s.chicken_count)}</td>
+        <td style="text-align:right">${fmtNum(s.kg_sold)} kg</td>
+        <td style="text-align:right">${fmt(s.price_per_kg)}/kg</td>
+        <td style="text-align:right;font-weight:600">${fmt(s.final_amount ?? s.total_amount)}</td>
+        <td><span style="background:${s.status==='confirmed'?'#dcfce7':'#fef9c3'};color:${s.status==='confirmed'?'#166534':'#713f12'};padding:2px 8px;border-radius:4px;font-size:11px">${s.status}</span></td>
+      </tr>`).join('')
+
+    const chickRows = chickPurchases.map(p => `
+      <tr>
+        <td>${p.procurement?.date ? fmtDate(p.procurement.date) : '—'}</td>
+        <td style="text-align:right">${fmtNum(p.quantity)} birds</td>
+        <td style="text-align:right">${fmt(p.price_per_chick)}/bird</td>
+        <td style="text-align:right;font-weight:600">${fmt(p.total_cost)}</td>
+        <td>${p.source === 'stock' ? 'From Stock' : 'Direct'}</td>
+        <td>${p.procurement?.invoice_number || '—'}</td>
+      </tr>`).join('')
+
+    const plRow = (label, value, color = '#111', bold = false, indent = false) =>
+      `<tr>
+        <td style="padding-left:${indent ? '24px' : '0'};color:#555;font-size:13px">${label}</td>
+        <td style="text-align:right;font-weight:${bold ? '700' : '400'};color:${color};font-size:${bold ? '14px' : '13px'}">${value}</td>
+      </tr>`
+
+    const html = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Batch Report — ${farm.name} — ${fmtDate(batch.start_date)}</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: Arial, sans-serif; font-size: 13px; color: #111; background: #fff; padding: 32px; max-width: 900px; margin: 0 auto; }
+    h1 { font-size: 22px; font-weight: 800; color: #111; }
+    h2 { font-size: 14px; font-weight: 700; color: #333; margin: 24px 0 8px; padding-bottom: 4px; border-bottom: 2px solid #f59e0b; text-transform: uppercase; letter-spacing: 0.05em; }
+    .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 24px; padding-bottom: 16px; border-bottom: 3px solid #f59e0b; }
+    .header-left .org { font-size: 11px; font-weight: 600; color: #f59e0b; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 4px; }
+    .header-right { text-align: right; font-size: 12px; color: #555; line-height: 1.8; }
+    .meta-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 8px; }
+    .meta-card { background: #f9f9f9; border-radius: 8px; padding: 10px 12px; }
+    .meta-card .label { font-size: 10px; color: #888; text-transform: uppercase; letter-spacing: 0.05em; }
+    .meta-card .value { font-size: 18px; font-weight: 700; color: #111; margin-top: 2px; }
+    .meta-card .value.red { color: #dc2626; }
+    .meta-card .value.green { color: #15803d; }
+    table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+    th { background: #fef3c7; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: #92400e; padding: 7px 10px; text-align: left; border-bottom: 2px solid #f59e0b; }
+    td { padding: 6px 10px; border-bottom: 1px solid #f3f4f6; vertical-align: middle; }
+    tr:last-child td { border-bottom: none; }
+    .pl-table td { padding: 5px 10px; }
+    .pl-table tr.total td { border-top: 2px solid #e5e7eb; font-weight: 700; font-size: 14px; padding-top: 8px; }
+    .pl-table tr.profit td { color: ${profit >= 0 ? '#15803d' : '#dc2626'}; }
+    .status-badge { display:inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+    .footer { margin-top: 32px; padding-top: 12px; border-top: 1px solid #e5e7eb; font-size: 11px; color: #999; text-align: center; }
+    @media print {
+      body { padding: 16px; }
+      h2 { break-before: avoid; }
+      table { break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="header-left">
+      <div class="org">${organization?.name || 'Kokarako'}</div>
+      <h1>${farm.name}</h1>
+      <div style="margin-top:6px;font-size:13px;color:#555">
+        Batch started ${fmtDate(batch.start_date)}
+        ${farm.owner_name ? ` &nbsp;·&nbsp; ${farm.owner_name}` : ''}
+        ${farm.owner_phone ? ` &nbsp;·&nbsp; ${farm.owner_phone}` : ''}
+      </div>
+    </div>
+    <div class="header-right">
+      <div><strong>Generated</strong> ${today}</div>
+      <div><strong>Status</strong> <span class="status-badge" style="background:${batch.status==='active'?'#dcfce7':batch.status==='sold'?'#dbeafe':'#f3f4f6'};color:${batch.status==='active'?'#166534':batch.status==='sold'?'#1e40af':'#374151'}">${batch.status.toUpperCase()}</span></div>
+      <div><strong>Duration</strong> ${elapsed} days</div>
+    </div>
+  </div>
+
+  <h2>Batch Overview</h2>
+  <div class="meta-grid">
+    <div class="meta-card"><div class="label">Chicks Placed</div><div class="value green">${fmtNum(batch.chick_count)}</div></div>
+    <div class="meta-card"><div class="label">Alive</div><div class="value green">${fmtNum(alive)}</div></div>
+    <div class="meta-card"><div class="label">Mortality</div><div class="value red">${fmtNum(batch.mortality_count || 0)}</div></div>
+    <div class="meta-card"><div class="label">Days Elapsed</div><div class="value">${elapsed}d</div></div>
+  </div>
+
+  <h2>Financial Summary</h2>
+  <table class="pl-table">
+    <colgroup><col style="width:70%"><col style="width:30%"></colgroup>
+    <tbody>
+      ${plRow('Revenue', fmt(revenue), revenue > 0 ? '#15803d' : '#111', true)}
+      ${plRow('Chick Cost', '−' + fmt(chickCost), '#dc2626', false)}
+      ${chickPurchases.map(p => plRow(`${fmtNum(p.quantity)} birds × ${fmt(p.price_per_chick)}/bird`, '−' + fmt(p.total_cost), '#888', false, true)).join('')}
+      ${plRow('Feed Cost', '−' + fmt(feedCost), '#dc2626', false)}
+      ${feedExpenses.map(line => {
+        const ret = retByDist[line.distribution_id]
+        const retC = ret ? ret.returnCredit : 0
+        const hc = ret ? ret.handlingCharges : 0
+        const net = Number(line.total_cost || 0) - retC + hc
+        const detail = ret ? ` (ret −${fmt(retC)}${hc>0?' hc +'+fmt(hc):''} = ${fmt(net)})` : ''
+        return plRow(`${line.item_name} — ${fmtNum(line.quantity)} ${line.unit}${detail}`, '−' + fmt(ret ? net : line.total_cost), '#888', false, true)
+      }).join('')}
+      ${feedAncillaryCost > 0 ? plRow('Feed Ancillary (transport/labour)', '−' + fmt(feedAncillaryCost), '#ea580c', false) : ''}
+      ${plRow('Medicine Cost', '−' + fmt(medCost), '#dc2626', false)}
+      ${medExpenses.map(line => {
+        const ret = retByDist[line.distribution_id]
+        const retC = ret ? ret.returnCredit : 0
+        const hc = ret ? ret.handlingCharges : 0
+        const net = Number(line.total_cost || 0) - retC + hc
+        const detail = ret ? ` (ret −${fmt(retC)}${hc>0?' hc +'+fmt(hc):''} = ${fmt(net)})` : ''
+        return plRow(`${line.item_name} — ${fmtNum(line.quantity)} ${line.unit}${detail}`, '−' + fmt(ret ? net : line.total_cost), '#888', false, true)
+      }).join('')}
+      ${medAncillaryCost > 0 ? plRow('Medicine Ancillary (transport/labour)', '−' + fmt(medAncillaryCost), '#ea580c', false) : ''}
+      ${growingFee > 0 ? plRow('Growing Fee', '−' + fmt(growingFee), '#dc2626', false) : ''}
+      <tr class="total"><td>Total Expenses</td><td style="text-align:right;color:#dc2626">−${fmt(totalExpenses)}</td></tr>
+      <tr class="total profit"><td>Gross Profit</td><td style="text-align:right">${profit >= 0 ? '' : '−'}${fmt(Math.abs(profit))}</td></tr>
+      <tr class="profit"><td style="color:#555;font-size:12px">Profit Margin</td><td style="text-align:right;font-size:12px">${margin.toFixed(1)}%</td></tr>
+    </tbody>
+  </table>
+
+  ${chickPurchases.length > 0 ? `
+  <h2>Chick Placements</h2>
+  <table>
+    <thead><tr><th>Date</th><th>Quantity</th><th>Price/Bird</th><th>Total</th><th>Source</th><th>Invoice</th></tr></thead>
+    <tbody>${chickRows}</tbody>
+  </table>` : ''}
+
+  ${feedExpenses.length > 0 ? `
+  <h2>Feed Distributions</h2>
+  <table>
+    <thead><tr><th>Date</th><th>Item</th><th>Qty</th><th>Rate</th><th>Original Cost</th><th>Return Credit</th><th>Handling</th><th>Net Cost</th></tr></thead>
+    <tbody>${feedExpenses.map(expenseRow).join('')}</tbody>
+  </table>` : ''}
+
+  ${medExpenses.length > 0 ? `
+  <h2>Medicine Distributions</h2>
+  <table>
+    <thead><tr><th>Date</th><th>Item</th><th>Qty</th><th>Rate</th><th>Original Cost</th><th>Return Credit</th><th>Handling</th><th>Net Cost</th></tr></thead>
+    <tbody>${medExpenses.map(expenseRow).join('')}</tbody>
+  </table>` : ''}
+
+  ${sales.length > 0 ? `
+  <h2>Sales</h2>
+  <table>
+    <thead><tr><th>Date</th><th>Vendor</th><th>Birds</th><th>Weight</th><th>Rate</th><th>Amount</th><th>Status</th></tr></thead>
+    <tbody>${salesRows}</tbody>
+  </table>` : ''}
+
+  <div class="footer">Kokarako Poultry Management &nbsp;·&nbsp; ${organization?.name || ''} &nbsp;·&nbsp; Generated ${today}</div>
+</body>
+</html>`
+
+    const w = window.open('', '_blank')
+    w.document.write(html)
+    w.document.close()
+    w.onload = () => w.print()
+  }
+
   return (
     <>
     <div className="space-y-5">
@@ -1099,6 +1297,13 @@ export default function BatchDetail() {
               )}
             </>
           )}
+          <button
+            onClick={printBatchReport}
+            style={{ borderColor: '#d1d5db', color: '#374151' }}
+            className="rounded-lg border bg-white hover:bg-gray-50 px-3 py-1.5 text-xs font-semibold transition ml-auto"
+          >
+            🖨️ Print Report
+          </button>
         </div>
         {actionError && (
           <p className="mt-3 text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{actionError}</p>
