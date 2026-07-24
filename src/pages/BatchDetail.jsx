@@ -1001,9 +1001,9 @@ export default function BatchDetail() {
           <td style="text-align:right">${fmtNum(line.quantity)} ${line.unit || ''}</td>
           <td style="text-align:right">${fmt(line.cost_per_unit)}/${line.unit || ''}</td>
           <td style="text-align:right">${fmt(orig)}</td>
-          <td style="text-align:right;color:#16a34a">${hasReturn ? '−' + fmt(retCredit) : '—'}</td>
-          <td style="text-align:right;color:#ea580c">${hc > 0 ? '+' + fmt(hc) : '—'}</td>
-          <td style="text-align:right;font-weight:600">${hasReturn ? fmt(net) : '—'}</td>
+          <td style="text-align:right;color:${hasReturn ? '#16a34a' : '#bbb'}">${hasReturn ? '−' + fmt(retCredit) : '—'}</td>
+          <td style="text-align:right;color:${hc > 0 ? '#ea580c' : '#bbb'}">${hc > 0 ? '+' + fmt(hc) : '—'}</td>
+          <td style="text-align:right;font-weight:600;color:${hasReturn ? '#111' : '#bbb'}">${hasReturn ? fmt(net) : '—'}</td>
         </tr>`
     }
 
