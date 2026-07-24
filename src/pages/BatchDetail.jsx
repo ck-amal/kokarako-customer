@@ -362,6 +362,7 @@ export default function BatchDetail() {
   const [editFeeAmount,    setEditFeeAmount]    = useState('')
   const [editFeeSaving,    setEditFeeSaving]    = useState(false)
   const [pendingFarmAdvs,  setPendingFarmAdvs]  = useState(null) // { advances: [], recalcData: {} }
+  const [expandedPLRows,   setExpandedPLRows]   = useState(new Set())
 
 
   async function load() {
@@ -1156,43 +1157,80 @@ export default function BatchDetail() {
           </div>
 
           {(() => {
+            const feedExpenses   = expenses.filter(e => e.item_type === 'feed')
+            const medExpenses    = expenses.filter(e => e.item_type === 'medicine')
+            const feedAncExp     = expenses.filter(e => e.item_type === 'feed'     && Number(e.extra_total_cost) > 0)
+            const medAncExp      = expenses.filter(e => e.item_type === 'medicine' && Number(e.extra_total_cost) > 0)
+
             const rows = [
-              { label: t('batches.revenue'),        value: formatCurrency(revenue),                                      color: '#15803d', bold: false },
-              { label: t('batches.chickCost'),      value: formatCurrency(chickCost),                                   color: '#dc2626', bold: false, breakdown: chickPurchases },
-              { label: t('batches.feedCost'),       value: formatCurrency(feedCost),                                    color: '#dc2626', bold: false },
-              ...(feedAncillaryCost > 0 ? [{ label: 'Feed ancillary (transport/labour)', value: formatCurrency(feedAncillaryCost), color: '#ea580c', bold: false }] : []),
-              { label: t('batches.medicineCost'),   value: formatCurrency(medCost),                                     color: '#dc2626', bold: false },
-              ...(medAncillaryCost > 0 ? [{ label: 'Medicine ancillary', value: formatCurrency(medAncillaryCost), color: '#ea580c', bold: false }] : []),
+              { label: t('batches.revenue'),       value: formatCurrency(revenue),                                     color: '#15803d', bold: false },
+              { label: t('batches.chickCost'),     value: formatCurrency(chickCost),                                   color: '#dc2626', bold: false, breakdown: chickPurchases,  breakdownType: 'chick' },
+              { label: t('batches.feedCost'),      value: formatCurrency(feedCost),                                    color: '#dc2626', bold: false, breakdown: feedExpenses,     breakdownType: 'expense' },
+              ...(feedAncillaryCost > 0 ? [{ label: 'Feed ancillary (transport/labour)', value: formatCurrency(feedAncillaryCost), color: '#ea580c', bold: false, breakdown: feedAncExp, breakdownType: 'ancillary' }] : []),
+              { label: t('batches.medicineCost'),  value: formatCurrency(medCost),                                     color: '#dc2626', bold: false, breakdown: medExpenses,      breakdownType: 'expense' },
+              ...(medAncillaryCost > 0 ? [{ label: 'Medicine ancillary', value: formatCurrency(medAncillaryCost), color: '#ea580c', bold: false, breakdown: medAncExp, breakdownType: 'ancillary' }] : []),
               ...(growingFee > 0 ? [{ label: t('growingFees.title'), value: formatCurrency(growingFee), color: '#7c3aed', bold: false }] : []),
-              { label: t('batches.totalExpenses'),  value: formatCurrency(totalExpenses),                               color: '#dc2626', bold: true },
-              { label: t('batches.grossProfit'),    value: (profit < 0 ? '−' : '') + formatCurrency(Math.abs(profit)),  color: profit >= 0 ? '#15803d' : '#dc2626', bold: true },
-              { label: t('batches.profitMargin'),   value: `${margin.toFixed(1)}%`,                          color: margin >= 0 ? '#15803d' : '#dc2626', bold: false },
+              { label: t('batches.totalExpenses'), value: formatCurrency(totalExpenses),                               color: '#dc2626', bold: true },
+              { label: t('batches.grossProfit'),   value: (profit < 0 ? '−' : '') + formatCurrency(Math.abs(profit)), color: profit >= 0 ? '#15803d' : '#dc2626', bold: true },
+              { label: t('batches.profitMargin'),  value: `${margin.toFixed(1)}%`,                                    color: margin >= 0 ? '#15803d' : '#dc2626', bold: false },
             ]
+
+            const toggleRow = (label) => setExpandedPLRows(prev => {
+              const next = new Set(prev)
+              next.has(label) ? next.delete(label) : next.add(label)
+              return next
+            })
+
             return (
               <div>
-                {rows.map((row, i) => (
-                  <div key={row.label}>
-                    <div
-                      className="flex justify-between items-center py-2"
-                      style={{ borderBottom: (!row.breakdown?.length && i < rows.length - 1) ? '1px solid var(--border)' : 'none' }}>
-                      <span style={{ color: 'var(--text-muted)', fontWeight: row.bold ? 600 : 400 }} className="text-sm">{row.label}</span>
-                      <span style={{ color: row.color, fontWeight: row.bold ? 800 : 600 }} className="text-sm">{row.value}</span>
-                    </div>
-                    {row.breakdown?.length > 0 && (
-                      <div className="mb-2 ml-3 space-y-0.5" style={{ borderBottom: i < rows.length - 1 ? '1px solid var(--border)' : 'none', paddingBottom: '8px' }}>
-                        {row.breakdown.map(line => (
-                          <div key={line.id} className="flex justify-between items-center text-xs" style={{ color: 'var(--text-muted)' }}>
-                            <span>
-                              {Number(line.quantity).toLocaleString('en-IN')} birds × {formatCurrency(line.price_per_chick)}
-                              {line.source === 'stock' && <span className="ml-1.5 text-amber-600">(stock)</span>}
-                            </span>
-                            <span>{formatCurrency(line.total_cost)}</span>
-                          </div>
-                        ))}
+                {rows.map((row, i) => {
+                  const hasBreakdown = row.breakdown?.length > 0
+                  const isExpanded   = expandedPLRows.has(row.label)
+                  const isLast       = i === rows.length - 1
+                  return (
+                    <div key={row.label}>
+                      <div
+                        className={`flex justify-between items-center py-2 ${hasBreakdown ? 'cursor-pointer select-none hover:opacity-75 transition-opacity' : ''}`}
+                        style={{ borderBottom: (!isExpanded && !isLast) ? '1px solid var(--border)' : 'none' }}
+                        onClick={hasBreakdown ? () => toggleRow(row.label) : undefined}
+                      >
+                        <span className="flex items-center gap-1.5 text-sm" style={{ color: 'var(--text-muted)', fontWeight: row.bold ? 600 : 400 }}>
+                          {hasBreakdown && (
+                            <span style={{ fontSize: 10, color: 'var(--text-faint)', transition: 'transform 0.15s', display: 'inline-block', transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }}>▶</span>
+                          )}
+                          {row.label}
+                        </span>
+                        <span style={{ color: row.color, fontWeight: row.bold ? 800 : 600 }} className="text-sm">{row.value}</span>
                       </div>
-                    )}
-                  </div>
-                ))}
+
+                      {hasBreakdown && isExpanded && (
+                        <div className="mb-2 ml-4 space-y-0.5" style={{ borderBottom: !isLast ? '1px solid var(--border)' : 'none', paddingBottom: '8px' }}>
+                          {row.breakdownType === 'chick' && row.breakdown.map(line => (
+                            <div key={line.id} className="flex justify-between items-center text-xs" style={{ color: 'var(--text-muted)' }}>
+                              <span>
+                                {Number(line.quantity).toLocaleString('en-IN')} birds × {formatCurrency(line.price_per_chick)}
+                                {line.source === 'stock' && <span className="ml-1.5 text-amber-600">(stock)</span>}
+                              </span>
+                              <span>{formatCurrency(line.total_cost)}</span>
+                            </div>
+                          ))}
+                          {row.breakdownType === 'expense' && row.breakdown.map(line => (
+                            <div key={line.id} className="flex justify-between items-center text-xs" style={{ color: 'var(--text-muted)' }}>
+                              <span>{line.item_name} — {Number(line.quantity).toLocaleString('en-IN')} {line.unit} @ {formatCurrency(line.cost_per_unit)}/{line.unit}</span>
+                              <span>{formatCurrency(line.total_cost)}</span>
+                            </div>
+                          ))}
+                          {row.breakdownType === 'ancillary' && row.breakdown.map(line => (
+                            <div key={line.id} className="flex justify-between items-center text-xs" style={{ color: 'var(--text-muted)' }}>
+                              <span>{line.item_name}</span>
+                              <span>{formatCurrency(Number(line.extra_total_cost))}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
               </div>
             )
           })()}
