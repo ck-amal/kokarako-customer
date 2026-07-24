@@ -1227,7 +1227,7 @@ export default function BatchDetail() {
                             </div>
                           ))}
                           {row.breakdownType === 'expense' && row.breakdown.map(line => {
-                            const ret = returnDetailByDist[line.id]
+                            const ret = returnDetailByDist[line.distribution_id]
                             const originalCost = Number(line.total_cost || 0)
                             const returnCredit = ret ? ret.returnCredit : 0
                             const handlingCharges = ret ? ret.handlingCharges : 0
