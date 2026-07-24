@@ -12,11 +12,12 @@ export default function StockReturnModal({ distribution, onClose, onSaved }) {
   const { organization } = useAuth()
   const [farmExpense,     setFarmExpense]     = useState(null)
   const [alreadyReturned, setAlreadyReturned] = useState(0)
-  const [factor,          setFactor]          = useState(0)  // kg_per_unit or ml_per_unit
-  const [subLabel,        setSubLabel]        = useState('') // 'KG' or 'ml'
+  const [factor,          setFactor]          = useState(0)
+  const [subLabel,        setSubLabel]        = useState('')
   const [loading,         setLoading]         = useState(true)
-  const [canonCount,      setCanonCount]      = useState('') // bags / bottles / units
-  const [subCount,        setSubCount]        = useState('') // kg / ml
+  const [canonCount,      setCanonCount]      = useState('')
+  const [subCount,        setSubCount]        = useState('')
+  const [handlingCharges, setHandlingCharges] = useState('')
   const [form, setForm] = useState({
     return_to_stock: true,
     date:            new Date().toISOString().slice(0, 10),
@@ -45,7 +46,6 @@ export default function StockReturnModal({ distribution, onClose, onSaved }) {
       setAlreadyReturned(
         (retData || []).reduce((s, r) => s + Number(r.quantity || 0), 0)
       )
-      // Set conversion factor for Bag/Bottle items
       if (distribution.unit === 'Bag' && Number(itemData?.kg_per_unit) > 0) {
         setFactor(Number(itemData.kg_per_unit))
         setSubLabel('KG')
@@ -60,22 +60,23 @@ export default function StockReturnModal({ distribution, onClose, onSaved }) {
 
   function set(f) { return e => setForm(p => ({ ...p, [f]: e.target.value })) }
 
-  const hasSubUnit   = factor > 0 && subLabel !== ''
-  const canonLabel   = distribution.unit
+  const hasSubUnit  = factor > 0 && subLabel !== ''
+  const canonLabel  = distribution.unit
 
-  // returnQty in canonical units (bags/bottles/units)
-  const returnQty    = hasSubUnit
+  const returnQty = hasSubUnit
     ? (parseFloat(canonCount) || 0) + (parseFloat(subCount) || 0) / factor
     : (parseFloat(canonCount) || 0)
 
-  const maxReturnable  = Math.max(0, Number(distribution.quantity) - alreadyReturned)
-  const costPerUnit    = farmExpense ? Number(farmExpense.cost_per_unit || 0) : 0
-  const costCredit     = roundCurrency(returnQty * costPerUnit)
-  const netAfterReturn = roundCurrency(Math.max(0, maxReturnable - returnQty))
+  const maxReturnable    = Math.max(0, Number(distribution.quantity) - alreadyReturned)
+  const costPerUnit      = farmExpense ? Number(farmExpense.cost_per_unit || 0) : 0
+  const returnValue      = roundCurrency(returnQty * costPerUnit)        // full value of returned items
+  const handlingChargesVal = roundCurrency(parseFloat(handlingCharges) || 0)
+  const netCredit        = roundCurrency(Math.max(0, returnValue - handlingChargesVal)) // actual deduction from batch expenses
+  const netAfterReturn   = roundCurrency(Math.max(0, maxReturnable - returnQty))
 
   async function handleSubmit(e) {
     e.preventDefault()
-    if (returnQty <= 0)           { setError('Enter a valid quantity'); return }
+    if (returnQty <= 0) { setError('Enter a valid quantity'); return }
     if (returnQty > maxReturnable) {
       const maxStr = hasSubUnit
         ? `${maxReturnable} ${canonLabel} (${(maxReturnable * factor).toLocaleString('en-IN', { maximumFractionDigits: 1 })} ${subLabel})`
@@ -83,24 +84,28 @@ export default function StockReturnModal({ distribution, onClose, onSaved }) {
       setError(`Max returnable: ${maxStr}`)
       return
     }
+    if (handlingChargesVal < 0) { setError('Handling charges cannot be negative'); return }
+    if (handlingChargesVal > returnValue) { setError('Handling charges cannot exceed the return value'); return }
+
     setSaving(true)
     setError('')
 
     const { data: srRow, error: srErr } = await supabase
       .from('stock_returns')
       .insert({
-        organization_id: organization?.id,
-        farm_id:         distribution.farm_id,
-        batch_id:        distribution.batch_id || null,
-        distribution_id: distribution.id,
-        item_name:       distribution.item_name,
-        item_type:       distribution.type,
-        quantity:        returnQty,
-        unit:            distribution.unit,
-        return_to_stock: form.return_to_stock,
-        date:            form.date,
-        reason:          form.reason.trim() || null,
-        notes:           form.notes.trim() || null,
+        organization_id:  organization?.id,
+        farm_id:          distribution.farm_id,
+        batch_id:         distribution.batch_id || null,
+        distribution_id:  distribution.id,
+        item_name:        distribution.item_name,
+        item_type:        distribution.type,
+        quantity:         returnQty,
+        unit:             distribution.unit,
+        return_to_stock:  form.return_to_stock,
+        date:             form.date,
+        reason:           form.reason.trim() || null,
+        notes:            form.notes.trim() || null,
+        handling_charges: handlingChargesVal,
       })
       .select('id')
       .single()
@@ -127,18 +132,19 @@ export default function StockReturnModal({ distribution, onClose, onSaved }) {
 
     if (farmExpense) {
       await supabase.from('farm_expense_returns').insert({
-        organization_id: organization?.id,
-        stock_return_id: srRow.id,
-        distribution_id: distribution.id,
-        farm_id:         distribution.farm_id,
-        batch_id:        distribution.batch_id || null,
-        item_name:       distribution.item_name,
-        item_type:       distribution.type,
-        quantity:        returnQty,
-        unit:            distribution.unit,
-        cost_per_unit:   costPerUnit,
-        total_cost:      costCredit,
-        date:            form.date,
+        organization_id:  organization?.id,
+        stock_return_id:  srRow.id,
+        distribution_id:  distribution.id,
+        farm_id:          distribution.farm_id,
+        batch_id:         distribution.batch_id || null,
+        item_name:        distribution.item_name,
+        item_type:        distribution.type,
+        quantity:         returnQty,
+        unit:             distribution.unit,
+        cost_per_unit:    costPerUnit,
+        total_cost:       netCredit,          // net credit after handling charges
+        handling_charges: handlingChargesVal,
+        date:             form.date,
       })
     }
 
@@ -257,6 +263,26 @@ export default function StockReturnModal({ distribution, onClose, onSaved }) {
                   )}
                 </div>
 
+                {/* Handling Charges */}
+                {returnQty > 0 && costPerUnit > 0 && (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Handling Charges
+                      <span className="ml-1.5 text-xs font-normal text-gray-400">(loading, unloading, transport — stays as batch expense)</span>
+                    </label>
+                    <div className="relative">
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-gray-400 pointer-events-none">₹</span>
+                      <input
+                        type="number" min="0" step="any"
+                        value={handlingCharges}
+                        onChange={e => setHandlingCharges(e.target.value)}
+                        placeholder="0"
+                        className={inputCls + ' pl-7'}
+                      />
+                    </div>
+                  </div>
+                )}
+
                 {/* Condition */}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">Condition</label>
@@ -312,10 +338,24 @@ export default function StockReturnModal({ distribution, onClose, onSaved }) {
                         {' '}of {distribution.item_name}
                       </span>
                     </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-600">Cost credit</span>
-                      <span className="font-semibold text-green-700">− {formatCurrency(costCredit)}</span>
-                    </div>
+                    {costPerUnit > 0 && (
+                      <>
+                        <div className="flex justify-between">
+                          <span className="text-gray-600">Return value</span>
+                          <span className="text-gray-700">{formatCurrency(returnValue)}</span>
+                        </div>
+                        {handlingChargesVal > 0 && (
+                          <div className="flex justify-between">
+                            <span className="text-gray-600">Handling charges</span>
+                            <span className="text-orange-600 font-medium">+ {formatCurrency(handlingChargesVal)}</span>
+                          </div>
+                        )}
+                        <div className="flex justify-between border-t border-green-200 pt-1.5 mt-1">
+                          <span className="font-semibold text-gray-700">Net credit to batch</span>
+                          <span className="font-bold text-green-700">− {formatCurrency(netCredit)}</span>
+                        </div>
+                      </>
+                    )}
                     <div className="flex justify-between">
                       <span className="text-gray-600">Net remaining at farm</span>
                       <span className="font-medium text-gray-700">
