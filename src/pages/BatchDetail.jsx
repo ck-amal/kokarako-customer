@@ -1132,28 +1132,28 @@ export default function BatchDetail() {
   ${chickPurchases.length > 0 ? `
   <h2>Chick Placements</h2>
   <table>
-    <thead><tr><th>Date</th><th>Quantity</th><th>Price/Bird</th><th>Total</th><th>Source</th><th>Invoice</th></tr></thead>
+    <thead><tr><th>Date</th><th style="text-align:right">Quantity</th><th style="text-align:right">Price/Bird</th><th style="text-align:right">Total</th><th>Source</th><th>Invoice</th></tr></thead>
     <tbody>${chickRows}</tbody>
   </table>` : ''}
 
   ${feedExpenses.length > 0 ? `
   <h2>Feed Distributions</h2>
   <table>
-    <thead><tr><th>Date</th><th>Item</th><th>Qty</th><th>Rate</th><th>Original Cost</th><th>Return Credit</th><th>Handling</th><th>Net Cost</th></tr></thead>
+    <thead><tr><th>Date</th><th>Item</th><th style="text-align:right">Qty</th><th style="text-align:right">Rate</th><th style="text-align:right">Original Cost</th><th style="text-align:right">Return Credit</th><th style="text-align:right">Handling</th><th style="text-align:right">Net Cost</th></tr></thead>
     <tbody>${feedExpenses.map(expenseRow).join('')}</tbody>
   </table>` : ''}
 
   ${medExpenses.length > 0 ? `
   <h2>Medicine Distributions</h2>
   <table>
-    <thead><tr><th>Date</th><th>Item</th><th>Qty</th><th>Rate</th><th>Original Cost</th><th>Return Credit</th><th>Handling</th><th>Net Cost</th></tr></thead>
+    <thead><tr><th>Date</th><th>Item</th><th style="text-align:right">Qty</th><th style="text-align:right">Rate</th><th style="text-align:right">Original Cost</th><th style="text-align:right">Return Credit</th><th style="text-align:right">Handling</th><th style="text-align:right">Net Cost</th></tr></thead>
     <tbody>${medExpenses.map(expenseRow).join('')}</tbody>
   </table>` : ''}
 
   ${sales.length > 0 ? `
   <h2>Sales</h2>
   <table>
-    <thead><tr><th>Date</th><th>Vendor</th><th>Birds</th><th>Weight</th><th>Rate</th><th>Amount</th><th>Status</th></tr></thead>
+    <thead><tr><th>Date</th><th>Vendor</th><th style="text-align:right">Birds</th><th style="text-align:right">Weight</th><th style="text-align:right">Rate</th><th style="text-align:right">Amount</th><th>Status</th></tr></thead>
     <tbody>${salesRows}</tbody>
   </table>` : ''}
 
