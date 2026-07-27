@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { supabase } from '../lib/supabaseClient'
 import { formatCurrency, roundCurrency } from '../utils/format'
@@ -20,13 +20,54 @@ export default function ReturnProcurementModal({ group, onClose, onSaved }) {
   // Only show original purchase rows (not any existing return rows in the group)
   const purchasableItems = (group.items || []).filter(r => !r.is_return)
 
-  const [returnDate, setReturnDate]     = useState(new Date().toISOString().slice(0, 10))
-  const [returnReason, setReturnReason] = useState('')
-  const [quantities, setQuantities]     = useState(() =>
+  const [returnDate, setReturnDate]         = useState(new Date().toISOString().slice(0, 10))
+  const [returnReason, setReturnReason]     = useState('')
+  const [quantities, setQuantities]         = useState(() =>
     Object.fromEntries(purchasableItems.map(item => [item.id, '']))
   )
+  // alreadyReturned[itemId] = total qty already returned in previous return transactions
+  const [alreadyReturned, setAlreadyReturned] = useState({})
+  // stockQty[itemName.toLowerCase()] = current stock quantity
+  const [stockQty, setStockQty]               = useState({})
   const [saving, setSaving] = useState(false)
   const [error, setError]   = useState('')
+
+  // Fetch already-returned quantities + current stock quantities
+  useEffect(() => {
+    const ids = purchasableItems.map(i => i.id)
+    if (!ids.length) return
+    Promise.all([
+      supabase
+        .from('procurement')
+        .select('original_procurement_id, quantity')
+        .in('original_procurement_id', ids)
+        .eq('is_return', true)
+        .eq('organization_id', organization.id),
+      supabase
+        .from('stock')
+        .select('item_name, quantity')
+        .eq('organization_id', organization.id),
+    ]).then(([{ data: returnRows }, { data: stockRows }]) => {
+      const returnMap = {}
+      for (const row of (returnRows || [])) {
+        returnMap[row.original_procurement_id] =
+          (returnMap[row.original_procurement_id] || 0) + Number(row.quantity)
+      }
+      setAlreadyReturned(returnMap)
+
+      const sMap = {}
+      for (const row of (stockRows || [])) {
+        sMap[row.item_name.toLowerCase()] = Number(row.quantity)
+      }
+      setStockQty(sMap)
+    })
+  }, [])
+
+  function maxReturnQty(item) {
+    const purchaseRemaining = Math.max(0, Number(item.quantity) - (alreadyReturned[item.id] || 0))
+    const inStock           = stockQty[item.item_name.toLowerCase()] ?? Infinity
+    return Math.min(purchaseRemaining, inStock)
+  }
 
   function cpuOf(item) {
     return Number(item.cost_per_unit) ||
@@ -46,8 +87,9 @@ export default function ReturnProcurementModal({ group, onClose, onSaved }) {
 
     for (const item of toReturn) {
       const returnQty = parseFloat(quantities[item.id])
-      if (returnQty > Number(item.quantity)) {
-        setError(`Return qty for "${item.item_name}" exceeds original ${Number(item.quantity)} ${item.unit}`)
+      const maxQty    = maxReturnQty(item)
+      if (returnQty > maxQty) {
+        setError(`Return qty for "${item.item_name}" exceeds available stock (${maxQty} ${item.unit} available to return)`)
         return
       }
     }
@@ -163,27 +205,47 @@ export default function ReturnProcurementModal({ group, onClose, onSaved }) {
             <p className="text-xs font-semibold text-gray-600 mb-2">Quantities to Return</p>
             <div className="space-y-2">
               {purchasableItems.map(item => {
-                const returnQty  = parseFloat(quantities[item.id]) || 0
+                const returnQty   = parseFloat(quantities[item.id]) || 0
                 const returnValue = returnQty * cpuOf(item)
+                const maxQty       = maxReturnQty(item)
+                const prevReturned = alreadyReturned[item.id] || 0
+                const inStock      = stockQty[item.item_name.toLowerCase()] ?? null
+                const fullyReturned = maxQty <= 0 && prevReturned >= Number(item.quantity)
                 return (
-                  <div key={item.id} className="flex items-center gap-3 bg-gray-50 rounded-xl px-3 py-3">
+                  <div key={item.id} className={`flex items-center gap-3 rounded-xl px-3 py-3 ${fullyReturned ? 'bg-gray-100 opacity-60' : 'bg-gray-50'}`}>
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium text-gray-800">{item.item_name}</p>
                       <p className="text-xs text-gray-400">
                         Purchased: {Number(item.quantity).toLocaleString('en-IN')} {item.unit}
                         {' · '}{formatCurrency(Number(item.cost))}
                       </p>
+                      {prevReturned > 0 && (
+                        <p className="text-xs text-teal-600 mt-0.5">
+                          Already returned: {prevReturned.toLocaleString('en-IN')} {item.unit}
+                        </p>
+                      )}
+                      {!fullyReturned && (
+                        <p className={`text-xs mt-0.5 ${maxQty === 0 ? 'text-red-500' : 'text-amber-600'}`}>
+                          {maxQty > 0
+                            ? `${maxQty.toLocaleString('en-IN')} ${item.unit} in stock · returnable`
+                            : 'None in stock — all distributed'}
+                        </p>
+                      )}
+                      {fullyReturned && (
+                        <p className="text-xs text-teal-600 mt-0.5">Fully returned</p>
+                      )}
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
                       <input
                         type="number"
                         min="0"
                         step="any"
-                        max={Number(item.quantity)}
+                        max={maxQty}
                         value={quantities[item.id]}
+                        disabled={fullyReturned}
                         onChange={e => setQuantities(q => ({ ...q, [item.id]: e.target.value }))}
                         placeholder="0"
-                        className="w-20 rounded-lg border border-gray-300 px-2 py-1.5 text-sm text-center focus:outline-none focus:ring-2 focus:ring-amber-400"
+                        className="w-20 rounded-lg border border-gray-300 px-2 py-1.5 text-sm text-center focus:outline-none focus:ring-2 focus:ring-amber-400 disabled:bg-gray-200 disabled:cursor-not-allowed"
                       />
                       <span className="text-xs text-gray-400 w-8 shrink-0">{item.unit}</span>
                       <span className={`text-xs font-semibold w-20 text-right shrink-0 ${returnValue > 0 ? 'text-teal-600' : 'text-gray-300'}`}>
