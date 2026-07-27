@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { Fragment, useEffect, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { supabase } from '../lib/supabaseClient'
@@ -10,6 +10,7 @@ import { useAuth } from '../contexts/AuthContext'
 import { useOnboarding } from '../contexts/OnboardingContext'
 import AuditInfo from '../components/AuditInfo'
 import AttachmentUploader from '../components/AttachmentUploader'
+import ReturnProcurementModal from '../components/ReturnProcurementModal'
 import { uploadAttachments, attachmentsByEntity } from '../lib/attachments'
 import AttachmentViewer from '../components/AttachmentViewer'
 
@@ -25,7 +26,32 @@ const TYPE_STYLES = {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+function groupProcurements(rows) {
+  const map = new Map()
+  for (const r of rows) {
+    const gid = r.purchase_group_id || r.id
+    if (!map.has(gid)) {
+      map.set(gid, {
+        purchase_group_id: gid,
+        date:             r.date,
+        supplierName:     r.suppliers?.name || '—',
+        supplier_id:      r.supplier_id,
+        invoice_number:   r.invoice_number || null,
+        items:            [],
+        totalCost:        0,
+        is_return_group:  false,
+      })
+    }
+    const g = map.get(gid)
+    g.items.push(r)
+    g.totalCost += Number(r.cost)
+    if (r.is_return) g.is_return_group = true
+  }
+  return [...map.values()].sort((a, b) => new Date(b.date) - new Date(a.date))
+}
+
 function currentMonthRange() {
+
   const now   = new Date()
   const start = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10)
   const end   = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().slice(0, 10)
@@ -296,6 +322,8 @@ function ProcurementModal({ onClose, onSaved }) {
     }
 
     setSaving(true)
+    // All lines in one save share the same group ID (so they group together)
+    const purchaseGroupId = crypto.randomUUID()
     let firstProcurementId = null
     // One procurement row per line (keeping stock + ledger in sync each time)
     for (const p of prepared) {
@@ -314,6 +342,7 @@ function ProcurementModal({ onClose, onSaved }) {
         notes:         header.notes.trim() || null,
         has_extra_expense:     p.extraEnabled,
         extra_expense_per_unit: p.extraPerUnit,
+        purchase_group_id:     purchaseGroupId,
         created_by_id:   user?.id,
         created_by_name: userName,
       }).select('id').single()
@@ -954,6 +983,7 @@ export default function Procurement() {
   const [loading, setLoading]       = useState(true)
   const [modalOpen, setModalOpen]   = useState(() => !!location.state?.openModal)
   const [editingProc,       setEditingProc]       = useState(null)
+  const [returningGroup,    setReturningGroup]    = useState(null)
   const [deletingProc,      setDeletingProc]      = useState(null)
   const [deleteConfirmText, setDeleteConfirmText] = useState('')
   const [deletingBusy,      setDeletingBusy]      = useState(false)
@@ -992,11 +1022,12 @@ export default function Procurement() {
 
   const grandTotal = records.reduce((sum, r) => sum + Number(r.cost), 0)
 
-  const PAGE_SIZE   = 15
-  const totalPages  = Math.max(1, Math.ceil(visible.length / PAGE_SIZE))
-  const currentPage = Math.min(page, totalPages)
-  const paged       = visible.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE)
-  const viewRow     = viewRowId ? records.find(r => r.id === viewRowId) : null
+  const PAGE_SIZE     = 15
+  const visibleGroups = groupProcurements(visible)
+  const totalPages    = Math.max(1, Math.ceil(visibleGroups.length / PAGE_SIZE))
+  const currentPage   = Math.min(page, totalPages)
+  const pagedGroups   = visibleGroups.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE)
+  const viewRow       = viewRowId ? records.find(r => r.id === viewRowId) : null
 
   return (
     <div>
@@ -1132,52 +1163,101 @@ export default function Procurement() {
                   {(canEdit || canDelete) && <th className="px-4 py-3"></th>}
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-50">
-                {paged.map(r => (
-                  <tr key={r.id} onClick={() => setViewRowId(r.id)} className="hover:bg-amber-50/40 transition cursor-pointer">
-                    <td className="px-5 py-3.5">
-                      <TypeBadge type={r.item_type_name?.toLowerCase() ?? r.type} />
-                    </td>
-                    <td className="px-5 py-3.5 font-medium text-gray-800">{r.item_name}</td>
-                    <td className="px-5 py-3.5 text-right text-gray-700">
-                      {Number(r.quantity).toLocaleString('en-IN')}
-                    </td>
-                    <td className="px-5 py-3.5 text-gray-500">{r.unit}</td>
-                    <td className="px-5 py-3.5 text-right font-semibold text-gray-800">
-                      {formatCurrency(r.cost)}
-                    </td>
-                    <td className="px-5 py-3.5 text-gray-600">{r.suppliers?.name || '—'}</td>
-                    <td className="px-5 py-3.5 text-gray-500">{r.invoice_number || '—'}</td>
-                    <td className="px-5 py-3.5 text-gray-500 whitespace-nowrap">{formatDate(r.date, i18n.language)}</td>
-                    <td className="px-5 py-3.5 text-gray-400 max-w-[140px] truncate" title={r.notes || ''}>
-                      {r.notes || '—'}
-                    </td>
-                    <td className="px-5 py-3.5">
-                      <AuditInfo createdByName={r.created_by_name} createdAt={r.created_at} updatedByName={r.updated_by_name} updatedAt={r.updated_at} />
-                    </td>
-                    {(canEdit || canDelete) && (
-                      <td className="px-4 py-3.5" onClick={e => e.stopPropagation()}>
-                        <div className="flex items-center gap-1.5">
-                          {canEdit && (
-                            <button
-                              onClick={() => setEditingProc(r)}
-                              className="rounded-lg border border-gray-200 px-2.5 py-1 text-xs font-medium text-gray-600 hover:bg-gray-50 transition"
-                            >
-                              Edit
-                            </button>
-                          )}
-                          {canDelete && (
-                            <button
-                              onClick={() => { setDeletingProc(r); setDeleteConfirmText(''); setDeleteError('') }}
-                              className="rounded-lg border border-red-200 px-2.5 py-1 text-xs font-medium text-red-500 hover:bg-red-50 transition"
-                            >
-                              Delete
-                            </button>
-                          )}
+              <tbody>
+                {pagedGroups.map(group => (
+                  <Fragment key={group.purchase_group_id}>
+                    {/* Group header row */}
+                    <tr className="border-t-2 border-gray-100 bg-gray-50/60">
+                      <td colSpan={(canEdit || canDelete) ? 11 : 10} className="px-5 py-2.5">
+                        <div className="flex items-center justify-between gap-4">
+                          <div className="flex items-center gap-3 flex-wrap">
+                            {group.is_return_group && (
+                              <span className="inline-flex items-center rounded-full bg-teal-100 text-teal-700 px-2.5 py-0.5 text-xs font-semibold">
+                                Return
+                              </span>
+                            )}
+                            <span className="text-xs font-semibold text-gray-700 whitespace-nowrap">
+                              {formatDate(group.date, i18n.language)}
+                            </span>
+                            <span className="text-xs font-medium text-gray-600">{group.supplierName}</span>
+                            {group.invoice_number && (
+                              <span className="text-xs text-gray-400">Invoice #{group.invoice_number}</span>
+                            )}
+                            {group.items.length > 1 && (
+                              <span className="text-xs text-gray-400">{group.items.length} items</span>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-3 shrink-0">
+                            <span className={`text-sm font-bold ${group.totalCost < 0 ? 'text-teal-600' : 'text-gray-800'}`}>
+                              {group.totalCost < 0 ? '−' : ''}{formatCurrency(Math.abs(group.totalCost))}
+                            </span>
+                            {canEdit && !group.is_return_group && group.supplier_id && (
+                              <button
+                                onClick={e => { e.stopPropagation(); setReturningGroup(group) }}
+                                className="rounded-lg border border-red-200 px-2.5 py-1 text-xs font-medium text-red-600 hover:bg-red-50 transition"
+                              >
+                                Return
+                              </button>
+                            )}
+                          </div>
                         </div>
                       </td>
-                    )}
-                  </tr>
+                    </tr>
+                    {/* Item rows */}
+                    {group.items.map(r => (
+                      <tr
+                        key={r.id}
+                        onClick={() => setViewRowId(r.id)}
+                        className={`border-b border-gray-50 hover:bg-amber-50/40 transition cursor-pointer ${r.is_return ? 'bg-teal-50/20' : ''}`}
+                      >
+                        <td className="px-5 py-3.5">
+                          <TypeBadge type={r.item_type_name?.toLowerCase() ?? r.type} />
+                        </td>
+                        <td className="px-5 py-3.5 font-medium text-gray-800">{r.item_name}</td>
+                        <td className="px-5 py-3.5 text-right text-gray-700">
+                          {Number(r.quantity).toLocaleString('en-IN')}
+                        </td>
+                        <td className="px-5 py-3.5 text-gray-500">{r.unit}</td>
+                        <td className={`px-5 py-3.5 text-right font-semibold ${r.is_return ? 'text-teal-600' : 'text-gray-800'}`}>
+                          {r.is_return ? '−' : ''}{formatCurrency(Math.abs(Number(r.cost)))}
+                        </td>
+                        <td className="px-5 py-3.5 text-gray-600">{r.suppliers?.name || '—'}</td>
+                        <td className="px-5 py-3.5 text-gray-500">{r.invoice_number || '—'}</td>
+                        <td className="px-5 py-3.5 text-gray-500 whitespace-nowrap">{formatDate(r.date, i18n.language)}</td>
+                        <td className="px-5 py-3.5 text-gray-400 max-w-[140px] truncate" title={r.notes || ''}>
+                          {r.notes || '—'}
+                        </td>
+                        <td className="px-5 py-3.5">
+                          <AuditInfo createdByName={r.created_by_name} createdAt={r.created_at} updatedByName={r.updated_by_name} updatedAt={r.updated_at} />
+                        </td>
+                        {(canEdit || canDelete) && !r.is_return && (
+                          <td className="px-4 py-3.5" onClick={e => e.stopPropagation()}>
+                            <div className="flex items-center gap-1.5">
+                              {canEdit && (
+                                <button
+                                  onClick={() => setEditingProc(r)}
+                                  className="rounded-lg border border-gray-200 px-2.5 py-1 text-xs font-medium text-gray-600 hover:bg-gray-50 transition"
+                                >
+                                  Edit
+                                </button>
+                              )}
+                              {canDelete && (
+                                <button
+                                  onClick={() => { setDeletingProc(r); setDeleteConfirmText(''); setDeleteError('') }}
+                                  className="rounded-lg border border-red-200 px-2.5 py-1 text-xs font-medium text-red-500 hover:bg-red-50 transition"
+                                >
+                                  Delete
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        )}
+                        {(canEdit || canDelete) && r.is_return && (
+                          <td className="px-4 py-3.5" />
+                        )}
+                      </tr>
+                    ))}
+                  </Fragment>
                 ))}
               </tbody>
             </table>
@@ -1197,7 +1277,7 @@ export default function Procurement() {
             {totalPages > 1 && (
               <div className="flex items-center justify-between gap-3 px-5 py-3 border-t border-gray-100 bg-white">
                 <span className="text-xs text-gray-500">
-                  {`${(currentPage - 1) * PAGE_SIZE + 1}–${Math.min(currentPage * PAGE_SIZE, visible.length)} of ${visible.length}`}
+                  {`${(currentPage - 1) * PAGE_SIZE + 1}–${Math.min(currentPage * PAGE_SIZE, visibleGroups.length)} of ${visibleGroups.length} groups`}
                 </span>
                 <div className="flex items-center gap-2">
                   <button
@@ -1286,6 +1366,14 @@ export default function Procurement() {
           proc={editingProc}
           onClose={() => setEditingProc(null)}
           onSaved={() => { setEditingProc(null); fetchData() }}
+        />
+      )}
+
+      {returningGroup && (
+        <ReturnProcurementModal
+          group={returningGroup}
+          onClose={() => setReturningGroup(null)}
+          onSaved={() => { setReturningGroup(null); fetchData() }}
         />
       )}
 

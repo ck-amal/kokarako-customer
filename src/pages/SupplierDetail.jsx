@@ -6,25 +6,48 @@ import { formatCurrency } from '../utils/format'
 import { formatDate } from '../utils/dateFormat'
 import { useAuth } from '../contexts/AuthContext'
 import AuditInfo from '../components/AuditInfo'
+import ReturnProcurementModal from '../components/ReturnProcurementModal'
 
-// ─── FIFO status computation ──────────────────────────────────────────────────
+// ─── Purchase group helpers ───────────────────────────────────────────────────
 
-function computePaymentStatus(procurements, totalPaid) {
-  // procurements sorted oldest-first
-  const sorted = [...procurements].sort((a, b) => new Date(a.date) - new Date(b.date))
+function groupByPurchaseGroup(procurements) {
+  const map = new Map()
+  for (const p of procurements) {
+    const gid = p.purchase_group_id || p.id
+    if (!map.has(gid)) {
+      map.set(gid, {
+        purchase_group_id: gid,
+        date:              p.date,
+        invoice_number:    p.invoice_number || null,
+        items:             [],
+        totalCost:         0,
+        is_return_group:   false,
+      })
+    }
+    const g = map.get(gid)
+    g.items.push(p)
+    g.totalCost += Number(p.cost)
+    if (p.is_return) g.is_return_group = true
+    // Use the oldest date in the group
+    if (p.date < g.date) g.date = p.date
+  }
+  return [...map.values()].sort((a, b) => new Date(a.date) - new Date(b.date))
+}
+
+function computeGroupPaymentStatus(groups, totalPaid) {
   let remaining = totalPaid
-
-  return sorted.map(p => {
-    const cost = Number(p.cost)
+  return groups.map(g => {
+    const cost = g.totalCost
+    if (cost <= 0) return { ...g, payStatus: 'Credit', paidAmount: 0 }
     if (remaining >= cost) {
       remaining -= cost
-      return { ...p, payStatus: 'Paid', paidAmount: cost }
+      return { ...g, payStatus: 'Paid', paidAmount: cost }
     } else if (remaining > 0) {
       const paidAmount = remaining
       remaining = 0
-      return { ...p, payStatus: 'Partial', paidAmount }
+      return { ...g, payStatus: 'Partial', paidAmount }
     } else {
-      return { ...p, payStatus: 'Unpaid', paidAmount: 0 }
+      return { ...g, payStatus: 'Unpaid', paidAmount: 0 }
     }
   })
 }
@@ -36,6 +59,7 @@ function StatusBadge({ status }) {
     Paid:    'bg-green-100 text-green-700',
     Partial: 'bg-amber-100 text-amber-700',
     Unpaid:  'bg-red-100   text-red-700',
+    Credit:  'bg-teal-100  text-teal-700',
   }
   return (
     <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold ${styles[status] ?? 'bg-gray-100 text-gray-600'}`}>
@@ -232,18 +256,19 @@ function RecordPaymentModal({ supplier, outstanding, onClose, onSaved }) {
 
 // ─── Purchases Tab ────────────────────────────────────────────────────────────
 
-function PurchasesTab({ procurements, totalPaid }) {
+function PurchasesTab({ procurements, totalPaid, canEdit, onReturn }) {
   const { t, i18n } = useTranslation()
   const [statusFilter, setStatusFilter] = useState('All')
 
-  const withStatus = computePaymentStatus(procurements, totalPaid)
-  const filtered = statusFilter === 'All' ? withStatus : withStatus.filter(p => p.payStatus === statusFilter)
+  const groups     = groupByPurchaseGroup(procurements)
+  const withStatus = computeGroupPaymentStatus(groups, totalPaid)
+  const filtered   = statusFilter === 'All' ? withStatus : withStatus.filter(g => g.payStatus === statusFilter)
 
   return (
     <div>
       {/* Filter pills */}
       <div className="flex items-center gap-2 mb-4 flex-wrap">
-        {['All', 'Unpaid', 'Partial', 'Paid'].map(s => (
+        {['All', 'Unpaid', 'Partial', 'Paid', 'Credit'].map(s => (
           <button key={s} onClick={() => setStatusFilter(s)}
             className={`rounded-full px-4 py-1.5 text-xs font-semibold transition border ${
               statusFilter === s ? 'bg-amber-500 text-white border-amber-500' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
@@ -260,44 +285,69 @@ function PurchasesTab({ procurements, totalPaid }) {
           <p className="text-sm">No purchases {statusFilter !== 'All' ? `with status "${statusFilter}"` : ''}</p>
         </div>
       ) : (
-        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm min-w-[650px]">
-              <thead>
-                <tr className="bg-gray-50 border-b border-gray-100 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                  <th className="px-5 py-3">{t('common.date')}</th>
-                  <th className="px-5 py-3">Item</th>
-                  <th className="px-5 py-3">Type</th>
-                  <th className="px-5 py-3 text-right">Qty</th>
-                  <th className="px-5 py-3">Unit</th>
-                  <th className="px-5 py-3 text-right">Cost</th>
-                  <th className="px-5 py-3">{t('common.status')}</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-50">
-                {filtered.map(p => (
-                  <tr key={p.id} className="hover:bg-amber-50/30 transition">
-                    <td className="px-5 py-3.5 text-gray-500 whitespace-nowrap">{formatDate(p.date, i18n.language)}</td>
-                    <td className="px-5 py-3.5 font-medium text-gray-800">{p.item_name}</td>
-                    <td className="px-5 py-3.5 text-gray-500 capitalize">{p.type}</td>
-                    <td className="px-5 py-3.5 text-right text-gray-700">{Number(p.quantity).toLocaleString('en-IN')}</td>
-                    <td className="px-5 py-3.5 text-gray-500">{p.unit}</td>
-                    <td className="px-5 py-3.5 text-right font-semibold text-gray-800">{formatCurrency(p.cost)}</td>
-                    <td className="px-5 py-3.5">
-                      <div className="flex flex-col gap-0.5">
-                        <StatusBadge status={p.payStatus} />
-                        {p.payStatus === 'Partial' && (
-                          <span className="text-xs text-gray-400">
-                            Paid {formatCurrency(p.paidAmount)}
-                          </span>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
+        <div className="space-y-3">
+          {filtered.map(group => (
+            <div
+              key={group.purchase_group_id}
+              className={`bg-white rounded-2xl border shadow-sm overflow-hidden ${
+                group.is_return_group ? 'border-teal-100' : 'border-gray-100'
+              }`}
+            >
+              {/* Group header */}
+              <div className={`flex items-center justify-between gap-3 px-5 py-3.5 ${
+                group.is_return_group ? 'bg-teal-50/40' : 'bg-gray-50/60'
+              }`}>
+                <div className="flex items-center gap-3 flex-wrap min-w-0">
+                  <StatusBadge status={group.payStatus} />
+                  <span className="text-xs text-gray-500 whitespace-nowrap">{formatDate(group.date, i18n.language)}</span>
+                  {group.invoice_number && (
+                    <span className="text-xs text-gray-400">Invoice #{group.invoice_number}</span>
+                  )}
+                  {group.items.length > 1 && (
+                    <span className="text-xs text-gray-400">{group.items.length} items</span>
+                  )}
+                  {group.payStatus === 'Partial' && (
+                    <span className="text-xs text-amber-600">
+                      Paid {formatCurrency(group.paidAmount)}
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-3 shrink-0">
+                  <span className={`text-sm font-bold ${group.totalCost < 0 ? 'text-teal-600' : 'text-gray-800'}`}>
+                    {group.totalCost < 0 ? '−' : ''}{formatCurrency(Math.abs(group.totalCost))}
+                  </span>
+                  {canEdit && !group.is_return_group && onReturn && group.items.some(r => r.supplier_id) && (
+                    <button
+                      onClick={() => onReturn({ ...group, supplierName: procurements[0]?.suppliers?.name || '—' })}
+                      className="rounded-lg border border-red-200 px-2.5 py-1 text-xs font-medium text-red-600 hover:bg-red-50 transition"
+                    >
+                      Return
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Items */}
+              <div className="divide-y divide-gray-50">
+                {group.items.map(p => (
+                  <div key={p.id} className={`flex items-center gap-4 px-5 py-3 ${p.is_return ? 'bg-teal-50/20' : ''}`}>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-gray-800">{p.item_name}</p>
+                      <p className="text-xs text-gray-400 capitalize mt-0.5">{p.type}</p>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <p className="text-xs text-gray-500">
+                        {Number(p.quantity).toLocaleString('en-IN')} {p.unit}
+                      </p>
+                      <p className={`text-sm font-semibold ${p.is_return ? 'text-teal-600' : 'text-gray-800'}`}>
+                        {p.is_return ? '−' : ''}{formatCurrency(Math.abs(Number(p.cost)))}
+                      </p>
+                    </div>
+                  </div>
                 ))}
-              </tbody>
-            </table>
-          </div>
+              </div>
+            </div>
+          ))}
         </div>
       )}
     </div>
@@ -368,15 +418,19 @@ function LedgerTab({ procurements, payments }) {
 
   // Merge and sort by date ascending
   const entries = [
-    ...procurements.map(p => ({
-      id:      p.id,
-      date:    p.date,
-      type:    'purchase',
-      label:   p.item_name,
-      sub:     p.type,
-      debit:   Number(p.cost),
-      credit:  0,
-    })),
+    ...procurements.map(p => {
+      const isReturn = Boolean(p.is_return)
+      const cost     = Number(p.cost)
+      return {
+        id:     p.id,
+        date:   p.date,
+        type:   isReturn ? 'return' : 'purchase',
+        label:  isReturn ? `Return — ${p.item_name}` : p.item_name,
+        sub:    p.type,
+        debit:  isReturn ? 0 : cost,
+        credit: isReturn ? Math.abs(cost) : 0,
+      }
+    }),
     ...payments.map(p => ({
       id:     p.id,
       date:   p.payment_date,
@@ -419,7 +473,7 @@ function LedgerTab({ procurements, payments }) {
           </thead>
           <tbody className="divide-y divide-gray-50">
             {rows.map(r => (
-              <tr key={`${r.type}-${r.id}`} className={`transition ${r.type === 'payment' ? 'hover:bg-green-50/30' : 'hover:bg-red-50/20'}`}>
+              <tr key={`${r.type}-${r.id}`} className={`transition ${r.type === 'payment' || r.type === 'return' ? 'hover:bg-green-50/30' : 'hover:bg-red-50/20'}`}>
                 <td className="px-5 py-3.5 text-gray-500 whitespace-nowrap">{formatDate(r.date, i18n.language)}</td>
                 <td className="px-5 py-3.5">
                   <p className="font-medium text-gray-800">{r.label}</p>
@@ -451,12 +505,13 @@ export default function SupplierDetail() {
   const { organization, canViewFinancials, canEdit } = useAuth()
   const { t } = useTranslation()
 
-  const [supplier,      setSupplier]      = useState(null)
-  const [procurements,  setProcurements]  = useState([])
-  const [payments,      setPayments]      = useState([])
-  const [loading,       setLoading]       = useState(true)
-  const [activeTab,     setActiveTab]     = useState('Purchases')
-  const [payModal,      setPayModal]      = useState(false)
+  const [supplier,        setSupplier]        = useState(null)
+  const [procurements,    setProcurements]    = useState([])
+  const [payments,        setPayments]        = useState([])
+  const [loading,         setLoading]         = useState(true)
+  const [activeTab,       setActiveTab]       = useState('Purchases')
+  const [payModal,        setPayModal]        = useState(false)
+  const [returningGroup,  setReturningGroup]  = useState(null)
 
   async function fetchAll() {
     setLoading(true)
@@ -476,10 +531,11 @@ export default function SupplierDetail() {
   // Guard — after all hooks
   if (!canViewFinancials) return <Navigate to="/dashboard" replace />
 
-  const totalPurchased = procurements.reduce((s, p) => s + Number(p.cost), 0)
+  const totalPurchased = procurements.filter(p => !p.is_return).reduce((s, p) => s + Number(p.cost), 0)
+  const totalReturned  = procurements.filter(p =>  p.is_return).reduce((s, p) => s + Math.abs(Number(p.cost)), 0)
   const totalPaid      = payments.reduce((s, p) => s + Number(p.amount), 0)
   const openingBalance = Number(supplier?.opening_balance || 0)
-  const outstanding    = openingBalance + totalPurchased - totalPaid
+  const outstanding    = openingBalance + totalPurchased - totalReturned - totalPaid
 
   if (loading) {
     return (
@@ -540,7 +596,7 @@ export default function SupplierDetail() {
       </div>
 
       {/* Summary row */}
-      <div className="grid grid-cols-3 gap-4 mb-6">
+      <div className={`grid gap-4 mb-6 ${totalReturned > 0 ? 'grid-cols-4' : 'grid-cols-3'}`}>
         <div className="bg-white rounded-2xl border border-gray-100 shadow-sm px-4 py-3">
           <p className="text-xs text-gray-500 uppercase tracking-wide font-medium">{t('suppliers.totalPurchased')}</p>
           <p className="text-xl font-bold text-gray-800 mt-1">{formatCurrency(totalPurchased)}</p>
@@ -550,6 +606,12 @@ export default function SupplierDetail() {
             </p>
           )}
         </div>
+        {totalReturned > 0 && (
+          <div className="bg-white rounded-2xl border border-teal-100 shadow-sm px-4 py-3">
+            <p className="text-xs text-gray-500 uppercase tracking-wide font-medium">Total Returned</p>
+            <p className="text-xl font-bold text-teal-600 mt-1">−{formatCurrency(totalReturned)}</p>
+          </div>
+        )}
         <div className="bg-white rounded-2xl border border-green-100 shadow-sm px-4 py-3">
           <p className="text-xs text-gray-500 uppercase tracking-wide font-medium">{t('suppliers.totalPaid')}</p>
           <p className="text-xl font-bold text-green-600 mt-1">{formatCurrency(totalPaid)}</p>
@@ -581,7 +643,12 @@ export default function SupplierDetail() {
 
       {/* Tab content */}
       {activeTab === 'Purchases' && (
-        <PurchasesTab procurements={procurements} totalPaid={totalPaid} />
+        <PurchasesTab
+          procurements={procurements}
+          totalPaid={totalPaid}
+          canEdit={canEdit}
+          onReturn={group => setReturningGroup({ ...group, supplierName: supplier?.name || '—' })}
+        />
       )}
       {activeTab === 'Payments' && (
         <PaymentsTab payments={payments} />
@@ -597,6 +664,15 @@ export default function SupplierDetail() {
           outstanding={outstanding}
           onClose={() => setPayModal(false)}
           onSaved={() => { setPayModal(false); fetchAll() }}
+        />
+      )}
+
+      {/* Return to supplier modal */}
+      {returningGroup && (
+        <ReturnProcurementModal
+          group={returningGroup}
+          onClose={() => setReturningGroup(null)}
+          onSaved={() => { setReturningGroup(null); fetchAll() }}
         />
       )}
     </div>
