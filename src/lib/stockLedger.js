@@ -119,6 +119,7 @@ export async function getProcurementLots({ itemId, itemName, organizationId }) {
     .from('procurement')
     .select('id, date, quantity, unit, cost_per_unit, invoice_number, suppliers(name), has_extra_expense, extra_expense_per_unit')
     .eq('organization_id', organizationId)
+    .eq('is_return', false)
     .order('date', { ascending: true })
 
   if (itemId)        query = query.eq('item_id', itemId)
