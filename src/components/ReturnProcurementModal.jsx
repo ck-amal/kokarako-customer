@@ -27,31 +27,46 @@ export default function ReturnProcurementModal({ group, onClose, onSaved }) {
   )
   // alreadyReturned[itemId] = total qty already returned in previous return transactions
   const [alreadyReturned, setAlreadyReturned] = useState({})
+  // stockQty[itemName.toLowerCase()] = current stock quantity
+  const [stockQty, setStockQty]               = useState({})
   const [saving, setSaving] = useState(false)
   const [error, setError]   = useState('')
 
-  // Fetch existing return quantities for each item in this group
+  // Fetch already-returned quantities + current stock quantities
   useEffect(() => {
     const ids = purchasableItems.map(i => i.id)
     if (!ids.length) return
-    supabase
-      .from('procurement')
-      .select('original_procurement_id, quantity')
-      .in('original_procurement_id', ids)
-      .eq('is_return', true)
-      .eq('organization_id', organization.id)
-      .then(({ data }) => {
-        const map = {}
-        for (const row of (data || [])) {
-          map[row.original_procurement_id] =
-            (map[row.original_procurement_id] || 0) + Number(row.quantity)
-        }
-        setAlreadyReturned(map)
-      })
+    Promise.all([
+      supabase
+        .from('procurement')
+        .select('original_procurement_id, quantity')
+        .in('original_procurement_id', ids)
+        .eq('is_return', true)
+        .eq('organization_id', organization.id),
+      supabase
+        .from('stock')
+        .select('item_name, quantity')
+        .eq('organization_id', organization.id),
+    ]).then(([{ data: returnRows }, { data: stockRows }]) => {
+      const returnMap = {}
+      for (const row of (returnRows || [])) {
+        returnMap[row.original_procurement_id] =
+          (returnMap[row.original_procurement_id] || 0) + Number(row.quantity)
+      }
+      setAlreadyReturned(returnMap)
+
+      const sMap = {}
+      for (const row of (stockRows || [])) {
+        sMap[row.item_name.toLowerCase()] = Number(row.quantity)
+      }
+      setStockQty(sMap)
+    })
   }, [])
 
   function maxReturnQty(item) {
-    return Math.max(0, Number(item.quantity) - (alreadyReturned[item.id] || 0))
+    const purchaseRemaining = Math.max(0, Number(item.quantity) - (alreadyReturned[item.id] || 0))
+    const inStock           = stockQty[item.item_name.toLowerCase()] ?? Infinity
+    return Math.min(purchaseRemaining, inStock)
   }
 
   function cpuOf(item) {
@@ -74,7 +89,7 @@ export default function ReturnProcurementModal({ group, onClose, onSaved }) {
       const returnQty = parseFloat(quantities[item.id])
       const maxQty    = maxReturnQty(item)
       if (returnQty > maxQty) {
-        setError(`Return qty for "${item.item_name}" exceeds remaining returnable qty (${maxQty} ${item.unit})`)
+        setError(`Return qty for "${item.item_name}" exceeds available stock (${maxQty} ${item.unit} available to return)`)
         return
       }
     }
@@ -192,9 +207,10 @@ export default function ReturnProcurementModal({ group, onClose, onSaved }) {
               {purchasableItems.map(item => {
                 const returnQty   = parseFloat(quantities[item.id]) || 0
                 const returnValue = returnQty * cpuOf(item)
-                const maxQty      = maxReturnQty(item)
+                const maxQty       = maxReturnQty(item)
                 const prevReturned = alreadyReturned[item.id] || 0
-                const fullyReturned = maxQty <= 0
+                const inStock      = stockQty[item.item_name.toLowerCase()] ?? null
+                const fullyReturned = maxQty <= 0 && prevReturned >= Number(item.quantity)
                 return (
                   <div key={item.id} className={`flex items-center gap-3 rounded-xl px-3 py-3 ${fullyReturned ? 'bg-gray-100 opacity-60' : 'bg-gray-50'}`}>
                     <div className="flex-1 min-w-0">
@@ -206,8 +222,17 @@ export default function ReturnProcurementModal({ group, onClose, onSaved }) {
                       {prevReturned > 0 && (
                         <p className="text-xs text-teal-600 mt-0.5">
                           Already returned: {prevReturned.toLocaleString('en-IN')} {item.unit}
-                          {fullyReturned ? ' · Fully returned' : ` · ${maxQty.toLocaleString('en-IN')} remaining`}
                         </p>
+                      )}
+                      {!fullyReturned && (
+                        <p className={`text-xs mt-0.5 ${maxQty === 0 ? 'text-red-500' : 'text-amber-600'}`}>
+                          {maxQty > 0
+                            ? `${maxQty.toLocaleString('en-IN')} ${item.unit} in stock · returnable`
+                            : 'None in stock — all distributed'}
+                        </p>
+                      )}
+                      {fullyReturned && (
+                        <p className="text-xs text-teal-600 mt-0.5">Fully returned</p>
                       )}
                     </div>
                     <div className="flex items-center gap-2 shrink-0">

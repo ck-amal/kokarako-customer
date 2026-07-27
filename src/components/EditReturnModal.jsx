@@ -21,7 +21,9 @@ export default function EditReturnModal({ returnRow, onClose, onSaved }) {
   const [saving, setSaving] = useState(false)
   const [error, setError]   = useState('')
 
-  // Compute max returnable qty: original purchase qty minus all OTHER return rows
+  // Compute max returnable qty:
+  //   min(original purchase qty − other returns, current stock + this return's qty)
+  // We add back returnRow.quantity to stock because this return already deducted it.
   useEffect(() => {
     if (!returnRow.original_procurement_id) return
     Promise.all([
@@ -35,10 +37,18 @@ export default function EditReturnModal({ returnRow, onClose, onSaved }) {
         .eq('is_return', true)
         .neq('id', returnRow.id)
         .eq('organization_id', organization.id),
-    ]).then(([{ data: orig }, { data: others }]) => {
-      const origQty    = Number(orig?.quantity || 0)
-      const otherQty   = (others || []).reduce((s, r) => s + Number(r.quantity), 0)
-      setMaxQty(Math.max(0, origQty - otherQty))
+      supabase.from('stock')
+        .select('quantity')
+        .ilike('item_name', returnRow.item_name)
+        .eq('organization_id', organization.id)
+        .maybeSingle(),
+    ]).then(([{ data: orig }, { data: others }, { data: stockRow }]) => {
+      const origQty      = Number(orig?.quantity || 0)
+      const otherQty     = (others || []).reduce((s, r) => s + Number(r.quantity), 0)
+      const purchaseCap  = Math.max(0, origQty - otherQty)
+      // Add back this return's qty since it already left stock; that's the effective available
+      const effectiveStock = Number(stockRow?.quantity || 0) + Number(returnRow.quantity)
+      setMaxQty(Math.min(purchaseCap, effectiveStock))
     })
   }, [])
 
