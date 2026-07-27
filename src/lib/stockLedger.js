@@ -131,9 +131,10 @@ export async function getProcurementLots({ itemId, itemName, organizationId }) {
 
   const procIds = procs.map(p => p.id)
 
-  const [{ data: distRows }, { data: batchRows }] = await Promise.all([
+  const [{ data: distRows }, { data: batchRows }, { data: returnRows }] = await Promise.all([
     supabase.from('distributions').select('procurement_id, quantity, returned_quantity').in('procurement_id', procIds),
     supabase.from('batch_chick_purchases').select('procurement_id, quantity').in('procurement_id', procIds),
+    supabase.from('procurement').select('original_procurement_id, quantity').in('original_procurement_id', procIds).eq('is_return', true),
   ])
 
   const consumedMap = {}
@@ -142,6 +143,7 @@ export async function getProcurementLots({ itemId, itemName, organizationId }) {
     consumedMap[r.procurement_id] = (consumedMap[r.procurement_id] || 0) + net
   }
   for (const r of (batchRows || [])) consumedMap[r.procurement_id] = (consumedMap[r.procurement_id] || 0) + Number(r.quantity)
+  for (const r of (returnRows || [])) consumedMap[r.original_procurement_id] = (consumedMap[r.original_procurement_id] || 0) + Number(r.quantity)
 
   return procs.map(p => {
     const consumed  = consumedMap[p.id] || 0

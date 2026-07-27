@@ -137,12 +137,13 @@ export default function ReturnProcurementModal({ group, onClose, onSaved }) {
         .eq('organization_id', organization.id)
         .maybeSingle()
 
-      if (stockRow) {
-        await supabase
-          .from('stock')
-          .update({ quantity: Math.max(0, Number(stockRow.quantity) - returnQty) })
-          .eq('id', stockRow.id)
-      }
+      if (!stockRow) { setError(`Stock record not found for "${item.item_name}"`); setSaving(false); return }
+
+      const { error: stockErr } = await supabase
+        .from('stock')
+        .update({ quantity: Math.max(0, Number(stockRow.quantity) - returnQty) })
+        .eq('id', stockRow.id)
+      if (stockErr) { setError(stockErr.message); setSaving(false); return }
 
       // Stock ledger: record as an outflow
       await ledgerOut({
