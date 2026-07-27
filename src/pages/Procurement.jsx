@@ -11,6 +11,7 @@ import { useOnboarding } from '../contexts/OnboardingContext'
 import AuditInfo from '../components/AuditInfo'
 import AttachmentUploader from '../components/AttachmentUploader'
 import ReturnProcurementModal from '../components/ReturnProcurementModal'
+import EditReturnModal from '../components/EditReturnModal'
 import { uploadAttachments, attachmentsByEntity } from '../lib/attachments'
 import AttachmentViewer from '../components/AttachmentViewer'
 
@@ -983,6 +984,7 @@ export default function Procurement() {
   const [loading, setLoading]       = useState(true)
   const [modalOpen, setModalOpen]   = useState(() => !!location.state?.openModal)
   const [editingProc,       setEditingProc]       = useState(null)
+  const [editingReturn,     setEditingReturn]     = useState(null)
   const [returningGroup,    setReturningGroup]    = useState(null)
   const [deletingProc,      setDeletingProc]      = useState(null)
   const [deleteConfirmText, setDeleteConfirmText] = useState('')
@@ -1253,7 +1255,16 @@ export default function Procurement() {
                           </td>
                         )}
                         {(canEdit || canDelete) && r.is_return && (
-                          <td className="px-4 py-3.5" />
+                          <td className="px-4 py-3.5" onClick={e => e.stopPropagation()}>
+                            {canEdit && (
+                              <button
+                                onClick={() => setEditingReturn(r)}
+                                className="rounded-lg border border-gray-200 px-2.5 py-1 text-xs font-medium text-gray-600 hover:bg-gray-50 transition"
+                              >
+                                Edit
+                              </button>
+                            )}
+                          </td>
                         )}
                       </tr>
                     ))}
@@ -1374,6 +1385,14 @@ export default function Procurement() {
           group={returningGroup}
           onClose={() => setReturningGroup(null)}
           onSaved={() => { setReturningGroup(null); fetchData() }}
+        />
+      )}
+
+      {editingReturn && (
+        <EditReturnModal
+          returnRow={editingReturn}
+          onClose={() => setEditingReturn(null)}
+          onSaved={() => { setEditingReturn(null); fetchData() }}
         />
       )}
 
