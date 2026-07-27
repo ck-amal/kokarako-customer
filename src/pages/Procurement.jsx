@@ -985,6 +985,9 @@ export default function Procurement() {
   const [modalOpen, setModalOpen]   = useState(() => !!location.state?.openModal)
   const [editingProc,       setEditingProc]       = useState(null)
   const [editingReturn,     setEditingReturn]     = useState(null)
+  const [deletingReturn,    setDeletingReturn]    = useState(null)
+  const [deletingReturnBusy, setDeletingReturnBusy] = useState(false)
+  const [deletingReturnErr,  setDeletingReturnErr]  = useState('')
   const [returningGroup,    setReturningGroup]    = useState(null)
   const [deletingProc,      setDeletingProc]      = useState(null)
   const [deleteConfirmText, setDeleteConfirmText] = useState('')
@@ -1256,14 +1259,24 @@ export default function Procurement() {
                         )}
                         {(canEdit || canDelete) && r.is_return && (
                           <td className="px-4 py-3.5" onClick={e => e.stopPropagation()}>
-                            {canEdit && (
-                              <button
-                                onClick={() => setEditingReturn(r)}
-                                className="rounded-lg border border-gray-200 px-2.5 py-1 text-xs font-medium text-gray-600 hover:bg-gray-50 transition"
-                              >
-                                Edit
-                              </button>
-                            )}
+                            <div className="flex items-center gap-1.5">
+                              {canEdit && (
+                                <button
+                                  onClick={() => setEditingReturn(r)}
+                                  className="rounded-lg border border-gray-200 px-2.5 py-1 text-xs font-medium text-gray-600 hover:bg-gray-50 transition"
+                                >
+                                  Edit
+                                </button>
+                              )}
+                              {canDelete && (
+                                <button
+                                  onClick={() => { setDeletingReturn(r); setDeletingReturnErr('') }}
+                                  className="rounded-lg border border-red-200 px-2.5 py-1 text-xs font-medium text-red-500 hover:bg-red-50 transition"
+                                >
+                                  Delete
+                                </button>
+                              )}
+                            </div>
                           </td>
                         )}
                       </tr>
@@ -1394,6 +1407,82 @@ export default function Procurement() {
           onClose={() => setEditingReturn(null)}
           onSaved={() => { setEditingReturn(null); fetchData() }}
         />
+      )}
+
+      {deletingReturn && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+          <div className="w-full max-w-sm bg-white rounded-2xl shadow-xl p-6">
+            <div className="flex items-start gap-3 mb-4">
+              <div className="shrink-0 w-9 h-9 rounded-full bg-red-100 flex items-center justify-center text-red-600 font-bold text-sm">!</div>
+              <div>
+                <h2 className="text-base font-semibold text-gray-800">Delete Return?</h2>
+                <p className="text-sm text-gray-500 mt-0.5">
+                  {deletingReturn.item_name} · {Number(deletingReturn.quantity).toLocaleString('en-IN')} {deletingReturn.unit}
+                </p>
+              </div>
+            </div>
+            <div className="rounded-xl bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-800 mb-4">
+              <p className="font-semibold mb-1">This will:</p>
+              <ul className="list-disc list-inside text-xs space-y-0.5">
+                <li>Delete the return entry</li>
+                <li>Add {Number(deletingReturn.quantity).toLocaleString('en-IN')} {deletingReturn.unit} back to stock</li>
+                <li>Restore the supplier's outstanding balance</li>
+              </ul>
+            </div>
+            {deletingReturnErr && (
+              <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 mb-3">{deletingReturnErr}</p>
+            )}
+            <div className="flex gap-3">
+              <button
+                onClick={() => { setDeletingReturn(null); setDeletingReturnErr('') }}
+                className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition"
+              >
+                Cancel
+              </button>
+              <button
+                disabled={deletingReturnBusy}
+                onClick={async () => {
+                  setDeletingReturnBusy(true)
+                  setDeletingReturnErr('')
+                  try {
+                    // 1. Add qty back to stock
+                    const { data: stockRow } = await supabase.from('stock')
+                      .select('id, quantity')
+                      .ilike('item_name', deletingReturn.item_name)
+                      .eq('organization_id', organization?.id)
+                      .maybeSingle()
+                    if (stockRow) {
+                      await supabase.from('stock').update({
+                        quantity: Number(stockRow.quantity) + Number(deletingReturn.quantity),
+                      }).eq('id', stockRow.id)
+                    }
+                    // 2. Delete the stock_ledger out-entry
+                    await supabase.from('stock_ledger')
+                      .delete()
+                      .eq('reference_type', 'procurement_return')
+                      .eq('reference_id', deletingReturn.id)
+                      .eq('organization_id', organization?.id)
+                    // 3. Delete the procurement row
+                    const { error } = await supabase.from('procurement')
+                      .delete()
+                      .eq('id', deletingReturn.id)
+                      .eq('organization_id', organization?.id)
+                    if (error) throw error
+                    setDeletingReturn(null)
+                    fetchData()
+                  } catch (err) {
+                    setDeletingReturnErr(err.message)
+                  } finally {
+                    setDeletingReturnBusy(false)
+                  }
+                }}
+                className="flex-1 rounded-lg bg-red-600 hover:bg-red-700 disabled:opacity-50 px-4 py-2 text-sm font-semibold text-white transition"
+              >
+                {deletingReturnBusy ? 'Deleting…' : 'Delete'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {deletingProc && (
