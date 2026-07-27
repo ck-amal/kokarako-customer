@@ -5,6 +5,7 @@ import { supabase } from '../lib/supabaseClient'
 import { formatCurrency, roundCurrency } from '../utils/format'
 import { formatDate } from '../utils/dateFormat'
 import { useAuth } from '../contexts/AuthContext'
+import EditGrowingFeeModal from '../components/EditGrowingFeeModal'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -551,7 +552,7 @@ function RecordPaymentModal({ initialFarmId, farmGroups, onClose, onSaved }) {
 
 // ─── Farm Group Card ──────────────────────────────────────────────────────────
 
-function FarmGroup({ group, onPayment, canEdit }) {
+function FarmGroup({ group, onPayment, onEdit, canEdit }) {
   const { t, i18n } = useTranslation()
   const { farm_name, owner_name, owner_phone, entries } = group
 
@@ -601,6 +602,7 @@ function FarmGroup({ group, onPayment, canEdit }) {
               <th className="px-5 py-2.5 text-right">{t('growingFees.postClosePaid')}</th>
               <th className="px-5 py-2.5 text-right">{t('growingFees.balanceDue')}</th>
               <th className="px-5 py-2.5 text-center">{t('common.status')}</th>
+              {canEdit && <th className="px-5 py-2.5" />}
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-50">
@@ -619,7 +621,14 @@ function FarmGroup({ group, onPayment, canEdit }) {
                   {formatCurrency(entry.rate_per_kg)}
                 </td>
                 <td className="px-5 py-3 text-right font-semibold text-gray-800">
-                  {formatCurrency(entry.total_fee)}
+                  <div className="flex flex-col items-end gap-0.5">
+                    <span>{formatCurrency(entry.total_fee)}</span>
+                    {(entry.other_expenses || []).length > 0 && (
+                      <span className="text-xs text-orange-600 font-normal">
+                        incl. {(entry.other_expenses).length} extra{(entry.other_expenses).length > 1 ? 's' : ''}
+                      </span>
+                    )}
+                  </div>
                 </td>
                 <td className="px-5 py-3 text-right text-amber-600 font-medium">
                   {Number(entry.total_advances) > 0 ? formatCurrency(entry.total_advances) : <span className="text-gray-300">—</span>}
@@ -633,6 +642,17 @@ function FarmGroup({ group, onPayment, canEdit }) {
                 <td className="px-5 py-3 text-center">
                   <StatusBadge status={entry.status} />
                 </td>
+                {canEdit && (
+                  <td className="px-3 py-3 text-center">
+                    <button
+                      onClick={() => onEdit(entry)}
+                      className="text-xs text-gray-400 hover:text-orange-600 border border-gray-200 hover:border-orange-300 rounded px-2 py-1 transition"
+                      title="Edit growing fee"
+                    >
+                      Edit
+                    </button>
+                  </td>
+                )}
               </tr>
             ))}
           </tbody>
@@ -675,6 +695,7 @@ export default function GrowingFees() {
   const [payModal, setPayModal]           = useState(false)
   const [payFarmId, setPayFarmId]         = useState(null)
   const [advModal, setAdvModal]           = useState(false)
+  const [editFeeEntry, setEditFeeEntry]   = useState(null)
   const [paidThisMonth, setPaidThisMonth] = useState(0)
   const [totalAllAdvances,    setTotalAllAdvances]    = useState(0)
   const [activeAdvancesTotal, setActiveAdvancesTotal] = useState(0)
@@ -695,7 +716,7 @@ export default function GrowingFees() {
     ] = await Promise.all([
       supabase
         .from('growing_fee_ledger')
-        .select('id, farm_id, batch_id, owner_name, fcr, fcr_tier_description, rate_per_kg, total_sale_kg, total_fee, total_advances, status, amount_paid, balance_due, calculated_at, created_at')
+        .select('id, farm_id, batch_id, owner_name, fcr, fcr_tier_description, rate_per_kg, total_sale_kg, total_fee, other_expenses, total_advances, status, amount_paid, balance_due, calculated_at, created_at')
         .eq('organization_id', organization.id)
         .order('calculated_at', { ascending: false }),
       supabase
@@ -1053,7 +1074,7 @@ export default function GrowingFees() {
       ) : (
         <div className="space-y-5">
           {farmGroups.map(group => (
-            <FarmGroup key={group.farm_id} group={group} onPayment={openPayment} canEdit={canEdit} />
+            <FarmGroup key={group.farm_id} group={group} onPayment={openPayment} onEdit={setEditFeeEntry} canEdit={canEdit} />
           ))}
         </div>
       )}
@@ -1074,6 +1095,22 @@ export default function GrowingFees() {
           farmGroups={allFarmGroups}
           onClose={() => { setPayModal(false); setPayFarmId(null) }}
           onSaved={() => { setPayModal(false); setPayFarmId(null); fetchData() }}
+        />
+      )}
+
+      {/* ── Edit Growing Fee modal ── */}
+      {editFeeEntry && (
+        <EditGrowingFeeModal
+          entry={{
+            id:             editFeeEntry.id,
+            batch_id:       editFeeEntry.batch_id,
+            total_fee:      Number(editFeeEntry.total_fee || 0),
+            other_expenses: editFeeEntry.other_expenses || [],
+            total_advances: Number(editFeeEntry.total_advances || 0),
+            amount_paid:    Number(editFeeEntry.amount_paid || 0),
+          }}
+          onClose={() => setEditFeeEntry(null)}
+          onSaved={() => { setEditFeeEntry(null); fetchData() }}
         />
       )}
     </div>
