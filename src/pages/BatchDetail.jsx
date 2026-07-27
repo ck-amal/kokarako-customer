@@ -8,6 +8,7 @@ import StockReturnModal from '../components/StockReturnModal'
 import EditDistributionModal from '../components/EditDistributionModal'
 import DistributionModal from '../components/DistributionModal'
 import AuditInfo from '../components/AuditInfo'
+import EditGrowingFeeModal from '../components/EditGrowingFeeModal'
 import { useAuth } from '../contexts/AuthContext'
 import { useOnboarding } from '../contexts/OnboardingContext'
 
@@ -359,8 +360,6 @@ export default function BatchDetail() {
   const [postCloseModal, setPostCloseModal] = useState(false) // prompt after batch close
   const [expenseReturns, setExpenseReturns] = useState([])
   const [showEditFeeModal, setShowEditFeeModal] = useState(false)
-  const [editFeeAmount,    setEditFeeAmount]    = useState('')
-  const [editFeeSaving,    setEditFeeSaving]    = useState(false)
   const [pendingFarmAdvs,  setPendingFarmAdvs]  = useState(null) // { advances: [], recalcData: {} }
   const [expandedPLRows,   setExpandedPLRows]   = useState(new Set())
 
@@ -390,7 +389,7 @@ export default function BatchDetail() {
     if (batchData?.growing_fee_id) {
       const { data } = await supabase
         .from('growing_fee_ledger')
-        .select('status, amount_paid, balance_due, fcr_tier_description')
+        .select('status, amount_paid, balance_due, total_advances, overpaid_amount, fcr_tier_description, total_fee, other_expenses')
         .eq('id', batchData.growing_fee_id)
         .single()
       ledgerData = data
@@ -434,7 +433,7 @@ export default function BatchDetail() {
     if (batchData?.growing_fee_id) {
       const { data } = await supabase
         .from('growing_fee_ledger')
-        .select('status, amount_paid, balance_due, fcr_tier_description')
+        .select('status, amount_paid, balance_due, total_advances, overpaid_amount, fcr_tier_description, total_fee, other_expenses')
         .eq('id', batchData.growing_fee_id)
         .single()
       ledgerData = data
@@ -717,44 +716,6 @@ export default function BatchDetail() {
     refresh()
   }
 
-  async function handleEditFeeSave() {
-    const newTotal = parseFloat(editFeeAmount)
-    if (isNaN(newTotal) || newTotal < 0) return
-    setEditFeeSaving(true)
-    try {
-      const ledger = batch.growing_fee_ledger
-      const totalAdv = Number(ledger?.total_advances ?? advances.reduce((s, a) => s + Number(a.amount), 0))
-      const postPaid = Number(ledger?.amount_paid || 0)
-      const totalPaid = totalAdv + postPaid
-      const newBalance  = Math.max(0, newTotal - totalPaid)
-      const newOverpaid = Math.max(0, totalPaid - newTotal)
-      const newStatus   = newBalance === 0 ? (newOverpaid > 0 ? 'overpaid' : 'paid') : totalPaid > 0 ? 'partial' : 'pending'
-
-      const userName = user?.user_metadata?.full_name || user?.email || 'Unknown'
-      const { error: bErr } = await supabase.from('batches').update({
-        growing_fee_total: newTotal,
-        updated_by_id: user?.id, updated_by_name: userName, updated_at: new Date().toISOString(),
-      }).eq('id', batchId)
-      if (bErr) throw bErr
-
-      if (batch.growing_fee_id) {
-        const { error: lErr } = await supabase.from('growing_fee_ledger').update({
-          total_fee: newTotal,
-          balance_due: newBalance,
-          overpaid_amount: newOverpaid,
-          status: newStatus,
-        }).eq('id', batch.growing_fee_id)
-        if (lErr) throw lErr
-      }
-
-      setShowEditFeeModal(false)
-      refresh()
-    } catch (err) {
-      setActionError(err.message || 'Failed to save growing fee')
-    } finally {
-      setEditFeeSaving(false)
-    }
-  }
 
   async function handleMarkAsSold() {
     setActionError('')
@@ -1841,7 +1802,7 @@ export default function BatchDetail() {
               <div className="flex items-center gap-2">
                 {canEdit && status !== 'paid' && status !== 'overpaid' && (
                   <button
-                    onClick={() => { setEditFeeAmount(String(batch.growing_fee_total)); setActionError(''); setShowEditFeeModal(true) }}
+                    onClick={() => { setActionError(''); setShowEditFeeModal(true) }}
                     className="text-xs text-blue-600 hover:text-blue-800 px-2 py-1 rounded border border-blue-200 hover:bg-blue-50 transition"
                   >
                     Edit
@@ -1882,6 +1843,18 @@ export default function BatchDetail() {
                   <div className="flex justify-between items-center">
                     <span style={{ color: 'var(--text-muted)' }}>Final Amount <span className="text-xs text-blue-500">(adjusted)</span></span>
                     <span className="font-bold text-base" style={{ color: 'var(--text)' }}>{formatCurrency(grossFee)}</span>
+                  </div>
+                )}
+                {/* Other expenses line items */}
+                {(batch.growing_fee_ledger?.other_expenses || []).length > 0 && (
+                  <div className="mt-1 space-y-1">
+                    <span className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>Other Expenses</span>
+                    {(batch.growing_fee_ledger.other_expenses).map((e, i) => (
+                      <div key={e.id || i} className="flex justify-between text-xs ml-2">
+                        <span style={{ color: 'var(--text-muted)' }}>{e.description}</span>
+                        <span className="font-medium" style={{ color: 'var(--text)' }}>+ {formatCurrency(e.amount)}</span>
+                      </div>
+                    ))}
                   </div>
                 )}
                 {totalAdv > 0 && (
@@ -2283,40 +2256,19 @@ export default function BatchDetail() {
     )}
 
     {/* ── Post-close Stock Return Prompt ────────────────────────────────── */}
-    {showEditFeeModal && (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
-        <div className="w-full max-w-sm bg-white rounded-2xl shadow-xl p-6">
-          <h2 className="text-base font-semibold text-gray-800 mb-1">Edit Growing Fee</h2>
-          <p className="text-xs text-gray-500 mb-4">Override the auto-calculated growing fee. Balance due will be recalculated.</p>
-          <label className="block text-xs font-medium text-gray-600 mb-1">Total Growing Fee (₹)</label>
-          <input
-            type="number"
-            min="0"
-            step="0.01"
-            value={editFeeAmount}
-            onChange={e => setEditFeeAmount(e.target.value)}
-            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 mb-4"
-            placeholder="0.00"
-          />
-          {actionError && <p className="text-xs text-red-600 mb-3">{actionError}</p>}
-          <div className="flex gap-3">
-            <button
-              onClick={() => { setShowEditFeeModal(false); setActionError('') }}
-              disabled={editFeeSaving}
-              className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 transition"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={handleEditFeeSave}
-              disabled={editFeeSaving || editFeeAmount === ''}
-              className="flex-1 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-50 px-4 py-2 text-sm font-semibold text-white transition"
-            >
-              {editFeeSaving ? 'Saving…' : 'Save'}
-            </button>
-          </div>
-        </div>
-      </div>
+    {showEditFeeModal && batch.growing_fee_id && (
+      <EditGrowingFeeModal
+        entry={{
+          id:             batch.growing_fee_id,
+          batch_id:       batch.id,
+          total_fee:      Number(batch.growing_fee_total || 0),
+          other_expenses: batch.growing_fee_ledger?.other_expenses || [],
+          total_advances: Number(batch.growing_fee_ledger?.total_advances ?? advances.reduce((s, a) => s + Number(a.amount), 0)),
+          amount_paid:    Number(batch.growing_fee_ledger?.amount_paid || 0),
+        }}
+        onClose={() => { setShowEditFeeModal(false); setActionError('') }}
+        onSaved={() => { setShowEditFeeModal(false); setActionError(''); refresh() }}
+      />
     )}
 
     {pendingFarmAdvs && (
