@@ -1547,6 +1547,11 @@ export default function BatchDetail() {
                       {canViewFinancials && (
                         <td className="px-5 py-3 text-right" style={{ color: 'var(--text-muted)' }}>
                           {grossCost > 0 ? formatCurrency(netCost) : '—'}
+                          {grossCost > 0 && expRow?.cost_per_unit > 0 && (
+                            <div className="text-xs mt-0.5" style={{ color: '#9ca3af' }}>
+                              {formatCurrency(Number(expRow.cost_per_unit))} / {d.unit}
+                            </div>
+                          )}
                         </td>
                       )}
                       <td className="px-5 py-3">
