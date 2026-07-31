@@ -1055,8 +1055,8 @@ export default function Procurement() {
   const [deletingBusy,      setDeletingBusy]      = useState(false)
   const [deleteError,       setDeleteError]       = useState('')
   const [typeFilter, setTypeFilter] = useState('all')
-  const [dateFrom,   setDateFrom]   = useState(currentMonthRange().start) // 1st of this month
-  const [dateTo,     setDateTo]     = useState(new Date().toISOString().slice(0, 10)) // today
+  const [dateFrom,   setDateFrom]   = useState(() => { const d = new Date(); d.setDate(d.getDate() - 30); return d.toISOString().slice(0, 10) })
+  const [dateTo,     setDateTo]     = useState(new Date().toISOString().slice(0, 10))
   const [page,       setPage]       = useState(1)
   const [attByRow,   setAttByRow]   = useState({})
   const [viewRowId,  setViewRowId]  = useState(() => location.state?.openProcurementId || null)
