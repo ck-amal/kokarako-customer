@@ -327,6 +327,89 @@ export default function BatchDetail() {
     setSaleForm({ vendor_id: vendors[0]?.id || '', chicken_count: '', kg_sold: '', price_per_kg: '', date: new Date().toISOString().slice(0, 10), notes: '' })
   }
 
+  function printSaleInvoice(sale) {
+    const fmt  = v => `₹${Number(v).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+    const fmtN = v => Number(v).toLocaleString('en-IN', { maximumFractionDigits: 2 })
+    const fmtD = d => d ? new Date(d + 'T00:00:00').toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'
+    const total = Number(sale.final_amount ?? sale.total_amount)
+    const isAdj = sale.final_amount != null && Math.abs(Number(sale.final_amount) - Number(sale.total_amount)) > 0.01
+    const birdCol = sale.chicken_count ? `<th class="r">Birds</th>` : ''
+    const birdCell = sale.chicken_count ? `<td class="r">${Number(sale.chicken_count).toLocaleString('en-IN')}</td>` : ''
+    const span = sale.chicken_count ? 4 : 3
+
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8">
+<title>Invoice – ${sale.vendors?.name || ''} – ${fmtD(sale.date)}</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Segoe UI',Arial,sans-serif;color:#1a1a1a;background:#fff;padding:48px}
+.hdr{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:36px}
+.brand{display:flex;align-items:center;gap:14px}
+.logo{font-size:44px}
+.bname{font-size:28px;font-weight:800;color:#f59e0b;letter-spacing:-0.5px}
+.bsub{font-size:11px;color:#9ca3af;margin-top:3px}
+.inv-info{text-align:right}
+.inv-info h2{font-size:20px;font-weight:700;color:#374151}
+.inv-info p{font-size:12px;color:#6b7280;margin-top:3px}
+hr{border:none;border-top:2.5px solid #f59e0b;margin-bottom:32px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-bottom:32px}
+.block label{font-size:10px;font-weight:700;color:#9ca3af;text-transform:uppercase;letter-spacing:.06em}
+.block p{font-size:14px;font-weight:600;color:#111827;margin-top:3px}
+.block .sub{font-size:12px;color:#6b7280;font-weight:400}
+table{width:100%;border-collapse:collapse;margin-bottom:28px}
+thead tr{background:#fef3c7}
+th{padding:10px 14px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#92400e;text-align:left}
+th.r{text-align:right}
+td{padding:12px 14px;font-size:14px;border-bottom:1px solid #f3f4f6}
+td.r{text-align:right}
+.tot td{font-size:16px;font-weight:800;color:#15803d;border-bottom:none;border-top:2px solid #d1fae5;background:#f0fdf4}
+.badge{display:inline-block;padding:2px 10px;border-radius:999px;font-size:11px;font-weight:700;background:#d1fae5;color:#065f46}
+.notes{background:#f9fafb;border-radius:8px;padding:12px 16px;font-size:13px;color:#4b5563;margin-bottom:28px}
+.notes strong{font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:#9ca3af;display:block;margin-bottom:4px}
+.footer{text-align:center;font-size:11px;color:#d1d5db;margin-top:40px;padding-top:16px;border-top:1px solid #f3f4f6}
+.strike{text-decoration:line-through;color:#9ca3af;font-size:12px;margin-left:6px;font-weight:400}
+@media print{body{padding:24px}@page{margin:16mm}}
+</style></head><body>
+<div class="hdr">
+  <div class="brand">
+    <div class="logo">🐓</div>
+    <div><div class="bname">Kokarako</div><div class="bsub">${organization?.name || ''}</div></div>
+  </div>
+  <div class="inv-info">
+    <h2>Sales Invoice</h2>
+    <p>${fmtD(sale.date)}</p>
+    ${farm?.name ? `<p style="font-weight:600;color:#374151;margin-top:2px">${farm.name}</p>` : ''}
+  </div>
+</div>
+<hr>
+<div class="grid">
+  <div class="block"><label>Sold To</label><p>${sale.vendors?.name || '—'}</p></div>
+  <div class="block"><label>Batch</label><p>${batch?.start_date ? `Batch ${fmtD(batch.start_date)}` : '—'}</p>${batch?.chick_count ? `<p class="sub">${Number(batch.chick_count).toLocaleString('en-IN')} chicks placed</p>` : ''}</div>
+  <div class="block"><label>Farm</label><p>${farm?.name || '—'}</p>${farm?.location ? `<p class="sub">${farm.location}</p>` : ''}</div>
+  <div class="block"><label>Status</label><p><span class="badge">${sale.status === 'confirmed' ? 'Confirmed' : 'Pending'}</span></p></div>
+</div>
+<table>
+  <thead><tr><th>Description</th><th class="r">Qty (Kg)</th>${birdCol}<th class="r">Price / Kg</th><th class="r">Amount</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>Broiler Chicken Sale</td>
+      <td class="r">${fmtN(sale.kg_sold)} kg</td>
+      ${birdCell}
+      <td class="r">${fmt(sale.price_per_kg)}</td>
+      <td class="r">${fmt(Number(sale.kg_sold) * Number(sale.price_per_kg))}${isAdj ? `<span class="strike">${fmt(sale.total_amount)}</span>` : ''}</td>
+    </tr>
+  </tbody>
+  <tfoot><tr class="tot"><td colspan="${span}">Total Amount</td><td class="r">${fmt(total)}</td></tr></tfoot>
+</table>
+${sale.notes ? `<div class="notes"><strong>Notes</strong>${sale.notes}</div>` : ''}
+<div class="footer">Generated by Kokarako · Poultry Management System</div>
+<script>window.onload=()=>window.print()<\/script>
+</body></html>`
+
+    const win = window.open('', '_blank')
+    win.document.write(html)
+    win.document.close()
+  }
+
   const [farm,         setFarm]         = useState(null)
   const [batch,        setBatch]        = useState(null)
   const [distributions,setDistributions]= useState([])
@@ -1654,18 +1737,22 @@ export default function BatchDetail() {
                       <span className={`inline-block rounded-full px-2.5 py-0.5 text-xs font-semibold ${SALE_STATUS_STYLE[s.status] || SALE_STATUS_STYLE.pending}`}>
                         {SALE_STATUS_LABEL[s.status] || s.status}
                       </span>
-                      {canManageSales && (
-                        <div className="flex gap-1.5 justify-center mt-2">
-                          {s.status === 'pending' && (
-                            <button onClick={() => confirmSale(s)}
-                              className="rounded-md bg-green-600 hover:bg-green-700 px-2 py-1 text-[11px] font-semibold text-white transition">Confirm</button>
-                          )}
-                          <button onClick={() => openEditSale(s)}
-                            className="rounded-md border border-amber-300 px-2 py-1 text-[11px] font-semibold text-amber-700 hover:bg-amber-50 transition">Edit</button>
-                          <button onClick={() => deleteSale(s)}
-                            className="rounded-md border border-red-200 px-2 py-1 text-[11px] font-semibold text-red-600 hover:bg-red-50 transition">Delete</button>
-                        </div>
-                      )}
+                      <div className="flex gap-1.5 justify-center mt-2 flex-wrap">
+                        {canManageSales && s.status === 'pending' && (
+                          <button onClick={() => confirmSale(s)}
+                            className="rounded-md bg-green-600 hover:bg-green-700 px-2 py-1 text-[11px] font-semibold text-white transition">Confirm</button>
+                        )}
+                        {canManageSales && (
+                          <>
+                            <button onClick={() => openEditSale(s)}
+                              className="rounded-md border border-amber-300 px-2 py-1 text-[11px] font-semibold text-amber-700 hover:bg-amber-50 transition">Edit</button>
+                            <button onClick={() => deleteSale(s)}
+                              className="rounded-md border border-red-200 px-2 py-1 text-[11px] font-semibold text-red-600 hover:bg-red-50 transition">Delete</button>
+                          </>
+                        )}
+                        <button onClick={() => printSaleInvoice(s)}
+                          className="rounded-md border border-gray-300 px-2 py-1 text-[11px] font-semibold text-gray-600 hover:bg-gray-50 transition">🖨 Print</button>
+                      </div>
                     </td>
                     <td className="px-4 py-3"><AuditInfo createdByName={s.created_by_name} createdAt={s.created_at} updatedByName={s.updated_by_name} updatedAt={s.updated_at} confirmedByName={s.confirmed_by_name} confirmedAt={s.confirmed_at} /></td>
                   </tr>
