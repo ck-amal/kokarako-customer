@@ -1751,11 +1751,11 @@ ${sale.notes ? `<div class="notes"><strong>Notes</strong>${sale.notes}</div>` : 
                         <div className="relative">
                           <button
                             onClick={e => { e.stopPropagation(); setOpenSaleMenu(openSaleMenu === s.id ? null : s.id) }}
-                            className="w-7 h-7 flex items-center justify-center rounded-full hover:bg-gray-100 text-gray-500 text-base leading-none transition"
+                            className="w-7 h-7 flex items-center justify-center rounded-full border border-gray-300 hover:bg-gray-100 text-gray-600 text-base font-bold leading-none transition"
                           >⋮</button>
                           {openSaleMenu === s.id && (
                             <div
-                              className="absolute right-0 top-8 z-50 w-40 rounded-xl bg-white shadow-xl border border-gray-100 py-1 text-sm"
+                              className={`absolute right-0 z-50 w-44 rounded-xl bg-white shadow-xl border border-gray-100 py-1 text-sm ${i >= sales.length - 2 ? 'bottom-9' : 'top-9'}`}
                               onClick={e => e.stopPropagation()}
                             >
                               {canManageSales && (
