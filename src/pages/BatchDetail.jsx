@@ -381,11 +381,9 @@ td.r{text-align:right}
   </div>
 </div>
 <hr>
-<div class="grid">
-  <div class="block"><label>Sold To</label><p>${sale.vendors?.name || '—'}</p></div>
-  <div class="block"><label>Batch</label><p>${batch?.start_date ? `Batch ${fmtD(batch.start_date)}` : '—'}</p>${batch?.chick_count ? `<p class="sub">${Number(batch.chick_count).toLocaleString('en-IN')} chicks placed</p>` : ''}</div>
-  <div class="block"><label>Farm</label><p>${farm?.name || '—'}</p>${farm?.location ? `<p class="sub">${farm.location}</p>` : ''}</div>
-  <div class="block"><label>Status</label><p><span class="badge">${sale.status === 'confirmed' ? 'Confirmed' : 'Pending'}</span></p></div>
+<div style="margin-bottom:28px">
+  <div class="block" style="margin-bottom:10px"><label>Sold To</label><p style="font-size:18px">${sale.vendors?.name || '—'}</p></div>
+  <p class="sub" style="font-size:12px;color:#9ca3af">${[farm?.name, batch?.start_date ? `Batch ${fmtD(batch.start_date)}` : '', batch?.chick_count ? `${Number(batch.chick_count).toLocaleString('en-IN')} chicks` : ''].filter(Boolean).join(' · ')}</p>
 </div>
 <table>
   <thead><tr><th>Description</th><th class="r">Qty (Kg)</th>${birdCol}<th class="r">Price / Kg</th><th class="r">Amount</th></tr></thead>
