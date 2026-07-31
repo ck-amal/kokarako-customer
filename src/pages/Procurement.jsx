@@ -786,6 +786,8 @@ function EditProcurementModal({ proc, onClose, onSaved }) {
     quantity:       String(proc.quantity),
     cost_per_unit:  String(proc.cost_per_unit ?? (Number(proc.cost) / Number(proc.quantity) || 0)),
   })
+  const [hasExtra,     setHasExtra]     = useState(Boolean(proc.has_extra_expense))
+  const [extraPerUnit, setExtraPerUnit] = useState(String(proc.extra_expense_per_unit || ''))
   const [saving,   setSaving]   = useState(false)
   const [error,    setError]    = useState('')
   const [consumed, setConsumed] = useState(null)
@@ -823,17 +825,21 @@ function EditProcurementModal({ proc, onClose, onSaved }) {
     const oldQty   = Number(proc.quantity)
     const qtyDiff  = newQty - oldQty
 
+    const newExtraPerUnit = hasExtra ? (parseFloat(extraPerUnit) || 0) : 0
+
     // 1. Update the procurement row
     const { error: upErr } = await supabase.from('procurement').update({
-      date:            form.date,
-      supplier_id:     form.supplier_id || null,
-      invoice_number:  form.invoice_number.trim() || null,
-      notes:           form.notes.trim() || null,
-      quantity:        newQty,
-      cost:            newCost,
-      cost_per_unit:   newCpu,
-      updated_by_id:   user?.id,
-      updated_by_name: userName,
+      date:                  form.date,
+      supplier_id:           form.supplier_id || null,
+      invoice_number:        form.invoice_number.trim() || null,
+      notes:                 form.notes.trim() || null,
+      quantity:              newQty,
+      cost:                  newCost,
+      cost_per_unit:         newCpu,
+      has_extra_expense:     hasExtra,
+      extra_expense_per_unit: newExtraPerUnit,
+      updated_by_id:         user?.id,
+      updated_by_name:       userName,
     }).eq('id', proc.id).eq('organization_id', organization?.id)
 
     if (upErr) { setError(upErr.message); setSaving(false); return }
@@ -941,6 +947,45 @@ function EditProcurementModal({ proc, onClose, onSaved }) {
               <input value={form.invoice_number} onChange={set('invoice_number')} className={inputCls} />
             </div>
           </div>
+
+          {/* Ancillary expense — editable only before any distribution */}
+          {consumed !== null && (
+            <div className={`rounded-xl border px-4 py-3 transition-colors ${hasExtra ? 'bg-amber-50 border-amber-200' : 'bg-gray-50 border-gray-200'}`}>
+              <label className={`flex items-center gap-2 ${consumed === 0 ? 'cursor-pointer' : 'cursor-not-allowed opacity-60'}`}>
+                <input
+                  type="checkbox"
+                  checked={hasExtra}
+                  disabled={consumed > 0}
+                  onChange={e => { setHasExtra(e.target.checked); if (!e.target.checked) setExtraPerUnit('') }}
+                  className="w-4 h-4 rounded accent-amber-500"
+                />
+                <span className={`text-xs font-semibold ${hasExtra ? 'text-orange-700' : 'text-gray-500'}`}>
+                  Add ancillary expense? (transport, loading/unloading)
+                </span>
+              </label>
+              {hasExtra && (
+                <div className="mt-2 flex items-center gap-2 flex-wrap">
+                  <input
+                    type="number" min="0" step="any"
+                    value={extraPerUnit}
+                    disabled={consumed > 0}
+                    onChange={e => setExtraPerUnit(e.target.value)}
+                    placeholder="0"
+                    className="w-28 rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 disabled:bg-gray-100 disabled:cursor-not-allowed"
+                  />
+                  <span className="text-xs text-gray-600">₹ per {proc.unit}</span>
+                  {parseFloat(extraPerUnit) > 0 && parseFloat(form.quantity) > 0 && (
+                    <span className="text-xs text-gray-400">
+                      · Total: {formatCurrency(parseFloat(extraPerUnit) * parseFloat(form.quantity))}
+                    </span>
+                  )}
+                </div>
+              )}
+              {consumed > 0 && (
+                <p className="text-xs text-gray-400 mt-1.5">Locked — item already distributed</p>
+              )}
+            </div>
+          )}
 
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">{t('common.notes')}</label>
