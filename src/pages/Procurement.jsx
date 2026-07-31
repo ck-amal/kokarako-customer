@@ -787,7 +787,10 @@ function EditProcurementModal({ proc, onClose, onSaved }) {
     cost_per_unit:  String(proc.cost_per_unit ?? (Number(proc.cost) / Number(proc.quantity) || 0)),
   })
   const [hasExtra,     setHasExtra]     = useState(Boolean(proc.has_extra_expense))
-  const [extraPerUnit, setExtraPerUnit] = useState(String(proc.extra_expense_per_unit || ''))
+  const [extraPerUnit, setExtraPerUnit] = useState(
+    proc.extra_expense_per_unit > 0 ? String(proc.extra_expense_per_unit) : ''
+  )
+  const [catalogExtraPerUnit, setCatalogExtraPerUnit] = useState('')
   const [saving,   setSaving]   = useState(false)
   const [error,    setError]    = useState('')
   const [consumed, setConsumed] = useState(null)
@@ -797,11 +800,20 @@ function EditProcurementModal({ proc, onClose, onSaved }) {
       supabase.from('suppliers').select('id, name').eq('organization_id', organization?.id).order('name'),
       supabase.from('distributions').select('quantity, returned_quantity').eq('procurement_id', proc.id),
       supabase.from('batch_chick_purchases').select('quantity').eq('procurement_id', proc.id),
-    ]).then(([{ data: suppData }, { data: distRows }, { data: batchRows }]) => {
+      supabase.from('item_types').select('extra_expense_type, extra_expense_value').ilike('name', proc.type).maybeSingle(),
+    ]).then(([{ data: suppData }, { data: distRows }, { data: batchRows }, { data: typeRule }]) => {
       setSuppliers(suppData || [])
       const distConsumed  = (distRows  || []).reduce((s, r) => s + Math.max(0, Number(r.quantity) - Number(r.returned_quantity || 0)), 0)
       const batchConsumed = (batchRows || []).reduce((s, r) => s + Number(r.quantity), 0)
       setConsumed(distConsumed + batchConsumed)
+
+      // Derive catalog default for fixed_per_unit rules
+      if (typeRule?.extra_expense_type === 'fixed_per_unit' && typeRule?.extra_expense_value > 0) {
+        const catalogVal = String(typeRule.extra_expense_value)
+        setCatalogExtraPerUnit(catalogVal)
+        // Seed the field if the saved amount is 0 / missing
+        if (!(proc.extra_expense_per_unit > 0)) setExtraPerUnit(catalogVal)
+      }
     })
   }, [organization?.id, proc.id])
 
@@ -956,7 +968,11 @@ function EditProcurementModal({ proc, onClose, onSaved }) {
                   type="checkbox"
                   checked={hasExtra}
                   disabled={consumed > 0}
-                  onChange={e => { setHasExtra(e.target.checked); if (!e.target.checked) setExtraPerUnit('') }}
+                  onChange={e => {
+                    setHasExtra(e.target.checked)
+                    if (!e.target.checked) setExtraPerUnit('')
+                    else if (!extraPerUnit && catalogExtraPerUnit) setExtraPerUnit(catalogExtraPerUnit)
+                  }}
                   className="w-4 h-4 rounded accent-amber-500"
                 />
                 <span className={`text-xs font-semibold ${hasExtra ? 'text-orange-700' : 'text-gray-500'}`}>
