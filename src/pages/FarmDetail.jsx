@@ -935,8 +935,12 @@ export default function FarmDetail() {
   })()
 
   const distCostMap = {}
+  const distCpuMap  = {}
   for (const fe of farmExpenses) {
-    if (fe.distribution_id) distCostMap[fe.distribution_id] = Number(fe.total_cost || 0)
+    if (fe.distribution_id) {
+      distCostMap[fe.distribution_id] = Number(fe.total_cost || 0)
+      distCpuMap[fe.distribution_id]  = Number(fe.cost_per_unit || 0)
+    }
   }
 
   // Cost credits from returns, keyed by distribution_id
@@ -1657,6 +1661,11 @@ export default function FarmDetail() {
                         </td>
                         <td className="px-5 py-3 text-right text-gray-700">
                           {formatCurrency(netCost)}
+                          {distCpuMap[d.id] > 0 && (
+                            <div className="text-xs text-gray-400 mt-0.5 font-normal">
+                              {formatCurrency(distCpuMap[d.id])} / {d.unit}
+                            </div>
+                          )}
                         </td>
                         <td className="px-5 py-3">
                           {d.procurement ? (
