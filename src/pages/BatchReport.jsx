@@ -362,11 +362,11 @@ export default function BatchReport() {
         </div>
       )}
 
-      {/* Procurement detail */}
-      {proc.length > 0 && (
+      {/* Distribution costs detail */}
+      {(cp.length > 0 || fe.length > 0) && (
         <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
           <div className="px-5 py-4 border-b border-gray-100">
-            <h2 className="font-semibold text-gray-800">Procurement / Input Costs</h2>
+            <h2 className="font-semibold text-gray-800">Input Costs (Distributions)</h2>
           </div>
           <div className="overflow-x-auto"><table className="w-full text-sm min-w-[500px]">
             <thead>
@@ -379,13 +379,22 @@ export default function BatchReport() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
-              {proc.map(p => (
+              {cp.map(p => (
                 <tr key={p.id} className="hover:bg-gray-50">
-                  <td className="px-5 py-3 text-gray-500">{fmtDate(p.date)}</td>
-                  <td className="px-5 py-3 text-gray-700">{p.item_name}</td>
-                  <td className="px-5 py-3 capitalize text-gray-500">{p.type}</td>
-                  <td className="px-5 py-3 text-right text-gray-600">{Number(p.quantity).toLocaleString('en-IN')} {p.unit}</td>
-                  <td className="px-5 py-3 text-right font-semibold text-gray-800">{fmt(p.cost)}</td>
+                  <td className="px-5 py-3 text-gray-500">{fmtDate(p.created_at)}</td>
+                  <td className="px-5 py-3 text-gray-700">Chick Placement</td>
+                  <td className="px-5 py-3 text-gray-500">Chick</td>
+                  <td className="px-5 py-3 text-right text-gray-600">{Number(p.quantity).toLocaleString('en-IN')} birds</td>
+                  <td className="px-5 py-3 text-right font-semibold text-gray-800">{fmt(p.total_cost)}</td>
+                </tr>
+              ))}
+              {fe.map(e => (
+                <tr key={e.id} className="hover:bg-gray-50">
+                  <td className="px-5 py-3 text-gray-500">{fmtDate(e.date)}</td>
+                  <td className="px-5 py-3 text-gray-700">{e.item_name}</td>
+                  <td className="px-5 py-3 capitalize text-gray-500">{e.item_type}</td>
+                  <td className="px-5 py-3 text-right text-gray-600">{Number(e.quantity).toLocaleString('en-IN')} {e.unit}</td>
+                  <td className="px-5 py-3 text-right font-semibold text-gray-800">{fmt(Number(e.total_cost) + Number(e.extra_total_cost || 0))}</td>
                 </tr>
               ))}
             </tbody>
@@ -423,7 +432,7 @@ export default function BatchReport() {
       )}
 
       {/* No data notice */}
-      {sal.length === 0 && proc.length === 0 && exp.length === 0 && (
+      {sal.length === 0 && cp.length === 0 && fe.length === 0 && exp.length === 0 && (
         <div className="flex flex-col items-center justify-center py-16 text-gray-400 bg-white rounded-2xl border border-gray-100">
           <span className="text-5xl mb-3">📊</span>
           <p className="text-sm font-medium">No data linked to this batch</p>
