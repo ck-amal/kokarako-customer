@@ -372,7 +372,7 @@ td.r{text-align:right}
 <div class="hdr">
   <div class="brand">
     <div class="logo">🐓</div>
-    <div><div class="bname">Kokarako</div><div class="bsub">${organization?.name || ''}</div></div>
+    <div><div class="bname">${organization?.name || 'M.A Traders'}</div><div class="bsub">Kokarako</div></div>
   </div>
   <div class="inv-info">
     <h2>Sales Invoice</h2>
