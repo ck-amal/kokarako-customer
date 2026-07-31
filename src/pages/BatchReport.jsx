@@ -99,15 +99,28 @@ export default function BatchReport() {
 
       if (bErr || !batch) { setError('Batch not found.'); setLoading(false); return }
 
-      // 2. All procurement linked to this batch
-      const { data: procurement } = await supabase
-        .from('procurement')
+      // 2. Chick purchases for this batch
+      const { data: chickPurchases } = await supabase
+        .from('batch_chick_purchases')
         .select('*')
         .eq('organization_id', organization?.id)
         .eq('batch_id', id)
-        .order('date')
 
-      // 3. All sales linked to this batch
+      // 3. Farm expenses (feed/medicine distribution costs) for this batch
+      const { data: farmExpenses } = await supabase
+        .from('farm_expenses')
+        .select('*')
+        .eq('organization_id', organization?.id)
+        .eq('batch_id', id)
+
+      // 4. Stock return credits for this batch (reduces feed/medicine cost)
+      const { data: expenseReturns } = await supabase
+        .from('farm_expense_returns')
+        .select('item_type, total_cost')
+        .eq('organization_id', organization?.id)
+        .eq('batch_id', id)
+
+      // 5. All confirmed sales linked to this batch
       const { data: sales } = await supabase
         .from('sales')
         .select('*, vendors(name)')
@@ -116,7 +129,7 @@ export default function BatchReport() {
         .eq('status', 'confirmed')
         .order('date')
 
-      // 4. All expenses linked to this batch
+      // 6. Other expenses (labour, overhead etc.) linked to this batch
       const { data: expenses } = await supabase
         .from('expenses')
         .select('*')
@@ -126,19 +139,24 @@ export default function BatchReport() {
 
       // ── Aggregate ──────────────────────────────────────────
 
-      const proc = procurement || []
-      const sal  = sales       || []
-      const exp  = expenses    || []
+      const fe   = farmExpenses    || []
+      const fer  = expenseReturns  || []
+      const sal  = sales           || []
+      const exp  = expenses        || []
+      const cp   = chickPurchases  || []
 
-      const chickCost    = proc.filter(p => p.type === 'chicks')   .reduce((s, p) => s + Number(p.cost), 0)
-      const feedCost     = proc.filter(p => p.type === 'feed')     .reduce((s, p) => s + Number(p.cost), 0)
-      const medicineCost = proc.filter(p => p.type === 'medicine') .reduce((s, p) => s + Number(p.cost), 0)
-      const otherProcCost= proc.filter(p => !['chicks','feed','medicine'].includes(p.type))
-                               .reduce((s, p) => s + Number(p.cost), 0)
+      const chickCost    = cp.reduce((s, p) => s + Number(p.total_cost || 0), 0)
+
+      const feedReturnCredit     = fer.filter(r => r.item_type?.toLowerCase().includes('feed'))    .reduce((s, r) => s + Number(r.total_cost || 0), 0)
+      const medicineReturnCredit = fer.filter(r => r.item_type?.toLowerCase().includes('medicine')).reduce((s, r) => s + Number(r.total_cost || 0), 0)
+
+      const feedCost     = Math.max(0, fe.filter(e => e.item_type === 'feed')    .reduce((s, e) => s + Number(e.total_cost || 0) + Number(e.extra_total_cost || 0), 0) - feedReturnCredit)
+      const medicineCost = Math.max(0, fe.filter(e => e.item_type === 'medicine').reduce((s, e) => s + Number(e.total_cost || 0) + Number(e.extra_total_cost || 0), 0) - medicineReturnCredit)
+      const growingFee   = batch.growing_fee_total != null ? Number(batch.growing_fee_total) : 0
       const expenseTotal = exp.reduce((s, e) => s + Number(e.amount), 0)
 
-      const totalCost    = chickCost + feedCost + medicineCost + otherProcCost + expenseTotal
-      const revenue      = sal.reduce((s, s2) => s + Number(s2.total_amount || 0), 0)
+      const totalCost    = chickCost + feedCost + medicineCost + growingFee + expenseTotal
+      const revenue      = sal.reduce((s, s2) => s + Number(s2.final_amount ?? s2.total_amount || 0), 0)
       const grossProfit  = revenue - totalCost
       const marginPct    = revenue > 0 ? ((grossProfit / revenue) * 100).toFixed(1) : '0.0'
 
@@ -155,8 +173,8 @@ export default function BatchReport() {
         : null
 
       setReport({
-        batch, proc, sal, exp,
-        chickCost, feedCost, medicineCost, otherProcCost, expenseTotal,
+        batch, cp, sal, exp, fe,
+        chickCost, feedCost, medicineCost, growingFee, expenseTotal,
         totalCost, revenue, grossProfit, marginPct,
         totalKgSold, mortality, survived, survivalRate, feedPerBird,
       })
@@ -180,8 +198,8 @@ export default function BatchReport() {
     </div>
   )
 
-  const { batch, sal, exp, proc,
-          chickCost, feedCost, medicineCost, otherProcCost, expenseTotal,
+  const { batch, sal, exp, fe, cp,
+          chickCost, feedCost, medicineCost, growingFee, expenseTotal,
           totalCost, revenue, grossProfit, marginPct,
           totalKgSold, mortality, survived, survivalRate } = report
 
@@ -245,8 +263,8 @@ export default function BatchReport() {
               <PLRow label="Chick Purchase"       value={chickCost}     indent />
               <PLRow label="Feed"                 value={feedCost}      indent />
               <PLRow label="Medicine"             value={medicineCost}  indent />
-              {otherProcCost > 0 && (
-                <PLRow label="Other Procurement"  value={otherProcCost} indent />
+              {growingFee > 0 && (
+                <PLRow label="Growing Fee"        value={growingFee}    indent />
               )}
               <PLRow label="Expenses (labour etc)"value={expenseTotal}  indent
                 sub={exp.length > 0 ? `${exp.length} expense entr${exp.length > 1 ? 'ies' : 'y'}` : undefined}
@@ -289,11 +307,11 @@ export default function BatchReport() {
             <h2 className="font-semibold text-gray-800 mb-3">Cost Breakdown</h2>
             <div className="space-y-2">
               {[
-                { label: 'Chicks',     value: chickCost,    color: 'bg-yellow-400' },
-                { label: 'Feed',       value: feedCost,     color: 'bg-green-400'  },
-                { label: 'Medicine',   value: medicineCost, color: 'bg-blue-400'   },
-                { label: 'Other',      value: otherProcCost, color: 'bg-purple-400' },
-                { label: 'Expenses',   value: expenseTotal, color: 'bg-orange-400' },
+                { label: 'Chicks',      value: chickCost,    color: 'bg-yellow-400' },
+                { label: 'Feed',        value: feedCost,     color: 'bg-green-400'  },
+                { label: 'Medicine',    value: medicineCost, color: 'bg-blue-400'   },
+                { label: 'Growing Fee', value: growingFee,   color: 'bg-purple-400' },
+                { label: 'Expenses',    value: expenseTotal, color: 'bg-orange-400' },
               ].filter(c => c.value > 0).map(c => (
                 <div key={c.label} className="flex items-center gap-2">
                   <div className={`h-2.5 w-2.5 rounded-full shrink-0 ${c.color}`} />
