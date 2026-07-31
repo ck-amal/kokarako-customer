@@ -443,7 +443,14 @@ ${sale.notes ? `<div class="notes"><strong>Notes</strong>${sale.notes}</div>` : 
   const [showEditFeeModal, setShowEditFeeModal] = useState(false)
   const [pendingFarmAdvs,  setPendingFarmAdvs]  = useState(null) // { advances: [], recalcData: {} }
   const [expandedPLRows,   setExpandedPLRows]   = useState(new Set())
+  const [openSaleMenu,     setOpenSaleMenu]     = useState(null) // sale id whose ⋮ menu is open
 
+  useEffect(() => {
+    if (!openSaleMenu) return
+    const close = () => setOpenSaleMenu(null)
+    document.addEventListener('click', close)
+    return () => document.removeEventListener('click', close)
+  }, [openSaleMenu])
 
   async function load() {
     const [
@@ -1732,24 +1739,39 @@ ${sale.notes ? `<div class="notes"><strong>Notes</strong>${sale.notes}</div>` : 
                       )}
                     </td>
                     <td className="px-5 py-3 text-center">
-                      <span className={`inline-block rounded-full px-2.5 py-0.5 text-xs font-semibold ${SALE_STATUS_STYLE[s.status] || SALE_STATUS_STYLE.pending}`}>
-                        {SALE_STATUS_LABEL[s.status] || s.status}
-                      </span>
-                      <div className="flex gap-1.5 justify-center mt-2 flex-wrap">
+                      <div className="flex items-center justify-center gap-2">
+                        <span className={`inline-block rounded-full px-2.5 py-0.5 text-xs font-semibold ${SALE_STATUS_STYLE[s.status] || SALE_STATUS_STYLE.pending}`}>
+                          {SALE_STATUS_LABEL[s.status] || s.status}
+                        </span>
                         {canManageSales && s.status === 'pending' && (
                           <button onClick={() => confirmSale(s)}
                             className="rounded-md bg-green-600 hover:bg-green-700 px-2 py-1 text-[11px] font-semibold text-white transition">Confirm</button>
                         )}
-                        {canManageSales && (
-                          <>
-                            <button onClick={() => openEditSale(s)}
-                              className="rounded-md border border-amber-300 px-2 py-1 text-[11px] font-semibold text-amber-700 hover:bg-amber-50 transition">Edit</button>
-                            <button onClick={() => deleteSale(s)}
-                              className="rounded-md border border-red-200 px-2 py-1 text-[11px] font-semibold text-red-600 hover:bg-red-50 transition">Delete</button>
-                          </>
-                        )}
-                        <button onClick={() => printSaleInvoice(s)}
-                          className="rounded-md border border-gray-300 px-2 py-1 text-[11px] font-semibold text-gray-600 hover:bg-gray-50 transition">🖨 Print</button>
+                        {/* 3-dot menu */}
+                        <div className="relative">
+                          <button
+                            onClick={e => { e.stopPropagation(); setOpenSaleMenu(openSaleMenu === s.id ? null : s.id) }}
+                            className="w-7 h-7 flex items-center justify-center rounded-full hover:bg-gray-100 text-gray-500 text-base leading-none transition"
+                          >⋮</button>
+                          {openSaleMenu === s.id && (
+                            <div
+                              className="absolute right-0 top-8 z-50 w-40 rounded-xl bg-white shadow-xl border border-gray-100 py-1 text-sm"
+                              onClick={e => e.stopPropagation()}
+                            >
+                              {canManageSales && (
+                                <>
+                                  <button onClick={() => { setOpenSaleMenu(null); openEditSale(s) }}
+                                    className="w-full text-left px-4 py-2 hover:bg-gray-50 text-gray-700">Edit</button>
+                                  <button onClick={() => { setOpenSaleMenu(null); deleteSale(s) }}
+                                    className="w-full text-left px-4 py-2 hover:bg-red-50 text-red-600">Delete</button>
+                                  <div className="border-t border-gray-100 my-1" />
+                                </>
+                              )}
+                              <button onClick={() => { setOpenSaleMenu(null); printSaleInvoice(s) }}
+                                className="w-full text-left px-4 py-2 hover:bg-gray-50 text-gray-700">🖨 Print Invoice</button>
+                            </div>
+                          )}
+                        </div>
                       </div>
                     </td>
                     <td className="px-4 py-3"><AuditInfo createdByName={s.created_by_name} createdAt={s.created_at} updatedByName={s.updated_by_name} updatedAt={s.updated_at} confirmedByName={s.confirmed_by_name} confirmedAt={s.confirmed_at} /></td>
