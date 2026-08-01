@@ -366,22 +366,25 @@ function GoodsSaleModal({ vendors, onClose, onSaved }) {
     setSaving(true)
     try {
       // 1. Insert sale (confirmed immediately — stock physically left)
+      // total_amount is a generated column (kg_sold * price_per_kg), so we
+      // set kg_sold = item_quantity and price_per_kg = selling_price to drive it.
       const { data: saleData, error: saleErr } = await supabase.from('sales').insert({
-        organization_id:       organization.id,
-        vendor_id:             form.vendor_id,
-        sale_type:             'goods',
-        item_id:               form.item_id,
-        item_quantity:         qty,
-        total_amount:          totalAmount,
+        organization_id:        organization.id,
+        vendor_id:              form.vendor_id,
+        sale_type:              'goods',
+        item_id:                form.item_id,
+        item_quantity:          qty,
+        kg_sold:                qty,
+        price_per_kg:           price,
         purchase_cost_per_unit: selectedItem?.avgCost || 0,
-        date:                  form.date,
-        notes:                 form.notes.trim() || null,
-        status:                'confirmed',
-        created_by_id:         user.id,
-        created_by_name:       userName,
-        confirmed_by_id:       user.id,
-        confirmed_by_name:     userName,
-        confirmed_at:          new Date().toISOString(),
+        date:                   form.date,
+        notes:                  form.notes.trim() || null,
+        status:                 'confirmed',
+        created_by_id:          user.id,
+        created_by_name:        userName,
+        confirmed_by_id:        user.id,
+        confirmed_by_name:      userName,
+        confirmed_at:           new Date().toISOString(),
       }).select('id').single()
       if (saleErr) throw saleErr
 
@@ -774,9 +777,7 @@ export default function Sales() {
             <tbody className="divide-y divide-gray-50">
               {sales.map(s => {
                 const isGoods = s.sale_type === 'goods'
-                const unitPrice = isGoods && s.item_quantity
-                  ? Number(s.total_amount) / Number(s.item_quantity)
-                  : Number(s.price_per_kg || 0)
+                const unitPrice = Number(s.price_per_kg || 0)
                 return (
                   <tr key={s.id} className="hover:bg-amber-50/40 transition">
                     <td className="px-5 py-4 text-gray-600 whitespace-nowrap">{formatDate(s.date, i18n.language)}</td>
