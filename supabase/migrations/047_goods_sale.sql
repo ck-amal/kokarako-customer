@@ -7,3 +7,6 @@ ALTER TABLE sales
 
 -- Backfill existing rows explicitly (they are all chicken sales)
 UPDATE sales SET sale_type = 'chicken' WHERE sale_type IS NULL OR sale_type = '';
+
+-- Goods sales have no batch — drop the NOT NULL constraint on batch_id
+ALTER TABLE sales ALTER COLUMN batch_id DROP NOT NULL;
