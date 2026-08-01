@@ -134,6 +134,7 @@ export default function PLReport() {
 
   // Raw data
   const [sales,           setSales]           = useState([])
+  const [goodsSales,      setGoodsSales]      = useState([])
   const [procurement,     setProcurement]     = useState([])
   const [farmExp,         setFarmExp]         = useState([])
   const [farmExpReturns,  setFarmExpReturns]  = useState([])
@@ -181,9 +182,9 @@ export default function PLReport() {
     }
 
     const [{ data: s }, { data: p }, { data: fe }, { data: fer }, { data: ex }, { data: soldBatchesInPeriod }] = await Promise.all([
-      // Sales
+      // Sales (chicken only, batch-filtered; goods sales fetched separately below)
       (() => {
-        let q = supabase.from('sales').select('id, total_amount, date, batch_id, vendors(name)').eq('organization_id', organization?.id).eq('status', 'confirmed').gte('date', start).lte('date', end)
+        let q = supabase.from('sales').select('id, total_amount, date, batch_id, sale_type, item_quantity, purchase_cost_per_unit, vendors(name), items(name)').eq('organization_id', organization?.id).eq('status', 'confirmed').eq('sale_type', 'chicken').gte('date', start).lte('date', end)
         if (batchIds) q = q.in('batch_id', batchIds)
         return q
       })(),
@@ -241,7 +242,18 @@ export default function PLReport() {
     else if (farmFilter) fcrQuery = fcrQuery.eq('farm_id', farmFilter)
     const { data: fcrData } = await fcrQuery
 
+    // Goods sales: always date-filtered only (not batch-specific)
+    const { data: goodsSalesData } = await supabase
+      .from('sales')
+      .select('id, total_amount, item_quantity, purchase_cost_per_unit, date, vendors(name), items(name)')
+      .eq('organization_id', organization?.id)
+      .eq('status', 'confirmed')
+      .eq('sale_type', 'goods')
+      .gte('date', start)
+      .lte('date', end)
+
     setSales(s || [])
+    setGoodsSales(goodsSalesData || [])
     setProcurement(p || [])
     setFarmExp(fe || [])
     setFarmExpReturns(fer || [])
@@ -253,7 +265,10 @@ export default function PLReport() {
 
   // ─── Compute P&L ────────────────────────────────────────────────────────────
 
-  const revenue = useMemo(() => sales.reduce((s, r) => s + Number(r.total_amount), 0), [sales])
+  const revenue      = useMemo(() => sales.reduce((s, r) => s + Number(r.total_amount), 0), [sales])
+  const goodsRevenue = useMemo(() => goodsSales.reduce((s, r) => s + Number(r.total_amount), 0), [goodsSales])
+  const totalRevenue = revenue + goodsRevenue
+  const goodsCOGS    = useMemo(() => goodsSales.reduce((s, r) => s + Number(r.purchase_cost_per_unit || 0) * Number(r.item_quantity || 0), 0), [goodsSales])
 
   const chickCost   = useMemo(() => procurement.reduce((s, r) => s + Number(r.cost), 0), [procurement])
   const feedCost    = useMemo(() => {
@@ -267,9 +282,9 @@ export default function PLReport() {
     return Math.max(0, gross - credit)
   }, [farmExp, farmExpReturns])
   const directExp   = useMemo(() => expenses.filter(e => e.expense_category_type === 'cogs').reduce((s, e) => s + Number(e.amount), 0), [expenses])
-  const totalCOGS   = chickCost + feedCost + medCost + directExp
+  const totalCOGS   = chickCost + feedCost + medCost + directExp + goodsCOGS
 
-  const grossProfit = revenue - totalCOGS
+  const grossProfit = totalRevenue - totalCOGS
 
   const opExpByCategory = useMemo(() => {
     const map = {}
@@ -378,8 +393,13 @@ export default function PLReport() {
             <PLRow label="Chicken Sales" amount={revenue}
               detail={sales.map(s => ({ label: `${fmtDate(s.date)} — ${s.vendors?.name ?? 'Vendor'}`, amount: s.total_amount }))}
               onExpand={() => toggleExpanded('sales')} expanded={expanded.sales} />
+            {goodsRevenue > 0 && (
+              <PLRow label="Goods Sales" amount={goodsRevenue}
+                detail={goodsSales.map(s => ({ label: `${fmtDate(s.date)} — ${s.items?.name ?? 'Item'} (${s.vendors?.name ?? 'Vendor'})`, amount: s.total_amount }))}
+                onExpand={() => toggleExpanded('goodsSales')} expanded={expanded.goodsSales} />
+            )}
             <Divider />
-            <PLRow label="Total Revenue" amount={revenue} bold />
+            <PLRow label="Total Revenue" amount={totalRevenue} bold />
           </SectionCard>
 
           {/* COGS */}
@@ -393,6 +413,11 @@ export default function PLReport() {
             <PLRow label="Medicine Cost" amount={medCost}
               detail={farmExp.filter(r => r.item_type?.toLowerCase().includes('medicine')).map(r => ({ label: `${fmtDate(r.date)} — ${r.item_name}`, amount: r.total_cost }))}
               onExpand={() => toggleExpanded('medicine')} expanded={expanded.medicine} />
+            {goodsCOGS > 0 && (
+              <PLRow label="Cost of Goods Sold" amount={goodsCOGS}
+                detail={goodsSales.filter(s => (s.purchase_cost_per_unit || 0) > 0).map(s => ({ label: `${fmtDate(s.date)} — ${s.items?.name ?? 'Item'}`, amount: Number(s.purchase_cost_per_unit) * Number(s.item_quantity) }))}
+                onExpand={() => toggleExpanded('goodsCOGS')} expanded={expanded.goodsCOGS} />
+            )}
             <PLRow label="Direct Expenses" amount={directExp}
               detail={expenses.filter(e => e.expense_category_type === 'cogs').map(e => ({ label: `${fmtDate(e.date)} — ${e.description || e.category}`, amount: e.amount }))}
               onExpand={() => toggleExpanded('directExp')} expanded={expanded.directExp} />
@@ -405,7 +430,7 @@ export default function PLReport() {
             <p className="text-xs font-bold uppercase tracking-widest text-gray-500 mb-1">Gross Profit</p>
             <p className={`text-3xl font-bold ${grossProfit >= 0 ? 'text-green-700' : 'text-red-600'}`}>{formatCurrency(Math.abs(grossProfit))}</p>
             <p className={`text-sm mt-1 font-medium ${grossProfit >= 0 ? 'text-green-600' : 'text-red-500'}`}>
-              {grossProfit >= 0 ? 'Gross Margin: ' : 'Gross Loss — Margin: '}{pct(Math.abs(grossProfit), revenue)}
+              {grossProfit >= 0 ? 'Gross Margin: ' : 'Gross Loss — Margin: '}{pct(Math.abs(grossProfit), totalRevenue)}
             </p>
           </div>
 
@@ -454,12 +479,12 @@ export default function PLReport() {
             </p>
             <p className={`text-4xl font-bold ${netProfit >= 0 ? 'text-green-700' : 'text-red-600'}`}>{formatCurrency(Math.abs(netProfit))}</p>
             <p className={`text-sm mt-1 font-medium ${netProfit >= 0 ? 'text-green-600' : 'text-red-500'}`}>
-              Net Margin: {pct(Math.abs(netProfit), revenue)}
+              Net Margin: {pct(Math.abs(netProfit), totalRevenue)}
             </p>
           </div>
 
           {/* Visual summary */}
-          <BarChart revenue={revenue} cogs={totalCOGS} opex={totalOpEx} net={netProfit} />
+          <BarChart revenue={totalRevenue} cogs={totalCOGS} opex={totalOpEx} net={netProfit} />
 
           {/* FCR section */}
           {fcrBatches.length > 0 && (

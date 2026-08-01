@@ -156,7 +156,7 @@ export default function BatchReport() {
       const expenseTotal = exp.reduce((s, e) => s + Number(e.amount), 0)
 
       const totalCost    = chickCost + feedCost + medicineCost + growingFee + expenseTotal
-      const revenue      = sal.reduce((s, s2) => s + Number(s2.final_amount ?? s2.total_amount || 0), 0)
+      const revenue      = sal.reduce((s, s2) => s + Number((s2.final_amount ?? s2.total_amount) || 0), 0)
       const grossProfit  = revenue - totalCost
       const marginPct    = revenue > 0 ? ((grossProfit / revenue) * 100).toFixed(1) : '0.0'
 
