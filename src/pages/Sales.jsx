@@ -758,11 +758,10 @@ export default function Sales() {
           </div>
         ) : (
           <div className="overflow-x-auto">
-          <table className="w-full text-sm min-w-[700px]">
+          <table className="w-full text-sm min-w-[600px]">
             <thead>
               <tr className="bg-gray-50 border-b border-gray-100 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
                 <th className="px-5 py-3">{t('common.date')}</th>
-                <th className="px-5 py-3">Type</th>
                 <th className="px-5 py-3">Batch / Item</th>
                 <th className="px-5 py-3">{t('sales.vendor')}</th>
                 <th className="px-5 py-3 text-right">Quantity</th>
@@ -781,19 +780,11 @@ export default function Sales() {
                 return (
                   <tr key={s.id} className="hover:bg-amber-50/40 transition">
                     <td className="px-5 py-4 text-gray-600 whitespace-nowrap">{formatDate(s.date, i18n.language)}</td>
-                    <td className="px-5 py-4">
-                      {isGoods
-                        ? <span className="inline-flex items-center gap-1 rounded-full bg-blue-100 text-blue-700 px-2.5 py-0.5 text-xs font-semibold">📦 Goods</span>
-                        : <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 text-amber-700 px-2.5 py-0.5 text-xs font-semibold">🐔 Chicken</span>
-                      }
-                    </td>
                     <td className="px-5 py-4 text-gray-700">
                       {isGoods
-                        ? <span>
-                            <span className="font-medium">{s.items?.name ?? '—'}</span>
-                            {s.items?.item_types?.name && (
-                              <span className="ml-1.5 text-xs text-gray-400">{s.items.item_types.name}</span>
-                            )}
+                        ? <span className="flex items-center gap-2">
+                            <span className="inline-block rounded px-1.5 py-0.5 text-[10px] font-semibold bg-blue-100 text-blue-600 leading-tight">Goods</span>
+                            <span>{s.items?.name ?? '—'}</span>
                           </span>
                         : s.batches
                           ? `${s.batches.farms?.name ?? '—'} (${formatDate(s.batches.start_date, i18n.language)})`
@@ -853,7 +844,7 @@ export default function Sales() {
             </tbody>
             <tfoot>
               <tr className="bg-gray-50 border-t border-gray-200">
-                <td colSpan={6} className="px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider text-right">
+                <td colSpan={5} className="px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider text-right">
                   {t('common.total')} (confirmed)
                 </td>
                 <td className="px-5 py-3 text-right font-bold text-gray-800">
