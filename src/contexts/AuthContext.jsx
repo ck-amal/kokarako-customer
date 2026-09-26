@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useRef, useState } from 'react'
-import { supabase } from '../lib/supabaseClient'
+import { supabase, setCurrentOrgId } from '../lib/supabaseClient'
 import { getSubscriptionState } from '../lib/subscription'
 
 const AuthContext = createContext(null)
@@ -63,6 +63,7 @@ export function AuthProvider({ children }) {
         setServiceBlocked(null)
         setOrganization(org)
         setUserRole(match.role)
+        setCurrentOrgId(org.id)
       }
     }
 
@@ -84,6 +85,7 @@ export function AuthProvider({ children }) {
     if (ouRows) {
       setOrganization(ouRows.organizations)
       setUserRole(ouRows.role)
+      setCurrentOrgId(orgId)
     }
   }
 
@@ -104,6 +106,7 @@ export function AuthProvider({ children }) {
         setOrganization(null)
         setUserRole(null)
         setServiceBlocked(null)
+        setCurrentOrgId(null)
         setLoading(false)
         return
       }
