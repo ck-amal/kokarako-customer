@@ -255,12 +255,10 @@ function RecordPaymentModal({ suppliers, initialSupplierId, onClose, onSaved }) 
     if (!form.supplier_id)  { setError('Select a supplier'); return }
     const amt = parseFloat(form.amount)
     if (!amt || amt <= 0)   { setError('Enter a valid amount'); return }
-    if (outstanding !== null && amt > outstanding + 0.01) {
-      setError(`Amount (${formatCurrency(amt)}) exceeds outstanding balance (${formatCurrency(outstanding)}). Are you sure?`)
-      // Allow submit anyway — just a warning shown in error area
-    }
     setSaving(true)
-    const userName = user?.user_metadata?.full_name || user?.email || 'Unknown'
+    const isAdvance    = outstanding !== null && outstanding <= 0
+    const supplierName = suppliers.find(s => s.id === form.supplier_id)?.name ?? 'Supplier'
+    const userName     = user?.user_metadata?.full_name || user?.email || 'Unknown'
 
     const { data: inserted, error: err } = await supabase.from('supplier_payments').insert({
       organization_id:  organization.id,
@@ -277,13 +275,12 @@ function RecordPaymentModal({ suppliers, initialSupplierId, onClose, onSaved }) 
     if (err) { setError(err.message); setSaving(false); return }
 
     if (form.account_id && inserted) {
-      const supplierName = suppliers.find(s => s.id === form.supplier_id)?.name ?? 'Supplier'
       await supabase.from('transactions').insert({
         organization_id:  organization.id,
         account_id:       form.account_id,
         transaction_type: 'out',
         category:         'supplier_payment',
-        description:      `Payment to ${supplierName}`,
+        description:      isAdvance ? `Advance to ${supplierName}` : `Payment to ${supplierName}`,
         amount:           amt,
         transaction_date: form.payment_date,
         reference_type:   'supplier_payment',
@@ -294,13 +291,14 @@ function RecordPaymentModal({ suppliers, initialSupplierId, onClose, onSaved }) 
     onSaved()
   }
 
-  const overpaying = outstanding !== null && parseFloat(form.amount) > outstanding + 0.01
+  const isAdvance  = outstanding !== null && outstanding <= 0
+  const overpaying = outstanding !== null && parseFloat(form.amount) > outstanding + 0.01 && !isAdvance
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
       <div className="w-full max-w-md bg-white rounded-2xl shadow-xl p-6 max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between mb-5">
-          <h2 className="text-lg font-semibold text-gray-800">{t('suppliers.recordPayment')}</h2>
+          <h2 className="text-lg font-semibold text-gray-800">{isAdvance ? 'Give Advance to Supplier' : t('suppliers.recordPayment')}</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
         </div>
 
@@ -321,14 +319,23 @@ function RecordPaymentModal({ suppliers, initialSupplierId, onClose, onSaved }) 
 
           {/* Outstanding balance display */}
           {outstanding !== null && (
-            <div className={`rounded-lg px-4 py-3 flex items-center justify-between ${
-              outstanding > 0 ? 'bg-red-50 border border-red-200' : 'bg-green-50 border border-green-200'
-            }`}>
-              <span className="text-sm font-medium text-gray-700">{t('suppliers.outstandingBalance')}</span>
-              <span className={`text-lg font-bold ${outstanding > 0 ? 'text-red-600' : 'text-green-600'}`}>
-                {formatCurrency(outstanding)}
-              </span>
-            </div>
+            <>
+              <div className={`rounded-lg px-4 py-3 flex items-center justify-between ${
+                outstanding > 0 ? 'bg-red-50 border border-red-200' : isAdvance ? 'bg-blue-50 border border-blue-200' : 'bg-green-50 border border-green-200'
+              }`}>
+                <span className="text-sm font-medium text-gray-700">
+                  {outstanding > 0 ? t('suppliers.outstandingBalance') : isAdvance ? 'Credit Balance' : t('suppliers.outstandingBalance')}
+                </span>
+                <span className={`text-lg font-bold ${outstanding > 0 ? 'text-red-600' : isAdvance ? 'text-blue-600' : 'text-green-600'}`}>
+                  {isAdvance ? formatCurrency(Math.abs(outstanding)) : formatCurrency(outstanding)}
+                </span>
+              </div>
+              {isAdvance && (
+                <p className="text-xs text-blue-600 bg-blue-50 border border-blue-200 rounded-lg px-3 py-2">
+                  💡 This supplier already has a credit balance. The new amount will be added as an advance.
+                </p>
+              )}
+            </>
           )}
 
           {/* Amount */}
@@ -343,7 +350,7 @@ function RecordPaymentModal({ suppliers, initialSupplierId, onClose, onSaved }) 
               }`}
             />
             {overpaying && (
-              <p className="text-xs text-orange-600 mt-1">⚠ This exceeds the outstanding balance</p>
+              <p className="text-xs text-orange-600 mt-1">⚠ This exceeds the outstanding balance and will create an advance credit</p>
             )}
           </div>
 
@@ -425,7 +432,7 @@ function RecordPaymentModal({ suppliers, initialSupplierId, onClose, onSaved }) 
               type="submit" disabled={saving}
               className="flex-1 rounded-lg bg-amber-500 hover:bg-amber-600 disabled:opacity-60 px-4 py-2 text-sm font-semibold text-white transition"
             >
-              {saving ? t('common.loading') : t('suppliers.recordPayment')}
+              {saving ? t('common.loading') : isAdvance ? 'Give Advance' : t('suppliers.recordPayment')}
             </button>
           </div>
         </form>
@@ -479,12 +486,14 @@ function SupplierCard({ supplier, onEdit, onPayment, onClick, canEdit, canDelete
               {t('common.edit')}
             </button>
           )}
-          {!isPaid && canEdit && (
+          {canEdit && (
             <button
               onClick={onPayment}
-              className="rounded-lg bg-amber-500 hover:bg-amber-600 px-3 py-1 text-xs font-semibold text-white transition"
+              className={`rounded-lg px-3 py-1 text-xs font-semibold text-white transition ${
+                isPaid ? 'bg-blue-500 hover:bg-blue-600' : 'bg-amber-500 hover:bg-amber-600'
+              }`}
             >
-              Pay
+              {isPaid ? 'Advance' : 'Pay'}
             </button>
           )}
         </div>

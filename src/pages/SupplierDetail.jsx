@@ -99,7 +99,8 @@ function RecordPaymentModal({ supplier, outstanding, onClose, onSaved }) {
     return e => setForm(f => ({ ...f, [field]: e.target.value }))
   }
 
-  const overpaying = outstanding !== null && parseFloat(form.amount) > outstanding + 0.01
+  const isAdvance  = outstanding !== null && outstanding <= 0
+  const overpaying = outstanding !== null && parseFloat(form.amount) > outstanding + 0.01 && !isAdvance
 
   async function handleSubmit(e) {
     e.preventDefault()
@@ -129,7 +130,7 @@ function RecordPaymentModal({ supplier, outstanding, onClose, onSaved }) {
         account_id:       form.account_id,
         transaction_type: 'out',
         category:         'supplier_payment',
-        description:      `Payment to ${supplier.name}`,
+        description:      isAdvance ? `Advance to ${supplier.name}` : `Payment to ${supplier.name}`,
         amount:           amt,
         transaction_date: form.payment_date,
         reference_type:   'supplier_payment',
@@ -144,19 +145,26 @@ function RecordPaymentModal({ supplier, outstanding, onClose, onSaved }) {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
       <div className="w-full max-w-md bg-white rounded-2xl shadow-xl p-6">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold text-gray-800">{t('suppliers.recordPayment')}</h2>
+          <h2 className="text-lg font-semibold text-gray-800">{isAdvance ? 'Give Advance to Supplier' : t('suppliers.recordPayment')}</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
         </div>
 
         {/* Outstanding */}
         <div className={`rounded-lg px-4 py-3 mb-4 flex items-center justify-between ${
-          outstanding > 0 ? 'bg-red-50 border border-red-200' : 'bg-green-50 border border-green-200'
+          outstanding > 0 ? 'bg-red-50 border border-red-200' : isAdvance ? 'bg-blue-50 border border-blue-200' : 'bg-green-50 border border-green-200'
         }`}>
-          <span className="text-sm font-medium text-gray-700">{t('suppliers.outstandingBalance')}</span>
-          <span className={`text-xl font-bold ${outstanding > 0 ? 'text-red-600' : 'text-green-600'}`}>
-            {formatCurrency(outstanding)}
+          <span className="text-sm font-medium text-gray-700">
+            {outstanding > 0 ? t('suppliers.outstandingBalance') : isAdvance ? 'Credit Balance' : t('suppliers.outstandingBalance')}
+          </span>
+          <span className={`text-xl font-bold ${outstanding > 0 ? 'text-red-600' : isAdvance ? 'text-blue-600' : 'text-green-600'}`}>
+            {isAdvance ? formatCurrency(Math.abs(outstanding)) : formatCurrency(outstanding)}
           </span>
         </div>
+        {isAdvance && (
+          <p className="text-xs text-blue-600 bg-blue-50 border border-blue-200 rounded-lg px-3 py-2 mb-4">
+            💡 This supplier already has a credit balance. The new amount will be added as an advance.
+          </p>
+        )}
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
@@ -170,7 +178,7 @@ function RecordPaymentModal({ supplier, outstanding, onClose, onSaved }) {
               }`}
             />
             {overpaying && (
-              <p className="text-xs text-orange-600 mt-1">⚠ This exceeds the outstanding balance</p>
+              <p className="text-xs text-orange-600 mt-1">⚠ This exceeds the outstanding balance and will create an advance credit</p>
             )}
           </div>
 
@@ -245,7 +253,7 @@ function RecordPaymentModal({ supplier, outstanding, onClose, onSaved }) {
             </button>
             <button type="submit" disabled={saving}
               className="flex-1 rounded-lg bg-amber-500 hover:bg-amber-600 disabled:opacity-60 px-4 py-2 text-sm font-semibold text-white transition">
-              {saving ? t('common.loading') : t('suppliers.recordPayment')}
+              {saving ? t('common.loading') : isAdvance ? 'Give Advance' : t('suppliers.recordPayment')}
             </button>
           </div>
         </form>
@@ -584,12 +592,14 @@ export default function SupplierDetail() {
           }`}>
             {outstanding < 0 ? `Credit ${formatCurrency(Math.abs(outstanding))}` : outstanding > 0 ? `${formatCurrency(outstanding)} owed` : '✓ All cleared'}
           </span>
-          {outstanding > 0 && canEdit && (
+          {canEdit && (
             <button
               onClick={() => setPayModal(true)}
-              className="rounded-lg bg-amber-500 hover:bg-amber-600 px-4 py-2 text-sm font-semibold text-white transition"
+              className={`rounded-lg px-4 py-2 text-sm font-semibold text-white transition ${
+                outstanding <= 0 ? 'bg-blue-500 hover:bg-blue-600' : 'bg-amber-500 hover:bg-amber-600'
+              }`}
             >
-              💳 {t('suppliers.recordPayment')}
+              {outstanding <= 0 ? '💰 Give Advance' : `💳 ${t('suppliers.recordPayment')}`}
             </button>
           )}
         </div>
