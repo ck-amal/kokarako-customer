@@ -959,6 +959,8 @@ export default function FarmDetail() {
   // Auto-open the distribution modal when arriving via a "+ Record" link
   useEffect(() => {
     if (searchParams.get('record') === 'dist') setDistModal(true)
+    const tabParam = searchParams.get('tab')
+    if (tabParam && TAB_KEYS.includes(tabParam)) setActiveTab(tabParam)
   }, [searchParams])
 
   function refresh() { setLoading(true); fetchAll() }

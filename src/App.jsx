@@ -38,6 +38,7 @@ import GrowingFees         from './pages/GrowingFees'
 import GrowingFeeSettings  from './pages/GrowingFeeSettings'
 import Profile             from './pages/Profile'
 import FixedAssets         from './pages/FixedAssets'
+import Visits             from './pages/Visits'
 
 import './index.css'
 
@@ -102,6 +103,7 @@ export default function App() {
         <Route path="/reports/fcr"     element={<P><FCRReport /></P>} />
         <Route path="/growing-fees"    element={<P><GrowingFees /></P>} />
         <Route path="/assets"          element={<P><FixedAssets /></P>} />
+        <Route path="/visits"          element={<P><Visits /></P>} />
 
         {/* Settings */}
         <Route path="/settings/catalog"      element={<P><CatalogSettings /></P>} />
