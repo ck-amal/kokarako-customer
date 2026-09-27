@@ -18,6 +18,7 @@ const ALL_NAV = [
 
   // Financial
   { to: '/growing-fees', labelKey: 'nav.growingFees', icon: '🌿', roles: ['owner','manager','accountant'] },
+  { to: '/assets',       labelKey: 'nav.fixedAssets', icon: '🏗️', roles: ['owner','manager','accountant'] },
 
   // Settings
   { to: '/settings/profile', labelKey: 'nav.profile', icon: '👤', roles: null },

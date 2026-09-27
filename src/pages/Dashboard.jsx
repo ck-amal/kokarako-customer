@@ -359,6 +359,7 @@ export default function Dashboard() {
         { data: soldFCRBatches },
         { data: gfLedger },
         { data: farms },
+        { data: fixedAssetRows },
       ] = await Promise.all([
         // Active batches (for count, chick total, table)
         supabase
@@ -460,6 +461,12 @@ export default function Dashboard() {
           .from('farms')
           .select('id')
           .eq('organization_id', organization?.id),
+
+        // Fixed assets
+        supabase
+          .from('fixed_assets')
+          .select('purchase_value')
+          .eq('organization_id', organization?.id),
       ])
 
       const monthRevenue  = (monthSales || []).reduce((s, r) => s + Number(r.total_amount || 0), 0)
@@ -483,7 +490,8 @@ export default function Dashboard() {
         return s + Number(a.opening_balance) + t.in - t.out
       }, 0))
       const stockValue = roundCurrency((stockItems || []).reduce((s, i) => s + roundCurrency(Number(i.quantity || 0) * Number(i.avg_cost || 0)), 0))
-      const totalAssets = roundCurrency(cashAndBank + totalOutstanding + stockValue)
+      const fixedAssetsTotal = roundCurrency((fixedAssetRows || []).reduce((s, r) => s + Number(r.purchase_value || 0), 0))
+      const totalAssets = roundCurrency(cashAndBank + totalOutstanding + stockValue + fixedAssetsTotal)
       const growingFeePayable = roundCurrency((gfLedger || []).reduce((s, r) => s + Number(r.balance_due), 0))
       const totalLiabilities = roundCurrency(supplierDues + growingFeePayable)
       const netWorth = roundCurrency(totalAssets - totalLiabilities)
@@ -528,6 +536,7 @@ export default function Dashboard() {
         txns,
         cashAndBank,
         stockValue,
+        fixedAssetsTotal,
         totalAssets,
         netWorth,
         avgFCR,
@@ -730,6 +739,12 @@ export default function Dashboard() {
                 <span className="text-gray-500">{t('dashboard.stockValue')}</span>
                 <span className="font-semibold text-gray-800">{loading ? '…' : formatCurrency(data.stockValue)}</span>
               </div>
+              {(!loading && data.fixedAssetsTotal > 0) && (
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-500">Fixed Assets</span>
+                  <span className="font-semibold text-gray-800">{formatCurrency(data.fixedAssetsTotal)}</span>
+                </div>
+              )}
               <div className="flex justify-between text-sm border-t border-gray-100 pt-2 mt-2">
                 <span className="font-semibold text-gray-700">{t('dashboard.totalAssets')}</span>
                 <span className="font-bold text-green-700">{loading ? '…' : formatCurrency(data.totalAssets)}</span>
