@@ -27,7 +27,7 @@ function formatDate(d) {
 // ─── Add / Edit Modal ─────────────────────────────────────────────────────────
 
 function AssetModal({ asset, onClose, onSaved }) {
-  const { organization, profile } = useAuth()
+  const { organization, user } = useAuth()
   const isEdit = Boolean(asset)
 
   const [form, setForm] = useState({
@@ -53,7 +53,7 @@ function AssetModal({ asset, onClose, onSaved }) {
 
     setSaving(true)
     const now = new Date().toISOString()
-    const userName = profile?.full_name || profile?.email || ''
+    const userName = user?.user_metadata?.full_name || user?.email || ''
 
     const payload = {
       name:           form.name.trim(),
@@ -67,7 +67,7 @@ function AssetModal({ asset, onClose, onSaved }) {
     if (isEdit) {
       const res = await supabase
         .from('fixed_assets')
-        .update({ ...payload, updated_at: now, updated_by_id: profile?.id, updated_by_name: userName })
+        .update({ ...payload, updated_at: now, updated_by_id: user?.id, updated_by_name: userName })
         .eq('id', asset.id)
         .eq('organization_id', organization?.id)
       err = res.error
@@ -77,7 +77,7 @@ function AssetModal({ asset, onClose, onSaved }) {
         .insert({
           ...payload,
           organization_id: organization?.id,
-          created_by_id:   profile?.id,
+          created_by_id:   user?.id,
           created_by_name: userName,
         })
       err = res.error

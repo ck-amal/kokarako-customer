@@ -661,7 +661,169 @@ function GiveAdvanceModal({ farm, batches, initialBatchId, onClose, onSaved }) {
 
 // ─── Tab labels ───────────────────────────────────────────────────────────────
 
-const TAB_KEYS = ['overview', 'batches', 'distributions', 'sales', 'farmStock']
+const TAB_KEYS = ['overview', 'batches', 'distributions', 'sales', 'farmStock', 'visits']
+
+// ─── Add Visit Modal ──────────────────────────────────────────────────────────
+
+function AddVisitModal({ farmId, activeBatches, orgId, user, onClose, onSaved }) {
+  const today = new Date().toISOString().slice(0, 10)
+  const [visitDate,    setVisitDate]    = useState(today)
+  const [notes,        setNotes]        = useState('')
+  const [mortality,    setMortality]    = useState(() =>
+    Object.fromEntries(activeBatches.map(b => [b.id, '0']))
+  )
+  const [saving,  setSaving]  = useState(false)
+  const [error,   setError]   = useState('')
+
+  function setMort(batchId, val) {
+    setMortality(prev => ({ ...prev, [batchId]: val }))
+  }
+
+  async function handleSubmit(e) {
+    e.preventDefault()
+    setError('')
+    setSaving(true)
+
+    const visitorName = user?.user_metadata?.full_name || user?.email || ''
+
+    // Insert visit record
+    const { data: visitRow, error: visitErr } = await supabase
+      .from('farm_visits')
+      .insert({
+        organization_id: orgId,
+        farm_id:         farmId,
+        visit_date:      visitDate,
+        visited_by_id:   user?.id ?? null,
+        visited_by_name: visitorName,
+        notes:           notes.trim() || null,
+      })
+      .select('id')
+      .single()
+
+    if (visitErr) { setError(visitErr.message); setSaving(false); return }
+
+    // Insert mortality records for all active batches (even 0 — to tag the visit)
+    const mortalityRows = activeBatches.map(b => ({
+      organization_id: orgId,
+      visit_id:        visitRow.id,
+      batch_id:        b.id,
+      mortality_count: parseInt(mortality[b.id] || '0', 10),
+    }))
+
+    if (mortalityRows.length > 0) {
+      const { error: mortErr } = await supabase
+        .from('farm_visit_mortality')
+        .insert(mortalityRows)
+      if (mortErr) { setError(mortErr.message); setSaving(false); return }
+    }
+
+    // Update each batch's mortality_count (add the new deaths)
+    for (const b of activeBatches) {
+      const added = parseInt(mortality[b.id] || '0', 10)
+      if (added > 0) {
+        await supabase
+          .from('batches')
+          .update({ mortality_count: Number(b.mortality_count || 0) + added })
+          .eq('id', b.id)
+          .eq('organization_id', orgId)
+      }
+    }
+
+    onSaved()
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+      <div className="w-full max-w-md bg-white rounded-2xl shadow-xl p-6 max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between mb-5">
+          <h2 className="text-lg font-semibold text-gray-800">Record Farm Visit</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Visit Date *</label>
+            <input
+              required
+              type="date"
+              value={visitDate}
+              onChange={e => setVisitDate(e.target.value)}
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
+            />
+          </div>
+
+          {activeBatches.length > 0 && (
+            <div>
+              <p className="text-sm font-medium text-gray-700 mb-2">Mortality per Batch</p>
+              <div className="space-y-2">
+                {activeBatches.map(b => {
+                  const live = Math.max(0, Number(b.chick_count || 0) - Number(b.mortality_count || 0))
+                  return (
+                    <div key={b.id} className="flex items-center gap-3 bg-gray-50 rounded-lg px-3 py-2">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-gray-800 truncate">
+                          Batch {new Date(b.start_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}
+                        </p>
+                        <p className="text-xs text-gray-400">{live.toLocaleString('en-IN')} live birds</p>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-xs text-gray-500">Deaths:</span>
+                        <input
+                          type="number"
+                          min="0"
+                          max={live}
+                          value={mortality[b.id]}
+                          onChange={e => setMort(b.id, e.target.value)}
+                          className="w-20 rounded border border-gray-300 px-2 py-1 text-sm text-center focus:outline-none focus:ring-2 focus:ring-amber-400"
+                        />
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
+          {activeBatches.length === 0 && (
+            <div className="rounded-lg bg-amber-50 border border-amber-100 px-3 py-2 text-sm text-amber-700">
+              No active batches — visit will be recorded without mortality data.
+            </div>
+          )}
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
+            <textarea
+              value={notes}
+              onChange={e => setNotes(e.target.value)}
+              rows={3}
+              placeholder="Observations, health status, recommendations…"
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 resize-none"
+            />
+          </div>
+
+          {error && (
+            <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</p>
+          )}
+
+          <div className="flex gap-3 pt-1">
+            <button
+              type="button" onClick={onClose}
+              className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit" disabled={saving}
+              className="flex-1 rounded-lg bg-green-600 hover:bg-green-700 disabled:opacity-60 px-4 py-2 text-sm font-semibold text-white transition"
+            >
+              {saving ? 'Saving…' : 'Record Visit'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
 
 // ─── Main page ────────────────────────────────────────────────────────────────
 
@@ -669,7 +831,7 @@ export default function FarmDetail() {
   const { id } = useParams()
   const [searchParams] = useSearchParams()
   const navigate = useNavigate()
-  const { organization, canEdit, canDelete, canRecordOperations, canViewFinancials } = useAuth()
+  const { organization, user, canEdit, canDelete, canRecordOperations, canViewFinancials } = useAuth()
   const { t, i18n } = useTranslation()
 
   const [farm,                 setFarm]                = useState(null)
@@ -687,6 +849,8 @@ export default function FarmDetail() {
   const [farmAdvances,         setFarmAdvances]        = useState([])
   const [farmLevelAdvances,    setFarmLevelAdvances]   = useState([])
   const [loading,              setLoading]             = useState(true)
+  const [visits,               setVisits]              = useState([])
+  const [visitModal,           setVisitModal]          = useState(false)
 
   const [advanceModal,         setAdvanceModal]         = useState(false)
   const [advanceBatchId,       setAdvanceBatchId]       = useState(null)
@@ -776,14 +940,16 @@ export default function FarmDetail() {
 
     // Fetch advances for active batches + farm-level advances (batch_id IS NULL)
     const activeBatchIds = bList.filter(b => b.status === 'active').map(b => b.id)
-    const [advResult, farmLevelAdvResult] = await Promise.all([
+    const [advResult, farmLevelAdvResult, visitsResult] = await Promise.all([
       activeBatchIds.length
         ? supabase.from('growing_fee_advances').select('id, batch_id, amount, payment_date, payment_method').in('batch_id', activeBatchIds).eq('organization_id', organization?.id).order('payment_date')
         : Promise.resolve({ data: [] }),
       supabase.from('growing_fee_advances').select('id, amount, payment_date, payment_method, notes').is('batch_id', null).eq('farm_id', id).eq('organization_id', organization?.id).order('payment_date'),
+      supabase.from('farm_visits').select('id, visit_date, visited_by_name, notes, farm_visit_mortality(batch_id, mortality_count)').eq('farm_id', id).eq('organization_id', organization?.id).order('visit_date', { ascending: false }),
     ])
     setFarmAdvances(advResult.data || [])
     setFarmLevelAdvances(farmLevelAdvResult.data || [])
+    setVisits(visitsResult.data || [])
 
     setLoading(false)
   }
@@ -1853,10 +2019,107 @@ export default function FarmDetail() {
         </div>
       )}
 
+      {/* VISITS TAB */}
+      {activeTab === 'visits' && (
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden w-full">
+          <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+            <div>
+              <h2 className="text-base font-semibold text-gray-800">Farm Visits</h2>
+              <p className="text-xs text-gray-400 mt-0.5">Visit history with mortality recorded per batch</p>
+            </div>
+            {canRecordOperations && (
+              <button
+                onClick={() => setVisitModal(true)}
+                className="rounded-lg bg-green-600 hover:bg-green-700 px-3 py-1.5 text-xs font-semibold text-white transition"
+              >
+                + Record Visit
+              </button>
+            )}
+          </div>
+
+          {visits.length === 0 ? (
+            <div className="py-14 text-center text-gray-400">
+              <p className="text-4xl mb-2">🚜</p>
+              <p className="text-sm font-medium text-gray-500 mb-1">No visits recorded yet</p>
+              {canRecordOperations && (
+                <button onClick={() => setVisitModal(true)} className="mt-2 text-xs text-green-600 hover:underline font-medium">
+                  Record the first visit
+                </button>
+              )}
+            </div>
+          ) : (
+            <div className="divide-y divide-gray-50">
+              {visits.map(v => {
+                const totalMort = (v.farm_visit_mortality || []).reduce((s, m) => s + Number(m.mortality_count || 0), 0)
+                const batchCount = (v.farm_visit_mortality || []).length
+                return (
+                  <div key={v.id} className="px-5 py-4">
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-sm font-semibold text-gray-800">
+                            {new Date(v.visit_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
+                          </span>
+                          {v.visited_by_name && (
+                            <span className="text-xs text-gray-500">by {v.visited_by_name}</span>
+                          )}
+                          {batchCount > 0 && (
+                            <span className="text-xs text-gray-400">· {batchCount} batch{batchCount > 1 ? 'es' : ''} checked</span>
+                          )}
+                        </div>
+                        {v.notes && (
+                          <p className="text-sm text-gray-600 mt-1">{v.notes}</p>
+                        )}
+                        {(v.farm_visit_mortality || []).some(m => m.mortality_count > 0) && (
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            {(v.farm_visit_mortality || []).filter(m => m.mortality_count > 0).map(m => {
+                              const matchedBatch = batches.find(b => b.id === m.batch_id)
+                              const label = matchedBatch
+                                ? `Batch ${new Date(matchedBatch.start_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}`
+                                : 'Batch'
+                              return (
+                                <span key={m.batch_id} className="inline-flex items-center gap-1 rounded-full bg-red-50 border border-red-100 px-2.5 py-0.5 text-xs font-medium text-red-600">
+                                  {label}: {m.mortality_count} dead
+                                </span>
+                              )
+                            })}
+                          </div>
+                        )}
+                      </div>
+                      {totalMort > 0 && (
+                        <div className="shrink-0 text-right">
+                          <span className="text-sm font-bold text-red-500">{totalMort}</span>
+                          <p className="text-xs text-gray-400">deaths</p>
+                        </div>
+                      )}
+                      {totalMort === 0 && batchCount > 0 && (
+                        <span className="shrink-0 inline-flex items-center gap-1 rounded-full bg-green-50 border border-green-100 px-2.5 py-1 text-xs font-semibold text-green-600">
+                          ✓ No mortality
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* ─── Modals ─────────────────────────────────────────────────────── */}
       {editModal    && <FarmEditModal  farm={farm}          onClose={() => setEditModal(false)}    onSaved={() => { setEditModal(false);    refresh() }} />}
       {batchModal   && <NewBatchModal farmId={id}          onClose={() => setBatchModal(false)}   onSaved={() => { setBatchModal(false);   refresh() }} />}
       {editingBatch && <EditBatchModal batch={editingBatch} onClose={() => setEditingBatch(null)} onSaved={() => { setEditingBatch(null); refresh() }} />}
+      {visitModal && (
+        <AddVisitModal
+          farmId={id}
+          activeBatches={batches.filter(b => b.status === 'active')}
+          orgId={organization?.id}
+          user={user}
+          onClose={() => setVisitModal(false)}
+          onSaved={() => { setVisitModal(false); refresh() }}
+        />
+      )}
 
       {/* ── Delete batch confirmation ── */}
       {deletingBatch && (
