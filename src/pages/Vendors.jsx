@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
@@ -218,6 +219,7 @@ function DeleteModal({ vendor, onClose, onDeleted }) {
 
 export default function Vendors() {
   const { t } = useTranslation()
+  const navigate = useNavigate()
   const { organization, canEdit, canDelete } = useAuth()
   const { currentStep, stepDone } = useOnboarding()
   const [vendors, setVendors]       = useState([])
@@ -310,8 +312,8 @@ export default function Vendors() {
               {vendors.map(v => {
                 const isCredit = v.outstanding < 0
                 return (
-                <tr key={v.id} className="hover:bg-amber-50/40 transition">
-                  <td className="px-5 py-4 font-medium text-gray-800">{v.name}</td>
+                <tr key={v.id} className="hover:bg-amber-50/40 transition cursor-pointer" onClick={() => navigate(`/vendors/${v.id}`)}>
+                  <td className="px-5 py-4 font-medium text-gray-800 hover:text-amber-600 transition">{v.name}</td>
                   <td className="px-5 py-4 text-gray-600">{v.phone || <span className="text-gray-300">—</span>}</td>
                   <td className="px-5 py-4 text-right font-semibold text-gray-700">
                     {formatCurrency(v.total_sales)}
@@ -327,7 +329,7 @@ export default function Vendors() {
                       </span>
                     )}
                   </td>
-                  <td className="px-5 py-4 text-right">
+                  <td className="px-5 py-4 text-right" onClick={e => e.stopPropagation()}>
                     <div className="flex justify-end gap-2">
                       {canEdit && (
                         <button
