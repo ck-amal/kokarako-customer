@@ -166,12 +166,13 @@ function LineChart({ points, color = '#f59e0b' }) {
 
 // ─── Rate Detail Modal ────────────────────────────────────────────────────────
 
-function RateDetailModal({ title, icon, unit, avg, trend, color, period, onClose }) {
+function RateDetailModal({ title, icon, unit, avg, trend, color, period, byItem, onClose }) {
   const PERIOD_LABEL = { week: 'Last 7 days', month: 'This month', year: 'This year' }
+  const maxRate = byItem && byItem.length > 0 ? Math.max(...byItem.map(i => i.avgRate)) : 1
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4" onClick={onClose}>
-      <div className="w-full max-w-lg bg-white rounded-2xl shadow-xl p-6" onClick={e => e.stopPropagation()}>
+      <div className="w-full max-w-lg bg-white rounded-2xl shadow-xl p-6 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
         {/* Header */}
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">
@@ -187,7 +188,7 @@ function RateDetailModal({ title, icon, unit, avg, trend, color, period, onClose
         {/* Average pill */}
         {avg != null && (
           <div className="flex items-center gap-3 mb-5 p-3 rounded-xl" style={{ background: color + '12' }}>
-            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Average Rate</p>
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Overall Average</p>
             <p className="text-2xl font-bold ml-auto" style={{ color }}>
               ₹{Number(avg).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
               <span className="text-sm font-normal text-gray-400 ml-1">{unit}</span>
@@ -195,9 +196,37 @@ function RateDetailModal({ title, icon, unit, avg, trend, color, period, onClose
           </div>
         )}
 
+        {/* Per-item breakdown */}
+        {byItem && byItem.length > 0 && (
+          <>
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">By Item</p>
+            <div className="space-y-2 mb-5">
+              {byItem.map(item => (
+                <div key={item.name} className="flex items-center gap-3">
+                  <p className="text-sm font-medium text-gray-700 w-36 shrink-0 truncate" title={item.name}>
+                    {item.name}
+                  </p>
+                  <div className="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden">
+                    <div
+                      className="h-full rounded-full transition-all"
+                      style={{ width: `${(item.avgRate / maxRate) * 100}%`, background: color }}
+                    />
+                  </div>
+                  <p className="text-sm font-bold shrink-0 w-20 text-right" style={{ color }}>
+                    ₹{Number(item.avgRate).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                  </p>
+                  <p className="text-xs text-gray-400 shrink-0 w-16 text-right">
+                    {item.count} buy{item.count > 1 ? 's' : ''}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+
         {/* Trend label */}
         <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
-          Rate trend
+          Overall trend
         </p>
 
         {/* Chart */}
@@ -525,7 +554,7 @@ export default function Dashboard() {
           .gte('date', start).lte('date', end)
           .order('date'),
         supabase.from('procurement')
-          .select('date, cost, quantity')
+          .select('date, cost, quantity, item_name')
           .eq('organization_id', organization.id)
           .eq('type', 'feed')
           .gt('quantity', 0)
@@ -569,7 +598,20 @@ export default function Dashboard() {
         ratesPeriod
       )
 
-      setRatesData({ avgChick, avgFeed, avgKg, chickTrend, feedTrend, kgTrend, chickRows, feedRows, kgRows })
+      // Per-item breakdown for feed
+      const feedItemMap = {}
+      for (const r of feedRows) {
+        const name = r.item_name || 'Unknown'
+        if (!feedItemMap[name]) feedItemMap[name] = { cost: 0, qty: 0, count: 0 }
+        feedItemMap[name].cost  += Number(r.cost)
+        feedItemMap[name].qty   += Number(r.quantity)
+        feedItemMap[name].count += 1
+      }
+      const feedByItem = Object.entries(feedItemMap)
+        .map(([name, { cost, qty, count }]) => ({ name, avgRate: qty > 0 ? cost / qty : 0, count }))
+        .sort((a, b) => b.avgRate - a.avgRate)
+
+      setRatesData({ avgChick, avgFeed, avgKg, chickTrend, feedTrend, kgTrend, chickRows, feedRows, kgRows, feedByItem })
       setRatesLoading(false)
     }
     fetchRates()
@@ -828,6 +870,7 @@ export default function Dashboard() {
           trend={ratesData.feedTrend}
           color="#10b981"
           period={ratesPeriod}
+          byItem={ratesData.feedByItem}
           onClose={() => setRateModal(null)}
         />
       )}
