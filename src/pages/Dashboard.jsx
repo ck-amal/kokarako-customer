@@ -360,6 +360,7 @@ export default function Dashboard() {
         { data: gfLedger },
         { data: farms },
         { data: fixedAssetRows },
+        { data: supplierOpenings },
       ] = await Promise.all([
         // Active batches (for count, chick total, table)
         supabase
@@ -467,13 +468,22 @@ export default function Dashboard() {
           .from('fixed_assets')
           .select('purchase_value')
           .eq('organization_id', organization?.id),
+
+        // Supplier opening balances
+        supabase
+          .from('suppliers')
+          .select('opening_balance')
+          .eq('organization_id', organization?.id)
+          .eq('is_active', true),
       ])
 
       const monthRevenue  = (monthSales || []).reduce((s, r) => s + Number(r.total_amount || 0), 0)
       const totalOutstanding = (vendorBals || [])
         .reduce((s, v) => s + Math.max(0, Number(v.outstanding_balance)), 0)
       const totalChicks = (batches || []).reduce((s, b) => s + Number(b.chick_count), 0)
+      const supplierOpeningTotal = (supplierOpenings || []).reduce((s, r) => s + Number(r.opening_balance || 0), 0)
       const supplierDues = Math.max(0,
+        supplierOpeningTotal +
         (supplierProcs || []).reduce((s, r) => s + Number(r.cost), 0) -
         (supplierPays  || []).reduce((s, r) => s + Number(r.amount), 0)
       )
