@@ -1287,7 +1287,7 @@ ${sale.notes ? `<div class="notes"><strong>Notes</strong>${sale.notes}</div>` : 
                     setEditLotAllocs({})
                     setEditLotsLoading(true)
                     setEditModal(true)
-                    const lots = await getProcurementLots({ itemName: 'Chicks', organizationId: organization?.id })
+                    const lots = await getProcurementLots({ itemTypeName: 'Chick', organizationId: organization?.id })
                     const currentAllocMap = {}
                     for (const p of chickPurchases) {
                       if (p.procurement_id) currentAllocMap[p.procurement_id] = Number(p.quantity)

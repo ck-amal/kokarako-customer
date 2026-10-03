@@ -190,7 +190,7 @@ export default function PLReport() {
       })(),
       // Procurement (chicks only for COGS)
       (() => {
-        let q = supabase.from('procurement').select('id, item_name, cost, date, type').eq('organization_id', organization?.id).eq('type', 'chicks').gte('date', start).lte('date', end)
+        let q = supabase.from('procurement').select('id, item_name, cost, date, type').eq('organization_id', organization?.id).in('type', ['chick', 'chicks']).gte('date', start).lte('date', end)
         return q
       })(),
       // Farm expenses (distributions)

@@ -568,7 +568,7 @@ export default function Dashboard() {
         supabase.from('procurement')
           .select('date, cost, quantity')
           .eq('organization_id', organization.id)
-          .eq('type', 'chicks')
+          .in('type', ['chick', 'chicks'])
           .gt('quantity', 0)
           .gte('date', start).lte('date', end)
           .order('date'),
