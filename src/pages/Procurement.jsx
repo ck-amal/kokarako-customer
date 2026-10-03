@@ -220,13 +220,15 @@ function ProcurementModal({ onClose, onSaved }) {
   async function handleSupplierChange(supplierId) {
     setHeader(h => ({ ...h, supplier_id: supplierId }))
     if (!supplierId) { setSupplierOutstanding(null); return }
-    const [{ data: procs }, { data: pays }] = await Promise.all([
+    const [{ data: sup }, { data: procs }, { data: pays }] = await Promise.all([
+      supabase.from('suppliers').select('opening_balance').eq('id', supplierId).eq('organization_id', organization?.id).single(),
       supabase.from('procurement').select('cost').eq('supplier_id', supplierId),
       supabase.from('supplier_payments').select('amount').eq('supplier_id', supplierId),
     ])
-    const totalCost = (procs || []).reduce((s, r) => s + Number(r.cost), 0)
-    const totalPaid = (pays  || []).reduce((s, r) => s + Number(r.amount), 0)
-    setSupplierOutstanding(Math.max(0, totalCost - totalPaid))
+    const openingBal = Number(sup?.opening_balance || 0)
+    const totalCost  = (procs || []).reduce((s, r) => s + Number(r.cost), 0)
+    const totalPaid  = (pays  || []).reduce((s, r) => s + Number(r.amount), 0)
+    setSupplierOutstanding(Math.max(0, openingBal + totalCost - totalPaid))
   }
 
   const grandTotal = lines.reduce((s, ln) => s + (parseFloat(ln.cost) || 0), 0)
