@@ -58,7 +58,7 @@ function SalesTab({ sales }) {
               {filtered.map(s => (
                 <tr key={s.id} className="hover:bg-amber-50/30 transition">
                   <td className="px-5 py-3.5 text-gray-500 whitespace-nowrap">
-                    {formatDate(s.sale_date, i18n.language)}
+                    {formatDate(s.date, i18n.language)}
                   </td>
                   <td className="px-5 py-3.5">
                     <p className="font-medium text-gray-800">
@@ -198,7 +198,7 @@ function LedgerTab({ sales, collections, openingBalance }) {
     .filter(s => s.status === 'confirmed')
     .forEach(s => entries.push({
       id:     s.id,
-      date:   s.sale_date,
+      date:   s.date,
       type:   'sale',
       label:  s.item_name || (s.sale_type === 'chicken' ? 'Chicken Sale' : 'Goods Sale'),
       sub:    s.batch_name || '',
@@ -300,10 +300,10 @@ export default function VendorDetail() {
       supabase.from('vendors').select('*').eq('organization_id', organization.id).eq('id', id).single(),
       supabase
         .from('sales')
-        .select('id, sale_date, sale_type, total_amount, final_amount, chicken_count, status, item_id, batch_id, items(name), batches(name)')
+        .select('id, date, sale_type, total_amount, final_amount, chicken_count, status, item_id, batch_id, items(name), batches(name)')
         .eq('organization_id', organization.id)
         .eq('vendor_id', id)
-        .order('sale_date', { ascending: false }),
+        .order('date', { ascending: false }),
       supabase
         .from('cash_collection')
         .select('id, amount_paid, method, status, notes, created_at, collected_by_name')
