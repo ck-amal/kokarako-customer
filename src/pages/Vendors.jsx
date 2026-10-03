@@ -224,6 +224,7 @@ export default function Vendors() {
   const { currentStep, stepDone } = useOnboarding()
   const [vendors, setVendors]       = useState([])
   const [loading, setLoading]       = useState(true)
+  const [search, setSearch]         = useState('')
   const [modal, setModal]           = useState(null) // null | { mode: 'add'|'edit'|'delete', vendor? }
 
   async function fetchVendors() {
@@ -268,7 +269,7 @@ export default function Vendors() {
   return (
     <div>
       {/* Header */}
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between mb-4">
         <div>
           <h1 className="text-2xl font-bold text-gray-800">{t('vendors.title')}</h1>
           <p className="text-sm text-gray-500 mt-0.5">Manage your buyers</p>
@@ -282,6 +283,17 @@ export default function Vendors() {
             <span className="text-base leading-none">+</span> {t('vendors.addVendor')}
           </button>
         )}
+      </div>
+
+      {/* Search */}
+      <div className="mb-4">
+        <input
+          type="text"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          placeholder="Search vendors…"
+          className="w-full max-w-sm rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
+        />
       </div>
 
       {/* Table */}
@@ -309,7 +321,7 @@ export default function Vendors() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
-              {vendors.map(v => {
+              {vendors.filter(v => v.name.toLowerCase().includes(search.toLowerCase())).map(v => {
                 const isCredit = v.outstanding < 0
                 return (
                 <tr key={v.id} className="hover:bg-amber-50/40 transition cursor-pointer" onClick={() => navigate(`/vendors/${v.id}`)}>
