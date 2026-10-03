@@ -3,7 +3,7 @@ import { useParams, Link, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { supabase } from '../lib/supabaseClient'
 import { formatCurrency, roundCurrency } from '../utils/format'
-import { getProcurementLots } from '../lib/stockLedger'
+import { getProcurementLots, ledgerOut } from '../lib/stockLedger'
 import StockReturnModal from '../components/StockReturnModal'
 import EditDistributionModal from '../components/EditDistributionModal'
 import DistributionModal from '../components/DistributionModal'
@@ -612,14 +612,32 @@ ${sale.notes ? `<div class="notes"><strong>Notes</strong>${sale.notes}</div>` : 
       })
     }
 
-    // 3. If total count changed, sync stock_ledger and stock
-    if (qtyDiff !== 0) {
-      await supabase.from('stock_ledger')
-        .update({ quantity: newCount })
-        .eq('reference_type', 'batch')
-        .eq('reference_id', batchId)
-        .eq('organization_id', organization?.id)
+    // 3. Always rewrite stock_ledger chick entries from new lot allocation
+    //    (handles both count changes and lot re-allocation)
+    await supabase.from('stock_ledger')
+      .delete()
+      .eq('reference_type', 'batch')
+      .eq('reference_id', batchId)
+      .eq('item_type', 'chick')
+      .eq('organization_id', organization?.id)
 
+    const lotMapForLedger = Object.fromEntries(editChickLots.map(l => [l.id, l]))
+    const brandQty = {}
+    for (const { procId, qty } of allocRows) {
+      const itemName = lotMapForLedger[procId]?.itemName || 'Chicks'
+      brandQty[itemName] = (brandQty[itemName] || 0) + qty
+    }
+    for (const [name, qty] of Object.entries(brandQty)) {
+      await ledgerOut({
+        itemName: name, itemType: 'chick',
+        quantity: qty, unit: 'birds',
+        referenceType: 'batch', referenceId: batchId,
+        date: batch.start_date, organizationId: organization?.id,
+      })
+    }
+
+    // Legacy stock table adjustment (only if count changed)
+    if (qtyDiff !== 0) {
       const { data: stockRow } = await supabase.from('stock')
         .select('id, quantity')
         .ilike('item_name', 'chicks')
