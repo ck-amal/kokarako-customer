@@ -468,7 +468,7 @@ ${sale.notes ? `<div class="notes"><strong>Notes</strong>${sale.notes}</div>` : 
       supabase.from('distributions').select('*, procurement:procurement_id(id, invoice_number, date), created_by_name, created_at, updated_by_name, updated_at').eq('batch_id', batchId).eq('organization_id', organization?.id).order('date', { ascending: true }),
       supabase.from('sales').select('*, vendors(name), created_by_name, created_at, updated_by_name, updated_at, confirmed_by_name, confirmed_at').eq('batch_id', batchId).eq('organization_id', organization?.id).order('date', { ascending: true }),
       supabase.from('farm_expenses').select('*').eq('batch_id', batchId).eq('organization_id', organization?.id),
-      supabase.from('batch_chick_purchases').select('id, quantity, price_per_chick, total_cost, source, notes, procurement_id, procurement:procurement_id(id, invoice_number, date)').eq('batch_id', batchId).eq('organization_id', organization?.id).order('created_at'),
+      supabase.from('batch_chick_purchases').select('id, quantity, price_per_chick, ancillary_per_chick, total_cost, source, notes, procurement_id, procurement:procurement_id(id, invoice_number, date)').eq('batch_id', batchId).eq('organization_id', organization?.id).order('created_at'),
       supabase.from('vendors').select('id, name').eq('organization_id', organization?.id).order('name'),
     ])
     setFarm(farmData)
@@ -570,7 +570,7 @@ ${sale.notes ? `<div class="notes"><strong>Notes</strong>${sale.notes}</div>` : 
         .filter(([, qty]) => Number(qty) > 0)
         .map(([procId, qty]) => {
           const lot = editChickLots.find(l => l.id === procId)
-          return { procId, qty: Number(qty), cpu: (lot?.costPerUnit ?? 0) + (ancillaryMap[procId] ?? 0) }
+          return { procId, qty: Number(qty), base: lot?.costPerUnit ?? 0, ancillary: ancillaryMap[procId] ?? 0 }
         })
       const allocTotal = allocRows.reduce((s, r) => s + r.qty, 0)
       if (Math.abs(allocTotal - newCount) > 0.5) {
@@ -583,7 +583,7 @@ ${sale.notes ? `<div class="notes"><strong>Notes</strong>${sale.notes}</div>` : 
       const lot = editChickLots[0]
       const procId = firstPurchase?.procurement_id || lot?.id || null
       const baseCpu = lot?.costPerUnit ?? Number(firstPurchase?.price_per_chick || 0)
-      allocRows = [{ procId, qty: newCount, cpu: baseCpu + (ancillaryMap[procId] ?? 0) }]
+      allocRows = [{ procId, qty: newCount, base: baseCpu, ancillary: ancillaryMap[procId] ?? 0 }]
     }
 
     // 1. Update batch row
@@ -599,15 +599,16 @@ ${sale.notes ? `<div class="notes"><strong>Notes</strong>${sale.notes}</div>` : 
     // 2. Replace batch_chick_purchases
     await supabase.from('batch_chick_purchases')
       .delete().eq('batch_id', batchId).eq('organization_id', organization?.id)
-    for (const { procId, qty, cpu } of allocRows) {
+    for (const { procId, qty, base, ancillary } of allocRows) {
       await supabase.from('batch_chick_purchases').insert({
-        organization_id: organization?.id,
-        batch_id:        batchId,
-        quantity:        qty,
-        price_per_chick: roundCurrency(cpu),
-        total_cost:      roundCurrency(qty * cpu),
-        source:          'stock',
-        procurement_id:  procId,
+        organization_id:     organization?.id,
+        batch_id:            batchId,
+        quantity:            qty,
+        price_per_chick:     roundCurrency(base),
+        ancillary_per_chick: roundCurrency(ancillary),
+        total_cost:          roundCurrency(qty * base),
+        source:              'stock',
+        procurement_id:      procId,
       })
     }
 
@@ -992,11 +993,12 @@ ${sale.notes ? `<div class="notes"><strong>Notes</strong>${sale.notes}</div>` : 
   const feedAncillaryCost = roundCurrency(expenses.filter(e => e.item_type === 'feed').reduce((s, e) => s + Number(e.extra_total_cost || 0), 0))
   const medAncillaryCost  = roundCurrency(expenses.filter(e => e.item_type === 'medicine').reduce((s, e) => s + Number(e.extra_total_cost || 0), 0))
 
-  const chickCost = roundCurrency(chickPurchases.reduce((s, p) => s + Number(p.total_cost || 0), 0))
+  const chickCost      = roundCurrency(chickPurchases.reduce((s, p) => s + Number(p.total_cost || 0), 0))
+  const ancillaryProfit = roundCurrency(chickPurchases.reduce((s, p) => s + Number(p.ancillary_per_chick || 0) * Number(p.quantity || 0), 0))
 
   const growingFee    = (!isActive && batch.growing_fee_total != null) ? Number(batch.growing_fee_total) : 0
   const totalExpenses = chickCost + feedCost + medCost + growingFee + feedAncillaryCost + medAncillaryCost
-  const profit        = revenue - totalExpenses
+  const profit        = revenue + ancillaryProfit - totalExpenses
   const margin        = revenue > 0 ? (profit / revenue) * 100 : 0
 
   // Feed & medicine summaries from distributions
@@ -1153,6 +1155,7 @@ ${sale.notes ? `<div class="notes"><strong>Notes</strong>${sale.notes}</div>` : 
     <colgroup><col style="width:70%"><col style="width:30%"></colgroup>
     <tbody>
       ${plRow('Revenue', fmt(revenue), revenue > 0 ? '#15803d' : '#111', true)}
+      ${ancillaryProfit > 0 ? plRow('Ancillary income (chick markup)', '+' + fmt(ancillaryProfit), '#15803d', false) : ''}
       ${plRow('Chick Cost', '−' + fmt(chickCost), '#dc2626', false)}
       ${chickPurchases.map(p => plRow(`${fmtNum(p.quantity)} birds × ${fmt(p.price_per_chick)}/bird`, '−' + fmt(p.total_cost), '#888', false, true)).join('')}
       ${plRow('Feed Cost', '−' + fmt(feedCost), '#dc2626', false)}
@@ -1298,9 +1301,7 @@ ${sale.notes ? `<div class="notes"><strong>Notes</strong>${sale.notes}</div>` : 
                     for (const p of chickPurchases) {
                       if (p.procurement_id) {
                         currentAllocMap[p.procurement_id] = Number(p.quantity)
-                        // Ancillary = price_per_chick minus the lot's base cost_per_unit
-                        const lot = lots.find(l => l.id === p.procurement_id)
-                        const ancillary = Number(p.price_per_chick) - (lot?.costPerUnit ?? 0)
+                        const ancillary = Number(p.ancillary_per_chick || 0)
                         currentAncillaryMap[p.procurement_id] = ancillary > 0 ? String(ancillary) : ''
                       }
                     }
@@ -1431,6 +1432,7 @@ ${sale.notes ? `<div class="notes"><strong>Notes</strong>${sale.notes}</div>` : 
 
             const rows = [
               { label: t('batches.revenue'),       value: formatCurrency(revenue),                                     color: '#15803d', bold: false },
+              ...(ancillaryProfit > 0 ? [{ label: 'Ancillary income (chick markup)', value: formatCurrency(ancillaryProfit), color: '#15803d', bold: false }] : []),
               { label: t('batches.chickCost'),     value: formatCurrency(chickCost),                                   color: '#dc2626', bold: false, breakdown: chickPurchases,  breakdownType: 'chick' },
               { label: t('batches.feedCost'),      value: formatCurrency(feedCost),                                    color: '#dc2626', bold: false, breakdown: feedExpenses,     breakdownType: 'expense' },
               ...(feedAncillaryCost > 0 ? [{ label: 'Feed ancillary (transport/labour)', value: formatCurrency(feedAncillaryCost), color: '#ea580c', bold: false, breakdown: feedAncExp, breakdownType: 'ancillary' }] : []),

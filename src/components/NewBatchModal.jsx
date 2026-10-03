@@ -137,24 +137,27 @@ export default function NewBatchModal({ farmId, farms = [], initialFarmId, onClo
     const allocRows = multiLot
       ? Object.entries(lotAllocs).filter(([, qty]) => Number(qty) > 0).map(([id, qty]) => ({
           procId: id, qty: Number(qty),
-          cpu: (lotCostMap[id] ?? 0) + (lotAncillaryMap[id] ?? 0),
+          base:      lotCostMap[id] ?? 0,
+          ancillary: lotAncillaryMap[id] ?? 0,
         }))
       : [{
-          procId: chickLots[0]?.id || null, qty: chickCount,
-          cpu: (chickLots[0]?.costPerUnit ?? 0) + (lotAncillaryMap[chickLots[0]?.id] ?? 0),
+          procId:    chickLots[0]?.id || null, qty: chickCount,
+          base:      chickLots[0]?.costPerUnit ?? 0,
+          ancillary: lotAncillaryMap[chickLots[0]?.id] ?? 0,
         }]
 
-    // Insert one batch_chick_purchases row per lot (price_per_chick includes ancillary)
-    for (const { procId, qty, cpu } of allocRows) {
+    // Insert one batch_chick_purchases row per lot (price_per_chick = base cost, ancillary_per_chick = markup)
+    for (const { procId, qty, base, ancillary } of allocRows) {
       const { error: cpErr } = await supabase.from('batch_chick_purchases').insert({
-        organization_id: organization?.id,
-        batch_id:        inserted.id,
-        quantity:        qty,
-        price_per_chick: roundCurrency(cpu),
-        total_cost:      roundCurrency(qty * cpu),
-        source:          'stock',
-        procurement_id:  procId,
-        notes:           procId ? null : 'Drawn from existing stock',
+        organization_id:     organization?.id,
+        batch_id:            inserted.id,
+        quantity:            qty,
+        price_per_chick:     roundCurrency(base),
+        ancillary_per_chick: roundCurrency(ancillary),
+        total_cost:          roundCurrency(qty * base),
+        source:              'stock',
+        procurement_id:      procId,
+        notes:               procId ? null : 'Drawn from existing stock',
       })
       if (cpErr) console.error('batch_chick_purchases insert failed:', cpErr.message)
     }

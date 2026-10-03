@@ -133,14 +133,15 @@ export default function PLReport() {
   const [batchFilter, setBatchFilter] = useState('')
 
   // Raw data
-  const [sales,           setSales]           = useState([])
-  const [goodsSales,      setGoodsSales]      = useState([])
-  const [procurement,     setProcurement]     = useState([])
-  const [farmExp,         setFarmExp]         = useState([])
-  const [farmExpReturns,  setFarmExpReturns]  = useState([])
-  const [expenses,        setExpenses]        = useState([])
-  const [fcrBatches,      setFcrBatches]      = useState([])
-  const [growingFeeLedger,setGrowingFeeLedger]= useState([]) // full accrual — total_fee per closed batch
+  const [sales,             setSales]             = useState([])
+  const [goodsSales,        setGoodsSales]        = useState([])
+  const [procurement,       setProcurement]       = useState([])
+  const [farmExp,           setFarmExp]           = useState([])
+  const [farmExpReturns,    setFarmExpReturns]    = useState([])
+  const [expenses,          setExpenses]          = useState([])
+  const [fcrBatches,        setFcrBatches]        = useState([])
+  const [growingFeeLedger,  setGrowingFeeLedger]  = useState([]) // full accrual — total_fee per closed batch
+  const [chickPurchasesData,setChickPurchasesData]= useState([]) // for ancillary profit
 
   // Expanded rows
   const [expanded,    setExpanded]    = useState({})
@@ -252,6 +253,18 @@ export default function PLReport() {
       .gte('date', start)
       .lte('date', end)
 
+    // Fetch batch_chick_purchases for batches started in the period (for ancillary profit)
+    const { data: startedBatches } = await supabase
+      .from('batches').select('id').eq('organization_id', organization?.id).gte('start_date', start).lte('start_date', end)
+    let cpData = []
+    if ((startedBatches || []).length > 0) {
+      const sids = startedBatches.map(b => b.id)
+      const { data: cpRows } = await supabase
+        .from('batch_chick_purchases').select('quantity, ancillary_per_chick')
+        .eq('organization_id', organization?.id).in('batch_id', sids)
+      cpData = cpRows || []
+    }
+
     setSales(s || [])
     setGoodsSales(goodsSalesData || [])
     setProcurement(p || [])
@@ -260,14 +273,16 @@ export default function PLReport() {
     setExpenses(ex || [])
     setGrowingFeeLedger(gfLedger)
     setFcrBatches(fcrData || [])
+    setChickPurchasesData(cpData)
     setLoading(false)
   }
 
   // ─── Compute P&L ────────────────────────────────────────────────────────────
 
-  const revenue      = useMemo(() => sales.reduce((s, r) => s + Number(r.total_amount), 0), [sales])
-  const goodsRevenue = useMemo(() => goodsSales.reduce((s, r) => s + Number(r.total_amount), 0), [goodsSales])
-  const totalRevenue = revenue + goodsRevenue
+  const revenue        = useMemo(() => sales.reduce((s, r) => s + Number(r.total_amount), 0), [sales])
+  const goodsRevenue   = useMemo(() => goodsSales.reduce((s, r) => s + Number(r.total_amount), 0), [goodsSales])
+  const ancillaryProfit= useMemo(() => chickPurchasesData.reduce((s, p) => s + Number(p.ancillary_per_chick || 0) * Number(p.quantity || 0), 0), [chickPurchasesData])
+  const totalRevenue   = revenue + goodsRevenue + ancillaryProfit
   const goodsCOGS    = useMemo(() => goodsSales.reduce((s, r) => s + Number(r.purchase_cost_per_unit || 0) * Number(r.item_quantity || 0), 0), [goodsSales])
 
   const chickCost   = useMemo(() => procurement.reduce((s, r) => s + Number(r.cost), 0), [procurement])
@@ -397,6 +412,9 @@ export default function PLReport() {
               <PLRow label="Goods Sales" amount={goodsRevenue}
                 detail={goodsSales.map(s => ({ label: `${fmtDate(s.date)} — ${s.items?.name ?? 'Item'} (${s.vendors?.name ?? 'Vendor'})`, amount: s.total_amount }))}
                 onExpand={() => toggleExpanded('goodsSales')} expanded={expanded.goodsSales} />
+            )}
+            {ancillaryProfit > 0 && (
+              <PLRow label="Ancillary income (chick markup)" amount={ancillaryProfit} />
             )}
             <Divider />
             <PLRow label="Total Revenue" amount={totalRevenue} bold />
