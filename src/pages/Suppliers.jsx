@@ -443,7 +443,7 @@ function RecordPaymentModal({ suppliers, initialSupplierId, onClose, onSaved }) 
 
 // ─── Supplier card ────────────────────────────────────────────────────────────
 
-function SupplierCard({ supplier, onEdit, onPayment, onClick, canEdit, canDelete }) {
+function SupplierCard({ supplier, onEdit, onPayment, onDelete, onClick, canEdit, canDelete }) {
   const { t } = useTranslation()
   const { outstanding } = supplier
   const isPaid   = outstanding <= 0
@@ -478,6 +478,14 @@ function SupplierCard({ supplier, onEdit, onPayment, onClick, canEdit, canDelete
           {isCredit ? `Credit ${formatCurrency(Math.abs(outstanding))}` : isPaid ? '✓ Cleared' : formatCurrency(outstanding)}
         </span>
         <div className="flex items-center gap-2 mt-1" onClick={e => e.stopPropagation()}>
+          {canDelete && (
+            <button
+              onClick={onDelete}
+              className="rounded-lg border border-red-200 px-3 py-1 text-xs font-medium text-red-500 hover:bg-red-50 transition"
+            >
+              {t('common.delete')}
+            </button>
+          )}
           {canEdit && (
             <button
               onClick={onEdit}
@@ -513,6 +521,8 @@ export default function Suppliers() {
   const [loading, setLoading]             = useState(true)
   const [addModal, setAddModal]           = useState(false)
   const [editSupplier, setEditSupplier]   = useState(null)
+  const [deleteSupplier, setDeleteSupplier] = useState(null) // supplier to confirm delete
+  const [deleting, setDeleting]           = useState(false)
   const [paySupplier, setPaySupplier]     = useState(null) // supplier id to pre-fill
   const [payModalOpen, setPayModalOpen]   = useState(false)
   const [paidThisMonth, setPaidThisMonth] = useState(0)
@@ -556,6 +566,15 @@ export default function Suppliers() {
   if (!canViewFinancials) return <Navigate to="/dashboard" replace />
 
   const totalOutstanding = suppliers.reduce((s, sup) => s + sup.outstanding, 0)
+
+  async function confirmDelete() {
+    if (!deleteSupplier) return
+    setDeleting(true)
+    await supabase.from('suppliers').update({ is_active: false }).eq('id', deleteSupplier.id).eq('organization_id', organization.id)
+    setDeleteSupplier(null)
+    setDeleting(false)
+    fetchData()
+  }
 
   function openPayment(supplierId) {
     setPaySupplier(supplierId)
@@ -630,6 +649,7 @@ export default function Suppliers() {
               onClick={() => navigate(`/suppliers/${s.id}`)}
               onEdit={e => { e.stopPropagation?.(); setEditSupplier(s) }}
               onPayment={e => { e.stopPropagation?.(); openPayment(s.id) }}
+              onDelete={e => { e.stopPropagation?.(); setDeleteSupplier(s) }}
               canEdit={canEdit}
               canDelete={canDelete}
             />
@@ -658,6 +678,36 @@ export default function Suppliers() {
           onClose={() => { setPayModalOpen(false); setPaySupplier(null) }}
           onSaved={() => { setPayModalOpen(false); setPaySupplier(null); fetchData() }}
         />
+      )}
+
+      {/* Delete confirmation */}
+      {deleteSupplier && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+          <div className="w-full max-w-sm bg-white rounded-2xl shadow-xl p-6">
+            <h2 className="text-base font-semibold text-gray-800 mb-2">Delete Supplier</h2>
+            <p className="text-sm text-gray-600 mb-1">
+              Are you sure you want to delete <strong>{deleteSupplier.name}</strong>?
+            </p>
+            <p className="text-xs text-gray-400 mb-5">
+              The supplier will be removed from the list. Existing procurement and payment records will not be affected.
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setDeleteSupplier(null)}
+                className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmDelete}
+                disabled={deleting}
+                className="flex-1 rounded-lg bg-red-500 hover:bg-red-600 disabled:opacity-60 px-4 py-2 text-sm font-semibold text-white transition"
+              >
+                {deleting ? 'Deleting…' : 'Delete'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )
