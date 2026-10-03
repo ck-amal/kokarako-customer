@@ -36,6 +36,7 @@ export default function NewBatchModal({ farmId, farms = [], initialFarmId, onClo
   const [liveChicks,    setLiveChicks]    = useState(0)
   const [chickLots,     setChickLots]     = useState([])  // procurement lots with remaining > 0
   const [lotAllocs,     setLotAllocs]     = useState({})  // { [procId]: number }
+  const [lotAncillary,  setLotAncillary]  = useState({})  // { [procId]: string } editable ancillary ₹/bird
   const [saving,        setSaving]        = useState(false)
   const [error,         setError]         = useState('')
 
@@ -59,7 +60,12 @@ export default function NewBatchModal({ farmId, farms = [], initialFarmId, onClo
 
       // Fetch chick procurement lots across all chick item brands
       const lots = await getProcurementLots({ itemTypeName: 'Chick', organizationId: organization?.id })
-      setChickLots(lots.filter(l => l.remaining > 0))
+      const available = lots.filter(l => l.remaining > 0)
+      setChickLots(available)
+      // Pre-fill ancillary from procurement's extra_expense_per_unit
+      const ancillary = {}
+      for (const l of available) ancillary[l.id] = l.extraExpensePerUnit > 0 ? String(l.extraExpensePerUnit) : ''
+      setLotAncillary(ancillary)
     }
     load()
   }, [farmId])
@@ -125,13 +131,20 @@ export default function NewBatchModal({ farmId, farms = [], initialFarmId, onClo
 
     if (batchErr) { setError(batchErr.message); setSaving(false); return }
 
-    // Build per-lot allocation rows (include each lot's actual cost_per_unit)
-    const lotCostMap = Object.fromEntries(chickLots.map(l => [l.id, l.costPerUnit]))
+    // Build per-lot allocation rows (base cost + ancillary per bird)
+    const lotCostMap      = Object.fromEntries(chickLots.map(l => [l.id, l.costPerUnit]))
+    const lotAncillaryMap = Object.fromEntries(Object.entries(lotAncillary).map(([id, v]) => [id, parseFloat(v) || 0]))
     const allocRows = multiLot
-      ? Object.entries(lotAllocs).filter(([, qty]) => Number(qty) > 0).map(([id, qty]) => ({ procId: id, qty: Number(qty), cpu: lotCostMap[id] ?? 0 }))
-      : [{ procId: chickLots[0]?.id || null, qty: chickCount, cpu: chickLots[0]?.costPerUnit ?? 0 }]
+      ? Object.entries(lotAllocs).filter(([, qty]) => Number(qty) > 0).map(([id, qty]) => ({
+          procId: id, qty: Number(qty),
+          cpu: (lotCostMap[id] ?? 0) + (lotAncillaryMap[id] ?? 0),
+        }))
+      : [{
+          procId: chickLots[0]?.id || null, qty: chickCount,
+          cpu: (chickLots[0]?.costPerUnit ?? 0) + (lotAncillaryMap[chickLots[0]?.id] ?? 0),
+        }]
 
-    // Insert one batch_chick_purchases row per lot using that lot's actual cost_per_unit
+    // Insert one batch_chick_purchases row per lot (price_per_chick includes ancillary)
     for (const { procId, qty, cpu } of allocRows) {
       const { error: cpErr } = await supabase.from('batch_chick_purchases').insert({
         organization_id: organization?.id,
@@ -248,25 +261,37 @@ export default function NewBatchModal({ farmId, farms = [], initialFarmId, onClo
             <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-3 space-y-2.5">
               <p className="text-xs font-semibold text-indigo-700">Allocate chicks from procurement lots (FIFO pre-filled):</p>
               {chickLots.map(lot => (
-                <div key={lot.id} className="flex items-center gap-2">
-                  <div className="flex-1 min-w-0">
-                    <p className="text-xs font-medium text-gray-700 truncate">
-                      {lot.itemName && <span className="text-indigo-600">{lot.itemName} · </span>}
-                      {formatDate(lot.date, i18n.language)}
-                      {lot.supplier && ` — ${lot.supplier}`}
-                    </p>
-                    <p className="text-xs text-gray-400">
-                      {lot.invoice && `${lot.invoice} · `}{fmtQty(lot.remaining)} birds available
-                    </p>
+                <div key={lot.id} className="space-y-1.5">
+                  <div className="flex items-center gap-2">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-medium text-gray-700 truncate">
+                        {lot.itemName && <span className="text-indigo-600">{lot.itemName} · </span>}
+                        {formatDate(lot.date, i18n.language)}
+                        {lot.supplier && ` — ${lot.supplier}`}
+                      </p>
+                      <p className="text-xs text-gray-400">
+                        {lot.invoice && `${lot.invoice} · `}{fmtQty(lot.remaining)} birds · ₹{lot.costPerUnit}/bird
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <input
+                        type="number" min="0" max={lot.remaining} step="1"
+                        value={lotAllocs[lot.id] ?? ''}
+                        onChange={e => setLotAllocs(prev => ({ ...prev, [lot.id]: parseInt(e.target.value) || 0 }))}
+                        className="w-24 rounded-lg border border-gray-300 px-2 py-1.5 text-sm text-right focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                      />
+                      <span className="text-xs text-gray-400 whitespace-nowrap">birds</span>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-1.5 shrink-0">
+                  <div className="flex items-center gap-2 pl-1">
+                    <label className="text-xs text-gray-500 flex-1">Ancillary cost / bird (₹)</label>
                     <input
-                      type="number" min="0" max={lot.remaining} step="1"
-                      value={lotAllocs[lot.id] ?? ''}
-                      onChange={e => setLotAllocs(prev => ({ ...prev, [lot.id]: parseInt(e.target.value) || 0 }))}
+                      type="number" min="0" step="0.01"
+                      value={lotAncillary[lot.id] ?? ''}
+                      onChange={e => setLotAncillary(prev => ({ ...prev, [lot.id]: e.target.value }))}
+                      placeholder="0.00"
                       className="w-24 rounded-lg border border-gray-300 px-2 py-1.5 text-sm text-right focus:outline-none focus:ring-2 focus:ring-indigo-400"
                     />
-                    <span className="text-xs text-gray-400 whitespace-nowrap">birds</span>
                   </div>
                 </div>
               ))}
@@ -277,12 +302,31 @@ export default function NewBatchModal({ farmId, farms = [], initialFarmId, onClo
             </div>
           )}
           {!multiLot && chickLots.length === 1 && chickCount > 0 && !needsPurchase && (
-            <p className="text-xs text-gray-400">
-              Chicks will be drawn from: {formatDate(chickLots[0].date, i18n.language)}
-              {chickLots[0].supplier && ` (${chickLots[0].supplier})`}
-              {chickLots[0].invoice && ` · ${chickLots[0].invoice}`}
-              {' '}— {fmtQty(chickLots[0].remaining)} birds available
-            </p>
+            <div className="rounded-xl border border-gray-200 bg-gray-50 p-3 space-y-2">
+              <p className="text-xs text-gray-500">
+                Chicks from: {chickLots[0].itemName && <span className="font-medium text-indigo-600">{chickLots[0].itemName} · </span>}
+                {formatDate(chickLots[0].date, i18n.language)}
+                {chickLots[0].supplier && ` (${chickLots[0].supplier})`}
+                {chickLots[0].invoice && ` · ${chickLots[0].invoice}`}
+                {' '}— {fmtQty(chickLots[0].remaining)} birds · ₹{chickLots[0].costPerUnit}/bird
+              </p>
+              <div className="flex items-center gap-2">
+                <label className="text-xs text-gray-500 flex-1">Ancillary cost / bird (₹)</label>
+                <input
+                  type="number" min="0" step="0.01"
+                  value={lotAncillary[chickLots[0].id] ?? ''}
+                  onChange={e => setLotAncillary(prev => ({ ...prev, [chickLots[0].id]: e.target.value }))}
+                  placeholder="0.00"
+                  className="w-28 rounded-lg border border-gray-300 px-2 py-1.5 text-sm text-right focus:outline-none focus:ring-2 focus:ring-amber-400"
+                />
+              </div>
+              {(parseFloat(lotAncillary[chickLots[0].id]) > 0) && (
+                <p className="text-xs text-amber-600 font-medium">
+                  Effective cost: ₹{(chickLots[0].costPerUnit + (parseFloat(lotAncillary[chickLots[0].id]) || 0)).toLocaleString('en-IN', { minimumFractionDigits: 2 })} / bird
+                  {chickCount > 0 && ` · Total: ₹${((chickLots[0].costPerUnit + (parseFloat(lotAncillary[chickLots[0].id]) || 0)) * chickCount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`}
+                </p>
+              )}
+            </div>
           )}
 
           {/* Start date */}
