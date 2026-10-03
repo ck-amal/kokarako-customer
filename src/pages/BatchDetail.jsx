@@ -427,6 +427,7 @@ ${sale.notes ? `<div class="notes"><strong>Notes</strong>${sale.notes}</div>` : 
   const [editForm,         setEditForm]         = useState({ chick_count: '', start_date: '' })
   const [editChickLots,    setEditChickLots]    = useState([])
   const [editLotAllocs,    setEditLotAllocs]    = useState({})
+  const [editLotAncillary, setEditLotAncillary] = useState({})
   const [editLotsLoading,  setEditLotsLoading]  = useState(false)
   const [mortalityModal, setMortalityModal] = useState(false)
   const [mortalityVal,   setMortalityVal]   = useState('')
@@ -561,14 +562,15 @@ ${sale.notes ? `<div class="notes"><strong>Notes</strong>${sale.notes}</div>` : 
     const qtyDiff  = newCount - oldCount
     const userName = user?.user_metadata?.full_name || user?.email || 'Unknown'
 
-    // Build new per-lot allocation rows
+    // Build new per-lot allocation rows (base cost + ancillary per bird)
+    const ancillaryMap = Object.fromEntries(Object.entries(editLotAncillary).map(([id, v]) => [id, parseFloat(v) || 0]))
     let allocRows
     if (editChickLots.length > 1) {
       allocRows = Object.entries(editLotAllocs)
         .filter(([, qty]) => Number(qty) > 0)
         .map(([procId, qty]) => {
           const lot = editChickLots.find(l => l.id === procId)
-          return { procId, qty: Number(qty), cpu: lot?.costPerUnit ?? 0 }
+          return { procId, qty: Number(qty), cpu: (lot?.costPerUnit ?? 0) + (ancillaryMap[procId] ?? 0) }
         })
       const allocTotal = allocRows.reduce((s, r) => s + r.qty, 0)
       if (Math.abs(allocTotal - newCount) > 0.5) {
@@ -579,7 +581,9 @@ ${sale.notes ? `<div class="notes"><strong>Notes</strong>${sale.notes}</div>` : 
     } else {
       const firstPurchase = chickPurchases[0]
       const lot = editChickLots[0]
-      allocRows = [{ procId: firstPurchase?.procurement_id || lot?.id || null, qty: newCount, cpu: lot?.costPerUnit ?? Number(firstPurchase?.price_per_chick || 0) }]
+      const procId = firstPurchase?.procurement_id || lot?.id || null
+      const baseCpu = lot?.costPerUnit ?? Number(firstPurchase?.price_per_chick || 0)
+      allocRows = [{ procId, qty: newCount, cpu: baseCpu + (ancillaryMap[procId] ?? 0) }]
     }
 
     // 1. Update batch row
@@ -1285,18 +1289,27 @@ ${sale.notes ? `<div class="notes"><strong>Notes</strong>${sale.notes}</div>` : 
                     setActionError('')
                     setEditChickLots([])
                     setEditLotAllocs({})
+                    setEditLotAncillary({})
                     setEditLotsLoading(true)
                     setEditModal(true)
                     const lots = await getProcurementLots({ itemTypeName: 'Chick', organizationId: organization?.id })
                     const currentAllocMap = {}
+                    const currentAncillaryMap = {}
                     for (const p of chickPurchases) {
-                      if (p.procurement_id) currentAllocMap[p.procurement_id] = Number(p.quantity)
+                      if (p.procurement_id) {
+                        currentAllocMap[p.procurement_id] = Number(p.quantity)
+                        // Ancillary = price_per_chick minus the lot's base cost_per_unit
+                        const lot = lots.find(l => l.id === p.procurement_id)
+                        const ancillary = Number(p.price_per_chick) - (lot?.costPerUnit ?? 0)
+                        currentAncillaryMap[p.procurement_id] = ancillary > 0 ? String(ancillary) : ''
+                      }
                     }
                     const editLots = lots
                       .map(l => ({ ...l, editAvail: l.remaining + (currentAllocMap[l.id] || 0) }))
                       .filter(l => l.editAvail > 0 || currentAllocMap[l.id] > 0)
                     setEditChickLots(editLots)
                     setEditLotAllocs(currentAllocMap)
+                    setEditLotAncillary(currentAncillaryMap)
                     setEditLotsLoading(false)
                   }}
                   style={{ borderColor: '#d1d5db', color: '#374151' }}
@@ -2088,7 +2101,7 @@ ${sale.notes ? `<div class="notes"><strong>Notes</strong>${sale.notes}</div>` : 
               <div className="flex justify-center py-3">
                 <div className="h-5 w-5 rounded-full border-4 border-amber-400 border-t-transparent animate-spin" />
               </div>
-            ) : editChickLots.length > 1 && (
+            ) : editChickLots.length > 1 ? (
               (() => {
                 const newCount   = Number(editForm.chick_count) || 0
                 const allocTotal = Object.values(editLotAllocs).reduce((s, v) => s + Number(v || 0), 0)
@@ -2097,19 +2110,31 @@ ${sale.notes ? `<div class="notes"><strong>Notes</strong>${sale.notes}</div>` : 
                   <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-3 space-y-2.5">
                     <p className="text-xs font-semibold text-indigo-700">Procurement lot allocation:</p>
                     {editChickLots.map(lot => (
-                      <div key={lot.id} className="flex items-center gap-2">
-                        <div className="flex-1 min-w-0">
-                          <p className="text-xs font-medium text-gray-700 truncate">{fmtDate(lot.date)}{lot.supplier ? ` — ${lot.supplier}` : ''}</p>
-                          <p className="text-xs text-gray-400">{lot.invoice ? `${lot.invoice} · ` : ''}{lot.editAvail.toLocaleString('en-IN')} birds available · ₹{lot.costPerUnit}/bird</p>
+                      <div key={lot.id} className="space-y-1.5">
+                        <div className="flex items-center gap-2">
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs font-medium text-gray-700 truncate">{fmtDate(lot.date)}{lot.supplier ? ` — ${lot.supplier}` : ''}</p>
+                            <p className="text-xs text-gray-400">{lot.invoice ? `${lot.invoice} · ` : ''}{lot.editAvail.toLocaleString('en-IN')} birds · ₹{lot.costPerUnit}/bird</p>
+                          </div>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <input
+                              type="number" min="0" max={lot.editAvail} step="1"
+                              value={editLotAllocs[lot.id] ?? ''}
+                              onChange={ev => setEditLotAllocs(prev => ({ ...prev, [lot.id]: parseInt(ev.target.value) || 0 }))}
+                              className="w-24 rounded-lg border border-gray-300 px-2 py-1.5 text-sm text-right focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                            />
+                            <span className="text-xs text-gray-400">birds</span>
+                          </div>
                         </div>
-                        <div className="flex items-center gap-1.5 shrink-0">
+                        <div className="flex items-center gap-2 pl-1">
+                          <label className="text-xs text-gray-500 flex-1">Ancillary cost / bird (₹)</label>
                           <input
-                            type="number" min="0" max={lot.editAvail} step="1"
-                            value={editLotAllocs[lot.id] ?? ''}
-                            onChange={ev => setEditLotAllocs(prev => ({ ...prev, [lot.id]: parseInt(ev.target.value) || 0 }))}
+                            type="number" min="0" step="0.01"
+                            value={editLotAncillary[lot.id] ?? ''}
+                            onChange={ev => setEditLotAncillary(prev => ({ ...prev, [lot.id]: ev.target.value }))}
+                            placeholder="0.00"
                             className="w-24 rounded-lg border border-gray-300 px-2 py-1.5 text-sm text-right focus:outline-none focus:ring-2 focus:ring-indigo-400"
                           />
-                          <span className="text-xs text-gray-400">birds</span>
                         </div>
                       </div>
                     ))}
@@ -2119,6 +2144,30 @@ ${sale.notes ? `<div class="notes"><strong>Notes</strong>${sale.notes}</div>` : 
                   </div>
                 )
               })()
+            ) : editChickLots.length === 1 && (
+              <div className="rounded-xl border border-gray-200 bg-gray-50 p-3 space-y-2">
+                <p className="text-xs text-gray-500">
+                  {editChickLots[0].itemName && <span className="font-medium text-indigo-600">{editChickLots[0].itemName} · </span>}
+                  {fmtDate(editChickLots[0].date)}{editChickLots[0].supplier ? ` (${editChickLots[0].supplier})` : ''}
+                  {editChickLots[0].invoice ? ` · ${editChickLots[0].invoice}` : ''}
+                  {' '}— ₹{editChickLots[0].costPerUnit}/bird
+                </p>
+                <div className="flex items-center gap-2">
+                  <label className="text-xs text-gray-500 flex-1">Ancillary cost / bird (₹)</label>
+                  <input
+                    type="number" min="0" step="0.01"
+                    value={editLotAncillary[editChickLots[0].id] ?? ''}
+                    onChange={e => setEditLotAncillary(prev => ({ ...prev, [editChickLots[0].id]: e.target.value }))}
+                    placeholder="0.00"
+                    className="w-28 rounded-lg border border-gray-300 px-2 py-1.5 text-sm text-right focus:outline-none focus:ring-2 focus:ring-amber-400"
+                  />
+                </div>
+                {parseFloat(editLotAncillary[editChickLots[0].id]) > 0 && (
+                  <p className="text-xs text-amber-600 font-medium">
+                    Effective: ₹{(editChickLots[0].costPerUnit + (parseFloat(editLotAncillary[editChickLots[0].id]) || 0)).toLocaleString('en-IN', { minimumFractionDigits: 2 })} / bird
+                  </p>
+                )}
+              </div>
             )}
 
             <div className="flex gap-3 pt-1">
