@@ -7,7 +7,7 @@ import { roundCurrency } from '../utils/format'
 export async function ledgerIn({ itemName, itemType, quantity, unit, referenceType, referenceId, date, organizationId }) {
   return supabase.from('stock_ledger').insert({
     item_name:       itemName,
-    item_type:       itemType,
+    item_type:       (itemType || '').toLowerCase(),
     change_type:     'in',
     quantity:        Number(quantity),
     unit,
@@ -24,7 +24,7 @@ export async function ledgerIn({ itemName, itemType, quantity, unit, referenceTy
 export async function ledgerOut({ itemName, itemType, quantity, unit, referenceType, referenceId, date, organizationId }) {
   return supabase.from('stock_ledger').insert({
     item_name:       itemName,
-    item_type:       itemType,
+    item_type:       (itemType || '').toLowerCase(),
     change_type:     'out',
     quantity:        Number(quantity),
     unit,
@@ -42,7 +42,7 @@ export async function getChickBalance(organizationId) {
   const { data } = await supabase
     .from('stock_ledger')
     .select('change_type, quantity')
-    .in('item_type', ['chick', 'chicks'])
+    .ilike('item_type', 'chick%')
     .eq('organization_id', organizationId)
 
   return (data || []).reduce((bal, row) => {
@@ -112,19 +112,32 @@ export async function getAverageCostPerUnit(itemName, { batchId, startDate, orga
  *
  * Each lot: { id, date, supplier, invoice, procured, unit, consumed, remaining }
  */
-export async function getProcurementLots({ itemId, itemName, organizationId }) {
+export async function getProcurementLots({ itemId, itemName, itemTypeName, organizationId }) {
   if (!organizationId) return []
 
   let query = supabase
     .from('procurement')
-    .select('id, date, quantity, unit, cost_per_unit, invoice_number, suppliers(name), has_extra_expense, extra_expense_per_unit')
+    .select('id, date, quantity, unit, cost_per_unit, item_name, invoice_number, suppliers(name), has_extra_expense, extra_expense_per_unit')
     .eq('organization_id', organizationId)
     .eq('is_return', false)
     .order('date', { ascending: true })
 
-  if (itemId)        query = query.eq('item_id', itemId)
-  else if (itemName) query = query.ilike('item_name', itemName)
-  else               return []
+  if (itemId) {
+    query = query.eq('item_id', itemId)
+  } else if (itemName) {
+    query = query.ilike('item_name', itemName)
+  } else if (itemTypeName) {
+    // Resolve all item_type IDs matching the type name, then get item IDs for this org
+    const { data: types } = await supabase.from('item_types').select('id').ilike('name', itemTypeName)
+    const typeIds = (types || []).map(t => t.id)
+    if (!typeIds.length) return []
+    const { data: typeItems } = await supabase.from('items').select('id').eq('organization_id', organizationId).in('item_type_id', typeIds)
+    const itemIds = (typeItems || []).map(i => i.id)
+    if (!itemIds.length) return []
+    query = query.in('item_id', itemIds)
+  } else {
+    return []
+  }
 
   const { data: procs } = await query
   if (!procs?.length) return []
@@ -150,6 +163,7 @@ export async function getProcurementLots({ itemId, itemName, organizationId }) {
     const procured  = Number(p.quantity)
     return {
       id:                  p.id,
+      itemName:            p.item_name || null,
       date:                p.date,
       supplier:            p.suppliers?.name || null,
       invoice:             p.invoice_number || null,

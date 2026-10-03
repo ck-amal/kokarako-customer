@@ -57,8 +57,8 @@ export default function NewBatchModal({ farmId, farms = [], initialFarmId, onClo
         ))
       }
 
-      // Fetch chick procurement lots
-      const lots = await getProcurementLots({ itemName: 'Chicks', organizationId: organization?.id })
+      // Fetch chick procurement lots across all chick item brands
+      const lots = await getProcurementLots({ itemTypeName: 'Chick', organizationId: organization?.id })
       setChickLots(lots.filter(l => l.remaining > 0))
     }
     load()
@@ -146,13 +146,21 @@ export default function NewBatchModal({ farmId, farms = [], initialFarmId, onClo
       if (cpErr) console.error('batch_chick_purchases insert failed:', cpErr.message)
     }
 
-    // Deduct from stock ledger (total)
-    await ledgerOut({
-      itemName: 'Chicks', itemType: 'chicks',
-      quantity: chickCount, unit: 'birds',
-      referenceType: 'batch', referenceId: inserted.id,
-      date: form.start_date, organizationId: organization?.id,
-    })
+    // Deduct from stock ledger — one entry per chick item brand from the allocated lots
+    const lotMap = Object.fromEntries(chickLots.map(l => [l.id, l]))
+    const brandQty = {}
+    for (const { procId, qty } of allocRows) {
+      const lotItemName = lotMap[procId]?.itemName || 'Chicks'
+      brandQty[lotItemName] = (brandQty[lotItemName] || 0) + qty
+    }
+    for (const [name, qty] of Object.entries(brandQty)) {
+      await ledgerOut({
+        itemName: name, itemType: 'chick',
+        quantity: qty, unit: 'birds',
+        referenceType: 'batch', referenceId: inserted.id,
+        date: form.start_date, organizationId: organization?.id,
+      })
+    }
 
     onSaved()
   }
@@ -243,6 +251,7 @@ export default function NewBatchModal({ farmId, farms = [], initialFarmId, onClo
                 <div key={lot.id} className="flex items-center gap-2">
                   <div className="flex-1 min-w-0">
                     <p className="text-xs font-medium text-gray-700 truncate">
+                      {lot.itemName && <span className="text-indigo-600">{lot.itemName} · </span>}
                       {formatDate(lot.date, i18n.language)}
                       {lot.supplier && ` — ${lot.supplier}`}
                     </p>
