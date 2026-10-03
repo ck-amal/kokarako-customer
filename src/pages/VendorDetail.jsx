@@ -6,6 +6,7 @@ import { formatCurrency } from '../utils/format'
 import { formatDate } from '../utils/dateFormat'
 import { useAuth } from '../contexts/AuthContext'
 import AuditInfo from '../components/AuditInfo'
+import { SaleTypePicker, ChickenSaleModal, GoodsSaleModal } from '../components/SaleModals'
 
 // ─── Sales Tab ────────────────────────────────────────────────────────────────
 
@@ -285,7 +286,7 @@ function LedgerTab({ sales, collections, openingBalance }) {
 export default function VendorDetail() {
   const { id }   = useParams()
   const navigate = useNavigate()
-  const { organization, canViewFinancials } = useAuth()
+  const { organization, canViewFinancials, canEdit } = useAuth()
   const { i18n } = useTranslation()
 
   const [vendor,      setVendor]      = useState(null)
@@ -293,6 +294,8 @@ export default function VendorDetail() {
   const [collections, setCollections] = useState([])
   const [loading,     setLoading]     = useState(true)
   const [activeTab,   setActiveTab]   = useState('Sales')
+  const [saleModal,   setSaleModal]   = useState(null) // null | 'picker' | 'chicken' | 'goods'
+  const [batches,     setBatches]     = useState([])
 
   async function fetchAll() {
     setLoading(true)
@@ -319,6 +322,17 @@ export default function VendorDetail() {
     })))
     setCollections(cc || [])
     setLoading(false)
+  }
+
+  async function openAddSale() {
+    const { data } = await supabase
+      .from('batches')
+      .select('id, start_date, chick_count, mortality_count, farms(name)')
+      .eq('organization_id', organization.id)
+      .eq('status', 'active')
+      .order('start_date', { ascending: false })
+    setBatches(data || [])
+    setSaleModal('picker')
   }
 
   useEffect(() => { fetchAll() }, [id])
@@ -370,17 +384,27 @@ export default function VendorDetail() {
           )}
         </div>
 
-        <span className={`inline-flex items-center rounded-full px-4 py-1.5 text-base font-bold shrink-0 ${
-          outstanding < 0 ? 'bg-blue-100 text-blue-700'
-          : outstanding > 0 ? 'bg-amber-100 text-amber-700'
-          : 'bg-green-100 text-green-700'
-        }`}>
-          {outstanding < 0
-            ? `Credit ${formatCurrency(Math.abs(outstanding))}`
-            : outstanding > 0
-            ? `${formatCurrency(outstanding)} due`
-            : '✓ All cleared'}
-        </span>
+        <div className="flex items-center gap-3 shrink-0">
+          {canEdit && (
+            <button
+              onClick={openAddSale}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition"
+            >
+              + Add Sale
+            </button>
+          )}
+          <span className={`inline-flex items-center rounded-full px-4 py-1.5 text-base font-bold ${
+            outstanding < 0 ? 'bg-blue-100 text-blue-700'
+            : outstanding > 0 ? 'bg-amber-100 text-amber-700'
+            : 'bg-green-100 text-green-700'
+          }`}>
+            {outstanding < 0
+              ? `Credit ${formatCurrency(Math.abs(outstanding))}`
+              : outstanding > 0
+              ? `${formatCurrency(outstanding)} due`
+              : '✓ All cleared'}
+          </span>
+        </div>
       </div>
 
       {/* Summary row */}
@@ -430,6 +454,29 @@ export default function VendorDetail() {
       {activeTab === 'Sales'       && <SalesTab       sales={sales} />}
       {activeTab === 'Collections' && <CollectionsTab collections={collections} />}
       {activeTab === 'Ledger'      && <LedgerTab      sales={sales} collections={collections} openingBalance={openingBalance} />}
+
+      {/* Add Sale modals */}
+      {saleModal === 'picker' && (
+        <SaleTypePicker
+          onChoose={type => setSaleModal(type)}
+          onClose={() => setSaleModal(null)}
+        />
+      )}
+      {saleModal === 'chicken' && (
+        <ChickenSaleModal
+          batches={batches}
+          vendors={vendor ? [{ id: vendor.id, name: vendor.name }] : []}
+          onClose={() => setSaleModal(null)}
+          onSaved={() => { setSaleModal(null); fetchAll() }}
+        />
+      )}
+      {saleModal === 'goods' && (
+        <GoodsSaleModal
+          vendors={vendor ? [{ id: vendor.id, name: vendor.name }] : []}
+          onClose={() => setSaleModal(null)}
+          onSaved={() => { setSaleModal(null); fetchAll() }}
+        />
+      )}
     </div>
   )
 }
