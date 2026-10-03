@@ -237,6 +237,7 @@ function AdjustStockModal({ item, organization, user, onClose, onSaved }) {
     setError('')
     const qty = parseFloat(quantity)
     if (!qty || qty <= 0) { setError('Enter a valid quantity greater than 0'); return }
+    if (!reason.trim()) { setError('Reason is required — explain why the stock is being adjusted'); return }
     if (adjType === 'out' && qty > item.balance) {
       setError(`Cannot remove more than current balance (${fmtQty(item.balance)} ${item.unit})`)
       return
@@ -326,14 +327,16 @@ function AdjustStockModal({ item, organization, user, onClose, onSaved }) {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Reason</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Reason *</label>
             <input
+              required
               type="text"
               value={reason}
               onChange={e => setReason(e.target.value)}
               placeholder="e.g. Physical stocktake, damage, wastage…"
               className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
             />
+            <p className="text-xs text-gray-400 mt-1">Required — this explains the discrepancy in audit trails</p>
           </div>
 
           {/* Preview new balance */}
