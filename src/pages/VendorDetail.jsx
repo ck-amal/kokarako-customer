@@ -300,7 +300,7 @@ export default function VendorDetail() {
       supabase.from('vendors').select('*').eq('organization_id', organization.id).eq('id', id).single(),
       supabase
         .from('sales')
-        .select('id, date, sale_type, total_amount, final_amount, chicken_count, status, item_id, batch_id, items(name), batches(name)')
+        .select('id, date, sale_type, total_amount, final_amount, chicken_count, status, item_id, batch_id, items(name)')
         .eq('organization_id', organization.id)
         .eq('vendor_id', id)
         .order('date', { ascending: false }),
@@ -315,7 +315,7 @@ export default function VendorDetail() {
     setSales((s || []).map(r => ({
       ...r,
       item_name:  r.items?.name  || null,
-      batch_name: r.batches?.name || null,
+      batch_name: null,
     })))
     setCollections(cc || [])
     setLoading(false)
