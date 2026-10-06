@@ -30,12 +30,15 @@ import BatchDetail     from './pages/BatchDetail'
 import CatalogSettings from './pages/CatalogSettings'
 import Suppliers       from './pages/Suppliers'
 import SupplierDetail  from './pages/SupplierDetail'
+import VendorDetail    from './pages/VendorDetail'
 import AccountsPage    from './pages/AccountsPage'
 import PLReport        from './pages/PLReport'
 import FCRReport       from './pages/FCRReport'
 import GrowingFees         from './pages/GrowingFees'
 import GrowingFeeSettings  from './pages/GrowingFeeSettings'
 import Profile             from './pages/Profile'
+import FixedAssets         from './pages/FixedAssets'
+import Visits             from './pages/Visits'
 
 import './index.css'
 
@@ -89,6 +92,7 @@ export default function App() {
         <Route path="/procurement"     element={<P><Procurement /></P>} />
         <Route path="/stock"           element={<P><Stock /></P>} />
         <Route path="/vendors"         element={<P><Vendors /></P>} />
+        <Route path="/vendors/:id"     element={<P><VendorDetail /></P>} />
         <Route path="/sales"           element={<P><Sales /></P>} />
         <Route path="/cash-collection" element={<P><CashCollection /></P>} />
         <Route path="/expenses"        element={<P><Expenses /></P>} />
@@ -98,6 +102,8 @@ export default function App() {
         <Route path="/reports/pl"      element={<P><PLReport /></P>} />
         <Route path="/reports/fcr"     element={<P><FCRReport /></P>} />
         <Route path="/growing-fees"    element={<P><GrowingFees /></P>} />
+        <Route path="/assets"          element={<P><FixedAssets /></P>} />
+        <Route path="/visits"          element={<P><Visits /></P>} />
 
         {/* Settings */}
         <Route path="/settings/catalog"      element={<P><CatalogSettings /></P>} />

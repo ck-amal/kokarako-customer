@@ -33,9 +33,7 @@ export default function InviteAccept() {
   useEffect(() => {
     async function validateToken() {
       const { data: inv } = await supabase
-        .from('invitations')
-        .select('id, organization_id, role, email, expires_at, accepted_at, organizations(name)')
-        .eq('token', token)
+        .rpc('lookup_invitation_by_token', { p_token: token })
         .single()
 
       if (!inv)             { setStatus('invalid');  return }
@@ -43,7 +41,7 @@ export default function InviteAccept() {
       if (new Date(inv.expires_at) < new Date()) { setStatus('expired'); return }
 
       setInvitation(inv)
-      setOrg(inv.organizations)
+      setOrg({ name: inv.org_name })
       setStatus('valid')
 
       // Pre-fill email from the invitation

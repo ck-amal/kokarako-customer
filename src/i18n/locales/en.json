@@ -80,6 +80,8 @@
     "cashCollection": "Cash Collection",
     "expenses": "Expenses",
     "growingFees": "Growing Fees",
+    "fixedAssets": "Fixed Assets",
+    "visits": "Farm Visits",
     "inventory": "Inventory",
     "reports": "Reports",
     "settings": "Settings",
@@ -186,7 +188,8 @@
       "batches": "Batches",
       "distributions": "Distributions",
       "sales": "Sales",
-      "farmStock": "Farm Stock"
+      "farmStock": "Farm Stock",
+      "visits": "Visits"
     }
   },
   "batches": {

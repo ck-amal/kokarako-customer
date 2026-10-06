@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
@@ -218,10 +219,12 @@ function DeleteModal({ vendor, onClose, onDeleted }) {
 
 export default function Vendors() {
   const { t } = useTranslation()
+  const navigate = useNavigate()
   const { organization, canEdit, canDelete } = useAuth()
   const { currentStep, stepDone } = useOnboarding()
   const [vendors, setVendors]       = useState([])
   const [loading, setLoading]       = useState(true)
+  const [search, setSearch]         = useState('')
   const [modal, setModal]           = useState(null) // null | { mode: 'add'|'edit'|'delete', vendor? }
 
   async function fetchVendors() {
@@ -266,7 +269,7 @@ export default function Vendors() {
   return (
     <div>
       {/* Header */}
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between mb-4">
         <div>
           <h1 className="text-2xl font-bold text-gray-800">{t('vendors.title')}</h1>
           <p className="text-sm text-gray-500 mt-0.5">Manage your buyers</p>
@@ -280,6 +283,17 @@ export default function Vendors() {
             <span className="text-base leading-none">+</span> {t('vendors.addVendor')}
           </button>
         )}
+      </div>
+
+      {/* Search */}
+      <div className="mb-4">
+        <input
+          type="text"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          placeholder="Search vendors…"
+          className="w-full max-w-sm rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
+        />
       </div>
 
       {/* Table */}
@@ -307,11 +321,11 @@ export default function Vendors() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
-              {vendors.map(v => {
+              {vendors.filter(v => v.name.toLowerCase().includes(search.toLowerCase())).map(v => {
                 const isCredit = v.outstanding < 0
                 return (
-                <tr key={v.id} className="hover:bg-amber-50/40 transition">
-                  <td className="px-5 py-4 font-medium text-gray-800">{v.name}</td>
+                <tr key={v.id} className="hover:bg-amber-50/40 transition cursor-pointer" onClick={() => navigate(`/vendors/${v.id}`)}>
+                  <td className="px-5 py-4 font-medium text-gray-800 hover:text-amber-600 transition">{v.name}</td>
                   <td className="px-5 py-4 text-gray-600">{v.phone || <span className="text-gray-300">—</span>}</td>
                   <td className="px-5 py-4 text-right font-semibold text-gray-700">
                     {formatCurrency(v.total_sales)}
@@ -327,7 +341,7 @@ export default function Vendors() {
                       </span>
                     )}
                   </td>
-                  <td className="px-5 py-4 text-right">
+                  <td className="px-5 py-4 text-right" onClick={e => e.stopPropagation()}>
                     <div className="flex justify-end gap-2">
                       {canEdit && (
                         <button

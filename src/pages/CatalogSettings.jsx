@@ -680,7 +680,7 @@ function TypeCard({
               ✏️ Edit
             </button>
           )}
-          {type.is_system && !isChickType && (
+          {type.is_system && (
             <button
               onClick={onEnterEdit}
               className="flex items-center gap-1.5 rounded-xl border border-gray-200 bg-white hover:bg-amber-50 hover:border-amber-300 hover:text-amber-700 px-3 py-1.5 text-xs font-medium text-gray-500 transition"
@@ -745,8 +745,8 @@ function TypeCard({
             </>
           )}
 
-          {/* Add item inline form — not shown for Chick type */}
-          {isEditing && !isChickType && itemForm?.mode === 'add' && itemForm?.typeId === type.id && (
+          {/* Add item inline form */}
+          {isEditing && itemForm?.mode === 'add' && itemForm?.typeId === type.id && (
             <div className="px-5 py-4 bg-green-50 border-t border-green-100">
               <p className="text-xs font-semibold text-green-700 mb-3">New Item</p>
               <ItemForm
@@ -761,8 +761,8 @@ function TypeCard({
             </div>
           )}
 
-          {/* Add item button — hidden for Chick type */}
-          {isEditing && !isChickType && !(itemForm?.mode === 'add' && itemForm?.typeId === type.id) && (
+          {/* Add item button */}
+          {isEditing && !(itemForm?.mode === 'add' && itemForm?.typeId === type.id) && (
             <div className="px-5 py-3 bg-gray-50/60">
               <button
                 onClick={onOpenAddItem}
@@ -770,13 +770,6 @@ function TypeCard({
               >
                 + Add Item
               </button>
-            </div>
-          )}
-
-          {/* Chick type: fixed note */}
-          {isEditing && isChickType && (
-            <div className="px-5 py-3 bg-gray-50/60">
-              <p className="text-xs text-gray-400 italic">Chick type has a fixed single item. No additional items can be added.</p>
             </div>
           )}
         </div>

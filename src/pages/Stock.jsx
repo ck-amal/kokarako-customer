@@ -25,6 +25,7 @@ const REF_LABELS = {
   batch:        { label: 'Batch placed', color: 'text-amber-600' },
   distribution: { label: 'Distribution', color: 'text-blue-600'  },
   stock_return: { label: 'Stock Return', color: 'text-orange-500' },
+  adjustment:   { label: 'Adjustment',   color: 'text-purple-600' },
 }
 
 // ─── Stock detail drawer (Procurement Breakdown + History tabs) ───────────────
@@ -182,6 +183,9 @@ function StockDrawer({ item, entries, procLots, lotsLoading, totalOut, refMeta, 
                             const content = (
                               <>
                                 <span className={`font-medium ${ref.color}`}>{ref.label}</span>
+                                {e.notes && (
+                                  <span className="block text-gray-400 font-normal">{e.notes}</span>
+                                )}
                                 {meta?.startDate && (
                                   <span className="block text-gray-400 font-normal">
                                     {formatDate(meta.startDate, i18n.language)}
@@ -217,9 +221,157 @@ function StockDrawer({ item, entries, procLots, lotsLoading, totalOut, refMeta, 
 
 // ─── Main page ────────────────────────────────────────────────────────────────
 
+// ─── Manual Stock Adjustment Modal ───────────────────────────────────────────
+
+function AdjustStockModal({ item, organization, user, onClose, onSaved }) {
+  const today = new Date().toISOString().slice(0, 10)
+  const [adjType,   setAdjType]   = useState('in')   // 'in' | 'out'
+  const [quantity,  setQuantity]  = useState('')
+  const [reason,    setReason]    = useState('')
+  const [adjDate,   setAdjDate]   = useState(today)
+  const [saving,    setSaving]    = useState(false)
+  const [error,     setError]     = useState('')
+
+  async function handleSubmit(e) {
+    e.preventDefault()
+    setError('')
+    const qty = parseFloat(quantity)
+    if (!qty || qty <= 0) { setError('Enter a valid quantity greater than 0'); return }
+    if (!reason.trim()) { setError('Reason is required — explain why the stock is being adjusted'); return }
+    if (adjType === 'out' && qty > item.balance) {
+      setError(`Cannot remove more than current balance (${fmtQty(item.balance)} ${item.unit})`)
+      return
+    }
+
+    setSaving(true)
+    const userName = user?.user_metadata?.full_name || user?.email || ''
+    const { error: err } = await supabase.from('stock_ledger').insert({
+      organization_id: organization?.id,
+      item_name:       item.item_name,
+      item_type:       item.item_type,
+      unit:            item.unit,
+      change_type:     adjType,
+      quantity:        qty,
+      reference_type:  'adjustment',
+      reference_id:    crypto.randomUUID(),
+      date:            adjDate,
+      notes:           `${reason.trim() || 'Manual adjustment'} — by ${userName}`,
+    })
+
+    if (err) { setError(err.message); setSaving(false) }
+    else      { onSaved() }
+  }
+
+  const afterBalance = adjType === 'in'
+    ? item.balance + (parseFloat(quantity) || 0)
+    : item.balance - (parseFloat(quantity) || 0)
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+      <div className="w-full max-w-sm bg-white rounded-2xl shadow-xl p-6">
+        <div className="flex items-center justify-between mb-5">
+          <h2 className="text-lg font-semibold text-gray-800">Adjust Stock</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
+        </div>
+
+        <p className="text-sm font-medium text-gray-700 mb-4">
+          {item.item_name}
+          <span className="ml-2 text-xs text-gray-400 font-normal">
+            Current: {fmtQty(item.balance)} {item.unit}
+          </span>
+        </p>
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          {/* Add / Remove toggle */}
+          <div className="flex rounded-lg border border-gray-200 overflow-hidden">
+            <button
+              type="button"
+              onClick={() => setAdjType('in')}
+              className={`flex-1 py-2 text-sm font-semibold transition ${adjType === 'in' ? 'bg-green-500 text-white' : 'text-gray-500 hover:bg-gray-50'}`}
+            >
+              + Add Stock
+            </button>
+            <button
+              type="button"
+              onClick={() => setAdjType('out')}
+              className={`flex-1 py-2 text-sm font-semibold transition ${adjType === 'out' ? 'bg-red-500 text-white' : 'text-gray-500 hover:bg-gray-50'}`}
+            >
+              − Remove Stock
+            </button>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Quantity ({item.unit}) *</label>
+            <input
+              autoFocus
+              required
+              type="number"
+              min="0.01"
+              step="0.01"
+              value={quantity}
+              onChange={e => setQuantity(e.target.value)}
+              placeholder="0"
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Date *</label>
+            <input
+              required
+              type="date"
+              value={adjDate}
+              onChange={e => setAdjDate(e.target.value)}
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Reason *</label>
+            <input
+              required
+              type="text"
+              value={reason}
+              onChange={e => setReason(e.target.value)}
+              placeholder="e.g. Physical stocktake, damage, wastage…"
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
+            />
+            <p className="text-xs text-gray-400 mt-1">Required — this explains the discrepancy in audit trails</p>
+          </div>
+
+          {/* Preview new balance */}
+          {quantity && (
+            <div className={`rounded-lg px-4 py-2.5 text-sm flex justify-between ${adjType === 'in' ? 'bg-green-50 border border-green-100' : 'bg-red-50 border border-red-100'}`}>
+              <span className="text-gray-600">New balance</span>
+              <span className={`font-bold ${afterBalance >= 0 ? (adjType === 'in' ? 'text-green-700' : 'text-red-600') : 'text-red-600'}`}>
+                {fmtQty(afterBalance)} {item.unit}
+              </span>
+            </div>
+          )}
+
+          {error && (
+            <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</p>
+          )}
+
+          <div className="flex gap-3 pt-1">
+            <button type="button" onClick={onClose}
+              className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition">
+              Cancel
+            </button>
+            <button type="submit" disabled={saving}
+              className={`flex-1 rounded-lg disabled:opacity-60 px-4 py-2 text-sm font-semibold text-white transition ${adjType === 'in' ? 'bg-green-500 hover:bg-green-600' : 'bg-red-500 hover:bg-red-600'}`}>
+              {saving ? 'Saving…' : adjType === 'in' ? 'Add Stock' : 'Remove Stock'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
 export default function Stock() {
   const { t, i18n } = useTranslation()
-  const { organization, canEdit } = useAuth()
+  const { organization, user, canEdit } = useAuth()
   const [ledger,         setLedger]         = useState([])
   const [reorderMap,     setReorderMap]     = useState({})
   const [kgPerUnitMap,   setKgPerUnitMap]   = useState({})
@@ -236,6 +388,7 @@ export default function Stock() {
   const [kgEditItem,     setKgEditItem]     = useState(null)
   const [kgEditVal,      setKgEditVal]      = useState('')
   const [kgSaving,       setKgSaving]       = useState(false)
+  const [adjustItem,     setAdjustItem]     = useState(null)
 
   async function fetchData() {
     setLoading(true)
@@ -522,8 +675,16 @@ export default function Stock() {
                           )
                         ) : <span className="text-gray-300 text-xs">—</span>}
                       </td>
-                      <td className="px-5 py-3.5 text-right text-xs text-gray-400 whitespace-nowrap">
-                        View details →
+                      <td className="px-5 py-3.5 text-right whitespace-nowrap" onClick={e => e.stopPropagation()}>
+                        {canEdit && (
+                          <button
+                            onClick={() => setAdjustItem(item)}
+                            className="rounded-lg border border-purple-200 px-3 py-1.5 text-xs font-medium text-purple-600 hover:bg-purple-50 transition mr-2"
+                          >
+                            Adjust
+                          </button>
+                        )}
+                        <span className="text-xs text-gray-400">View details →</span>
                       </td>
                     </tr>
                   )
@@ -544,6 +705,17 @@ export default function Stock() {
           totalOut={drawerItem.totalOut}
           refMeta={drawerRefMeta}
           onClose={() => { setDrawerItem(null); setDrawerEntries([]); setDrawerLots([]); setDrawerRefMeta({}) }}
+        />
+      )}
+
+      {/* Manual stock adjustment modal */}
+      {adjustItem && (
+        <AdjustStockModal
+          item={adjustItem}
+          organization={organization}
+          user={user}
+          onClose={() => setAdjustItem(null)}
+          onSaved={() => { setAdjustItem(null); fetchData() }}
         />
       )}
 
