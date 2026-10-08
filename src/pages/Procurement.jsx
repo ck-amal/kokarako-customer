@@ -120,7 +120,7 @@ function ProcurementModal({ onClose, onSaved }) {
   const [suppliers, setSuppliers]   = useState([])
   const [accounts, setAccounts]     = useState([])
   const [supplierOutstanding, setSupplierOutstanding] = useState(null)
-  const newLine = () => ({ item_type_id: '', item_id: '', quantity: '', cost_per_unit: '', cost: '', items: [], extra_enabled: false, extra_per_unit: '0' })
+  const newLine = () => ({ item_type_id: '', item_id: '', quantity: '', cost_per_unit: '', cost: '', discount: '', items: [], extra_enabled: false, extra_per_unit: '0' })
   const [lines, setLines] = useState([newLine()])
   const [header, setHeader] = useState({
     supplier_id:    '',
@@ -184,15 +184,17 @@ function ProcurementModal({ onClose, onSaved }) {
     updateLine(i, { items, item_id: items[0]?.id || '', extra_enabled: hasRule, extra_per_unit: autoPerUnit })
   }
 
-  // Per-line field setter with auto-calc for quantity / cost_per_unit
+  // Per-line field setter with auto-calc for quantity / cost_per_unit / discount
   function setLineField(i, field, value) {
     setLines(prev => prev.map((ln, idx) => {
       if (idx !== i) return ln
       const next = { ...ln, [field]: value }
-      if (field === 'quantity' || field === 'cost_per_unit') {
-        const qty = parseFloat(field === 'quantity' ? value : ln.quantity) || 0
-        const cpu = parseFloat(field === 'cost_per_unit' ? value : ln.cost_per_unit) || 0
-        next.cost = qty && cpu ? String(roundCurrency(qty * cpu)) : next.cost
+      if (field === 'quantity' || field === 'cost_per_unit' || field === 'discount') {
+        const qty  = parseFloat(field === 'quantity'      ? value : ln.quantity)       || 0
+        const cpu  = parseFloat(field === 'cost_per_unit' ? value : ln.cost_per_unit)  || 0
+        const disc = parseFloat(field === 'discount'      ? value : (ln.discount || '0')) || 0
+        const gross = qty * cpu
+        next.cost = gross > 0 ? String(roundCurrency(Math.max(0, gross - disc))) : ''
       }
       // Auto-recompute percentage ancillary when cost_per_unit changes
       if (field === 'cost_per_unit' && next.extra_enabled) {
@@ -315,13 +317,14 @@ function ProcurementModal({ onClose, onSaved }) {
       if (!item) { setError(t('errors.required')); return }
       const qty = Number(ln.quantity)
       if (!qty || qty <= 0) { setError(`${t('procurement.quantity')} *`); return }
+      const disc = parseFloat(ln.discount) || 0
       const cost = Number(ln.cost)
       if (!cost || cost < 0) { setError(`${t('procurement.totalCost')} *`); return }
-      const cpu = parseFloat(ln.cost_per_unit) || (qty > 0 ? roundCurrency(cost / qty) : 0)
+      const cpu = qty > 0 ? roundCurrency(cost / qty) : 0
       const typeName = itemTypes.find(it => it.id === ln.item_type_id)?.name?.toLowerCase() ?? 'other'
       const extraEnabled = !!ln.extra_enabled
       const extraPerUnit = extraEnabled ? (parseFloat(ln.extra_per_unit) || 0) : 0
-      prepared.push({ item, item_id: ln.item_id, qty, cost, cpu, typeName, extraEnabled, extraPerUnit })
+      prepared.push({ item, item_id: ln.item_id, qty, cost, cpu, typeName, extraEnabled, extraPerUnit, disc })
     }
 
     setSaving(true)
@@ -342,7 +345,7 @@ function ProcurementModal({ onClose, onSaved }) {
         supplier_id:   header.supplier_id || null,
         date:          header.date,
         invoice_number: header.invoice_number.trim() || null,
-        notes:         header.notes.trim() || null,
+        notes:         [header.notes.trim(), p.disc > 0 ? `Discount: ₹${p.disc.toLocaleString('en-IN')}` : ''].filter(Boolean).join(' | ') || null,
         has_extra_expense:     p.extraEnabled,
         extra_expense_per_unit: p.extraPerUnit,
         purchase_group_id:     purchaseGroupId,
@@ -626,7 +629,7 @@ function ProcurementModal({ onClose, onSaved }) {
                       />
                     </div>
                     <div>
-                      <label className="block text-xs font-medium text-gray-600 mb-1">{t('procurement.costPerUnit')} (₹)</label>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">{t('procurement.costPerUnit')} (₹) *</label>
                       <input
                         type="number" min="0" step="0.01"
                         value={ln.cost_per_unit} onChange={e => setLineField(i, 'cost_per_unit', e.target.value)}
@@ -635,15 +638,36 @@ function ProcurementModal({ onClose, onSaved }) {
                       />
                     </div>
                     <div>
-                      <label className="block text-xs font-medium text-gray-600 mb-1">{t('procurement.totalCost')} (₹) *</label>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">Discount (₹)</label>
                       <input
                         type="number" min="0" step="0.01"
-                        value={ln.cost} onChange={e => setLineField(i, 'cost', e.target.value)}
-                        placeholder="Auto"
+                        value={ln.discount} onChange={e => setLineField(i, 'discount', e.target.value)}
+                        placeholder="0"
                         className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
                       />
                     </div>
                   </div>
+                  {/* Net total display */}
+                  {(() => {
+                    const qty  = parseFloat(ln.quantity)      || 0
+                    const cpu  = parseFloat(ln.cost_per_unit) || 0
+                    const disc = parseFloat(ln.discount)      || 0
+                    const gross = roundCurrency(qty * cpu)
+                    const net   = roundCurrency(Math.max(0, gross - disc))
+                    if (!qty || !cpu) return null
+                    return (
+                      <div className="flex items-center justify-between text-xs mt-1.5 px-1">
+                        <span className="text-gray-400">
+                          {disc > 0
+                            ? `Gross ₹${gross.toLocaleString('en-IN')} − discount ₹${disc.toLocaleString('en-IN')}`
+                            : `${qty.toLocaleString('en-IN')} × ₹${cpu.toLocaleString('en-IN')}`}
+                        </span>
+                        <span className="font-semibold text-amber-700">
+                          Net: ₹{net.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                        </span>
+                      </div>
+                    )
+                  })()}
 
                   {/* Ancillary expense — shown only if item type has a rule configured */}
                   {(() => {
@@ -1301,14 +1325,6 @@ export default function Procurement() {
                         {(canEdit || canDelete) && !r.is_return && (
                           <td className="px-4 py-3.5" onClick={e => e.stopPropagation()}>
                             <div className="flex items-center gap-1.5">
-                              {canEdit && (
-                                <button
-                                  onClick={() => setEditingProc(r)}
-                                  className="rounded-lg border border-gray-200 px-2.5 py-1 text-xs font-medium text-gray-600 hover:bg-gray-50 transition"
-                                >
-                                  Edit
-                                </button>
-                              )}
                               {canDelete && (
                                 <button
                                   onClick={() => { setDeletingProc(r); setDeleteConfirmText(''); setDeleteError('') }}
