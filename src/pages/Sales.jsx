@@ -41,7 +41,7 @@ export default function Sales() {
     const [{ data: salesData }, { data: batchData }, { data: vendorData }] = await Promise.all([
       supabase
         .from('sales')
-        .select('*, batches(start_date, chick_count, farms(name)), vendors(name), items(name, unit, item_types(name)), created_by_name, created_at, updated_by_name, updated_at, confirmed_by_name, confirmed_at')
+        .select('*, batches(start_date, chick_count, farms(name)), contacts(name), items(name, unit, item_types(name)), created_by_name, created_at, updated_by_name, updated_at, confirmed_by_name, confirmed_at')
         .eq('organization_id', organization?.id)
         .order('date', { ascending: false })
         .order('created_at', { ascending: false }),
@@ -52,8 +52,9 @@ export default function Sales() {
         .eq('status', 'active')
         .order('start_date', { ascending: false }),
       supabase
-        .from('vendors')
+        .from('contacts')
         .select('id, name')
+        .eq('is_vendor', true)
         .eq('organization_id', organization?.id)
         .order('name'),
     ])
@@ -199,7 +200,7 @@ export default function Sales() {
                           : '—'
                       }
                     </td>
-                    <td className="px-5 py-4 text-gray-700">{s.vendors?.name ?? '—'}</td>
+                    <td className="px-5 py-4 text-gray-700">{s.contacts?.name ?? '—'}</td>
                     <td className="px-5 py-4 text-right text-gray-700">
                       {isGoods
                         ? `${Number(s.item_quantity).toLocaleString('en-IN')} ${s.items?.unit ?? ''}`

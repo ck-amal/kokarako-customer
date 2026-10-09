@@ -35,7 +35,7 @@ function groupProcurements(rows) {
       map.set(gid, {
         purchase_group_id: gid,
         date:             r.date,
-        supplierName:     r.suppliers?.name || '—',
+        supplierName:     r.contacts?.name || '—',
         supplier_id:      r.supplier_id,
         invoice_number:   r.invoice_number || null,
         items:            [],
@@ -152,7 +152,7 @@ function ProcurementModal({ onClose, onSaved }) {
     async function loadInitial() {
       const [{ data: types }, { data: sups }, { data: accs }] = await Promise.all([
         supabase.from('item_types').select('id, name, has_extra_expense, extra_expense_type, extra_expense_value').order('name'),
-        supabase.from('suppliers').select('id, name, business_name').eq('is_active', true).order('name'),
+        supabase.from('contacts').select('id, name, business_name').eq('is_supplier', true).eq('is_active', true).order('name'),
         supabase.from('accounts').select('id, name, type').eq('is_active', true).order('name'),
       ])
       setItemTypes(types || [])
@@ -222,7 +222,7 @@ function ProcurementModal({ onClose, onSaved }) {
     setHeader(h => ({ ...h, supplier_id: supplierId }))
     if (!supplierId) { setSupplierOutstanding(null); return }
     const [{ data: sup }, { data: procs }, { data: pays }] = await Promise.all([
-      supabase.from('suppliers').select('opening_balance').eq('id', supplierId).eq('organization_id', organization?.id).single(),
+      supabase.from('contacts').select('opening_balance').eq('id', supplierId).eq('organization_id', organization?.id).single(),
       supabase.from('procurement').select('cost').eq('supplier_id', supplierId),
       supabase.from('supplier_payments').select('amount').eq('supplier_id', supplierId),
     ])
@@ -828,7 +828,7 @@ function EditProcurementModal({ proc, onClose, onSaved }) {
 
   useEffect(() => {
     Promise.all([
-      supabase.from('suppliers').select('id, name').eq('organization_id', organization?.id).order('name'),
+      supabase.from('contacts').select('id, name').eq('is_supplier', true).eq('organization_id', organization?.id).order('name'),
       supabase.from('distributions').select('quantity, returned_quantity').eq('procurement_id', proc.id),
       supabase.from('batch_chick_purchases').select('quantity').eq('procurement_id', proc.id),
       supabase.from('item_types').select('extra_expense_type, extra_expense_value').ilike('name', proc.type).maybeSingle(),
@@ -1095,7 +1095,7 @@ export default function Procurement() {
   async function fetchData() {
     setLoading(true)
     const [{ data: batchData }, { data: typesData }] = await Promise.all([
-      supabase.from('procurement').select('*, suppliers(name), created_by_name, created_at, updated_by_name, updated_at').eq('organization_id', organization?.id).order('date', { ascending: false }),
+      supabase.from('procurement').select('*, contacts(name), created_by_name, created_at, updated_by_name, updated_at').eq('organization_id', organization?.id).order('date', { ascending: false }),
       supabase.from('item_types').select('id, name'),
     ])
     const rows = batchData || []
@@ -1318,7 +1318,7 @@ export default function Procurement() {
                         <td className={`px-5 py-3.5 text-right font-semibold ${r.is_return ? 'text-teal-600' : 'text-gray-800'}`}>
                           {r.is_return ? '−' : ''}{formatCurrency(Math.abs(Number(r.cost)))}
                         </td>
-                        <td className="px-5 py-3.5 text-gray-600">{r.suppliers?.name || '—'}</td>
+                        <td className="px-5 py-3.5 text-gray-600">{r.contacts?.name || '—'}</td>
                         <td className="px-5 py-3.5 text-gray-500">{r.invoice_number || '—'}</td>
                         <td className="px-5 py-3.5 text-gray-500 whitespace-nowrap">{formatDate(r.date, i18n.language)}</td>
                         <td className="px-5 py-3.5 text-gray-400 max-w-[140px] truncate" title={r.notes || ''}>
@@ -1430,7 +1430,7 @@ export default function Procurement() {
               </div>
               <div>
                 <span className="text-gray-400 text-xs block mb-0.5">{t('procurement.supplier')}</span>
-                {viewRow.suppliers?.name || '—'}
+                {viewRow.contacts?.name || '—'}
               </div>
               <div>
                 <span className="text-gray-400 text-xs block mb-0.5">{t('common.date')}</span>

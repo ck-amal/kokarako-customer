@@ -592,12 +592,32 @@
     },
     "categories": {
       "vendorPayment": "Vendor Payment",
+      "vendorCredit": "Vendor Credit",
       "supplierPayment": "Supplier Payment",
       "expense": "Expense",
       "growingFeeAdvance": "Growing Fee Advance",
       "growingFeePayment": "Growing Fee Payment",
       "procurement": "Procurement",
+      "ownerWithdrawal": "Owner Withdrawal",
+      "transfer": "Transfer",
       "other": "Other"
+    },
+    "bulkEntry": {
+      "title": "Statement Entry",
+      "subtitle": "Enter multiple transactions at once from your bank statement",
+      "addRow": "Add Row",
+      "saveAll": "Save All"
+    },
+    "transfer": {
+      "title": "Transfer",
+      "from": "From",
+      "to": "To",
+      "note": "Note (optional)",
+      "notePlaceholder": "e.g. Moving funds to office cash",
+      "hint": "Two entries will be created — one debit and one credit — to keep both account balances accurate.",
+      "confirm": "Transfer",
+      "sameAccountError": "From and To accounts must be different.",
+      "invalidAmount": "Enter a valid amount."
     },
     "noAccounts": "No accounts yet. Add one to start tracking cash flow.",
     "transactions": "Transactions",

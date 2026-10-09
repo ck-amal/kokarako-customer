@@ -39,7 +39,7 @@ function CollectionModal({ editItem, onClose, onSaved }) {
   const [error, setError]   = useState('')
 
   useEffect(() => {
-    supabase.from('vendors').select('id, name').eq('organization_id', organization.id).order('name')
+    supabase.from('contacts').select('id, name').eq('is_vendor', true).eq('organization_id', organization.id).order('name')
       .then(({ data }) => setVendors(data || []))
   }, [])
 
@@ -268,7 +268,7 @@ function CollectionCard({ item, files, showCollector, showActions, canEdit, onVi
           {STATUS_LABEL[item.status] || item.status}
         </span>
       </div>
-      <p className="text-sm font-medium text-gray-700 mt-1.5">{item.vendors?.name || '—'}</p>
+      <p className="text-sm font-medium text-gray-700 mt-1.5">{item.contacts?.name || '—'}</p>
       <div className="flex items-center justify-between mt-1 text-xs text-gray-400">
         <span className="capitalize">{item.method || 'cash'} · {formatDate(item.date, i18n.language)}{files?.length ? ` · 📎${files.length}` : ''}</span>
         <div className="flex items-center gap-1.5">
@@ -322,7 +322,7 @@ export default function CashCollection() {
   async function fetchData() {
     setLoading(true)
     const { data: mineData } = await supabase.from('cash_collection')
-      .select('*, vendors(name), created_by_name, created_at, updated_by_name, updated_at, verified_by_name, verified_at, collected_by_name').eq('organization_id', organization.id)
+      .select('*, contacts(name), created_by_name, created_at, updated_by_name, updated_at, verified_by_name, verified_at, collected_by_name').eq('organization_id', organization.id)
       .eq('collected_by_id', myId).order('created_at', { ascending: false }).limit(200)
     const mineRows = mineData || []
     setMine(mineRows)
@@ -330,7 +330,7 @@ export default function CashCollection() {
     let queueRows = []
     if (canVerify) {
       const { data } = await supabase.from('cash_collection')
-        .select('*, vendors(name), created_by_name, created_at, updated_by_name, updated_at, verified_by_name, verified_at, collected_by_name').eq('organization_id', organization.id)
+        .select('*, contacts(name), created_by_name, created_at, updated_by_name, updated_at, verified_by_name, verified_at, collected_by_name').eq('organization_id', organization.id)
         .eq('status', 'pending').order('created_at', { ascending: true })
       queueRows = data || []
       setQueue(queueRows)
@@ -503,7 +503,7 @@ export default function CashCollection() {
           onDeleted={(a) => setAttByRow(prev => ({ ...prev, [viewItem.id]: (prev[viewItem.id] || []).filter(x => x.id !== a.id) }))}
           header={
             <div className="rounded-lg bg-gray-50 border border-gray-100 px-4 py-3 grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
-              <div><span className="text-gray-400 text-xs block">{t('vendors.title')}</span>{viewItem.vendors?.name || '—'}</div>
+              <div><span className="text-gray-400 text-xs block">{t('vendors.title')}</span>{viewItem.contacts?.name || '—'}</div>
               <div><span className="text-gray-400 text-xs block">Method</span><span className="capitalize">{viewItem.method || 'cash'}</span></div>
               <div><span className="text-gray-400 text-xs block">Status</span>{STATUS_LABEL[viewItem.status] || viewItem.status}</div>
               <div><span className="text-gray-400 text-xs block">{t('common.date')}</span>{formatDate(viewItem.date, i18n.language)}</div>

@@ -51,8 +51,8 @@ function VendorModal({ vendor, onClose, onSaved }) {
     }
 
     const { error } = isEdit
-      ? await supabase.from('vendors').update(payload).eq('id', vendor.id).eq('organization_id', organization?.id)
-      : await supabase.from('vendors').insert({ ...payload, organization_id: organization?.id })
+      ? await supabase.from('contacts').update(payload).eq('id', vendor.id).eq('organization_id', organization?.id)
+      : await supabase.from('contacts').insert({ ...payload, is_vendor: true, organization_id: organization?.id })
 
     if (error) { setError(error.message); setSaving(false) }
     else        { onSaved() }
@@ -179,7 +179,7 @@ function DeleteModal({ vendor, onClose, onDeleted }) {
 
   async function handleDelete() {
     setDeleting(true)
-    const { error } = await supabase.from('vendors').delete().eq('id', vendor.id).eq('organization_id', organization?.id)
+    const { error } = await supabase.from('contacts').delete().eq('id', vendor.id).eq('organization_id', organization?.id)
     if (error) { setError(error.message); setDeleting(false) }
     else        { onDeleted() }
   }
@@ -236,8 +236,9 @@ export default function Vendors() {
         .eq('organization_id', organization?.id)
         .order('vendor_name'),
       supabase
-        .from('vendors')
+        .from('contacts')
         .select('id, phone')
+        .eq('is_vendor', true)
         .eq('organization_id', organization?.id),
     ])
 

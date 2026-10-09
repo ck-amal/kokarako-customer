@@ -67,8 +67,8 @@ function SupplierModal({ supplier, onClose, onSaved }) {
     }
 
     const { error: err } = isEdit
-      ? await supabase.from('suppliers').update(payload).eq('organization_id', organization.id).eq('id', supplier.id)
-      : await supabase.from('suppliers').insert({ ...payload, organization_id: organization.id })
+      ? await supabase.from('contacts').update(payload).eq('organization_id', organization.id).eq('id', supplier.id)
+      : await supabase.from('contacts').insert({ ...payload, is_supplier: true, organization_id: organization.id })
 
     if (err) { setError(err.message); setSaving(false); return }
     onSaved()
@@ -233,7 +233,7 @@ function RecordPaymentModal({ suppliers, initialSupplierId, onClose, onSaved }) 
     if (!form.supplier_id) { setOutstanding(null); return }
     async function load() {
       const [{ data: sup }, { data: procs }, { data: pays }] = await Promise.all([
-        supabase.from('suppliers').select('opening_balance').eq('organization_id', organization.id).eq('id', form.supplier_id).single(),
+        supabase.from('contacts').select('opening_balance').eq('organization_id', organization.id).eq('id', form.supplier_id).single(),
         supabase.from('procurement').select('cost').eq('organization_id', organization.id).eq('supplier_id', form.supplier_id),
         supabase.from('supplier_payments').select('amount').eq('organization_id', organization.id).eq('supplier_id', form.supplier_id),
       ])
@@ -532,7 +532,7 @@ export default function Suppliers() {
     const { start, end } = currentMonthRange()
 
     const [{ data: sups }, { data: procs }, { data: pays }, { data: monthPays }] = await Promise.all([
-      supabase.from('suppliers').select('*').eq('organization_id', organization.id).eq('is_active', true).order('name'),
+      supabase.from('contacts').select('*').eq('is_supplier', true).eq('organization_id', organization.id).eq('is_active', true).order('name'),
       supabase.from('procurement').select('supplier_id, cost').eq('organization_id', organization.id).not('supplier_id', 'is', null),
       supabase.from('supplier_payments').select('supplier_id, amount').eq('organization_id', organization.id),
       supabase.from('supplier_payments').select('amount').eq('organization_id', organization.id).gte('payment_date', start).lte('payment_date', end),
@@ -570,7 +570,7 @@ export default function Suppliers() {
   async function confirmDelete() {
     if (!deleteSupplier) return
     setDeleting(true)
-    await supabase.from('suppliers').update({ is_active: false }).eq('id', deleteSupplier.id).eq('organization_id', organization.id)
+    await supabase.from('contacts').update({ is_active: false }).eq('id', deleteSupplier.id).eq('organization_id', organization.id)
     setDeleteSupplier(null)
     setDeleting(false)
     fetchData()

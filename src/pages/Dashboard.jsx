@@ -385,7 +385,7 @@ export default function Dashboard() {
         // 5 most recent sales
         supabase
           .from('sales')
-          .select('id, date, total_amount, vendors(name), batches(farms(name))')
+          .select('id, date, total_amount, contacts(name), batches(farms(name))')
           .eq('organization_id', organization?.id)
           .eq('status', 'confirmed')
           .order('date', { ascending: false })
@@ -471,8 +471,9 @@ export default function Dashboard() {
 
         // Supplier opening balances
         supabase
-          .from('suppliers')
+          .from('contacts')
           .select('opening_balance')
+          .eq('is_supplier', true)
           .eq('organization_id', organization?.id)
           .eq('is_active', true),
       ])
@@ -514,7 +515,7 @@ export default function Dashboard() {
         ...(recentSales || []).map(s => ({
           id:       s.id,
           type:     'sale',
-          label:    `Sale — ${s.vendors?.name ?? 'Vendor'}`,
+          label:    `Sale — ${s.contacts?.name ?? 'Vendor'}`,
           sub:      s.batches?.farms?.name ?? '—',
           amount:   s.total_amount,
           date:     s.date,

@@ -326,7 +326,7 @@ function PurchasesTab({ procurements, totalPaid, canEdit, onReturn }) {
                   </span>
                   {canEdit && !group.is_return_group && onReturn && group.items.some(r => r.supplier_id) && (
                     <button
-                      onClick={() => onReturn({ ...group, supplierName: procurements[0]?.suppliers?.name || '—' })}
+                      onClick={() => onReturn({ ...group, supplierName: procurements[0]?.contacts?.name || '—' })}
                       className="rounded-lg border border-red-200 px-2.5 py-1 text-xs font-medium text-red-600 hover:bg-red-50 transition"
                     >
                       Return
@@ -524,7 +524,7 @@ export default function SupplierDetail() {
   async function fetchAll() {
     setLoading(true)
     const [{ data: sup }, { data: procs }, { data: pays }] = await Promise.all([
-      supabase.from('suppliers').select('*').eq('organization_id', organization.id).eq('id', id).single(),
+      supabase.from('contacts').select('*').eq('organization_id', organization.id).eq('id', id).single(),
       supabase.from('procurement').select('*').eq('organization_id', organization.id).eq('supplier_id', id).order('date', { ascending: false }),
       supabase.from('supplier_payments').select('*, created_by_name, created_at').eq('organization_id', organization.id).eq('supplier_id', id).order('payment_date', { ascending: false }),
     ])

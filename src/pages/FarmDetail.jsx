@@ -904,7 +904,7 @@ export default function FarmDetail() {
     ] = await Promise.all([
       supabase.from('distributions').select('*, procurement:procurement_id(id, invoice_number, date), batches(start_date), created_by_name, created_at, updated_by_name, updated_at').eq('farm_id', id).eq('organization_id', organization?.id).order('date', { ascending: false }),
       supabase.from('stock').select('id, item_name, quantity, unit').eq('organization_id', organization?.id).gt('quantity', 0).order('item_name'),
-      supabase.from('vendors').select('id, name').eq('organization_id', organization?.id).order('name'),
+      supabase.from('contacts').select('id, name').eq('is_vendor', true).eq('organization_id', organization?.id).order('name'),
       batchIds.length
         ? supabase.from('batch_chick_purchases').select('id, batch_id, quantity, price_per_chick, total_cost, procurement_id, procurement:procurement_id(id, invoice_number, date)').in('batch_id', batchIds).eq('organization_id', organization?.id).order('created_at')
         : Promise.resolve({ data: [] }),
@@ -912,7 +912,7 @@ export default function FarmDetail() {
       supabase.from('farm_expense_returns').select('distribution_id, item_type, total_cost').eq('farm_id', id).eq('organization_id', organization?.id),
       supabase.from('farm_stock').select('*').eq('farm_id', id).eq('organization_id', organization?.id).order('item_name'),
       batchIds.length
-        ? supabase.from('sales').select('id, date, kg_sold, price_per_kg, total_amount, batch_id, vendors(name), created_by_name, created_at').in('batch_id', batchIds).eq('organization_id', organization?.id).order('date', { ascending: false })
+        ? supabase.from('sales').select('id, date, kg_sold, price_per_kg, total_amount, batch_id, contacts(name), created_by_name, created_at').in('batch_id', batchIds).eq('organization_id', organization?.id).order('date', { ascending: false })
         : Promise.resolve({ data: [] }),
     ])
 
@@ -929,7 +929,7 @@ export default function FarmDetail() {
     const saleIds = (salesResult.data || []).map(s => s.id)
     const [cashResult, feeResult] = await Promise.all([
       saleIds.length
-        ? supabase.from('cash_collection').select('id, amount_paid, date, vendors(name)').in('sale_id', saleIds).eq('organization_id', organization?.id).order('date', { ascending: false })
+        ? supabase.from('cash_collection').select('id, amount_paid, date, contacts(name)').in('sale_id', saleIds).eq('organization_id', organization?.id).order('date', { ascending: false })
         : Promise.resolve({ data: [] }),
       batchIds.length
         ? supabase.from('growing_fee_ledger').select('batch_id, total_fee, amount_paid, balance_due, status').in('batch_id', batchIds).eq('organization_id', organization?.id)
@@ -1143,8 +1143,8 @@ export default function FarmDetail() {
   const events = [
     ...batches.map(b => ({ date: b.start_date, type: 'batch', label: `Batch started — ${Number(b.chick_count).toLocaleString('en-IN')} chicks` })),
     ...distributions.map(d => ({ date: d.date, type: 'dist', label: `${d.type.charAt(0).toUpperCase() + d.type.slice(1)} — ${Number(d.quantity).toLocaleString('en-IN')} ${d.unit} of ${d.item_name}` })),
-    ...sales.map(s => ({ date: s.date, type: 'sale', label: `Sale to ${s.vendors?.name ?? '—'} — ${formatCurrency(s.total_amount)}` })),
-    ...cashCollection.map(c => ({ date: c.date, type: 'payment', label: `Payment from ${c.vendors?.name ?? '—'} — ${formatCurrency(c.amount_paid)}` })),
+    ...sales.map(s => ({ date: s.date, type: 'sale', label: `Sale to ${s.contacts?.name ?? '—'} — ${formatCurrency(s.total_amount)}` })),
+    ...cashCollection.map(c => ({ date: c.date, type: 'payment', label: `Payment from ${c.contacts?.name ?? '—'} — ${formatCurrency(c.amount_paid)}` })),
   ].sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, 8)
 
   // ─── Render ───────────────────────────────────────────────────────────────
@@ -1929,7 +1929,7 @@ export default function FarmDetail() {
                   {sales.map(s => (
                     <tr key={s.id} className="hover:bg-gray-50 transition">
                       <td className="px-5 py-3 text-gray-600">{fmtDate(s.date)}</td>
-                      <td className="px-5 py-3 font-medium text-gray-800">{s.vendors?.name ?? '—'}</td>
+                      <td className="px-5 py-3 font-medium text-gray-800">{s.contacts?.name ?? '—'}</td>
                       <td className="px-5 py-3 text-right text-gray-700">{Number(s.kg_sold).toLocaleString('en-IN')}</td>
                       <td className="px-5 py-3 text-right text-gray-600">{formatCurrency(s.price_per_kg)}</td>
                       <td className="px-5 py-3 text-right font-semibold text-green-700">{formatCurrency(s.total_amount)}</td>

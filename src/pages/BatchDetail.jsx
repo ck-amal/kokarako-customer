@@ -338,7 +338,7 @@ export default function BatchDetail() {
     const span = sale.chicken_count ? 4 : 3
 
     const html = `<!DOCTYPE html><html><head><meta charset="utf-8">
-<title>Invoice – ${sale.vendors?.name || ''} – ${fmtD(sale.date)}</title>
+<title>Invoice – ${sale.contacts?.name || ''} – ${fmtD(sale.date)}</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:'Segoe UI',Arial,sans-serif;color:#1a1a1a;background:#fff;padding:48px}
@@ -382,7 +382,7 @@ td.r{text-align:right}
 </div>
 <hr>
 <div style="margin-bottom:28px">
-  <div class="block" style="margin-bottom:10px"><label>Sold To</label><p style="font-size:18px">${sale.vendors?.name || '—'}</p></div>
+  <div class="block" style="margin-bottom:10px"><label>Sold To</label><p style="font-size:18px">${sale.contacts?.name || '—'}</p></div>
   <p class="sub" style="font-size:12px;color:#9ca3af">${[farm?.name, batch?.start_date ? `Batch ${fmtD(batch.start_date)}` : '', batch?.chick_count ? `${Number(batch.chick_count).toLocaleString('en-IN')} chicks` : ''].filter(Boolean).join(' · ')}</p>
 </div>
 <table>
@@ -466,10 +466,10 @@ ${sale.notes ? `<div class="notes"><strong>Notes</strong>${sale.notes}</div>` : 
       supabase.from('farms').select('id, name, owner_name, owner_phone').eq('id', farmId).eq('organization_id', organization?.id).single(),
       supabase.from('batches').select('*').eq('id', batchId).eq('organization_id', organization?.id).single(),
       supabase.from('distributions').select('*, procurement:procurement_id(id, invoice_number, date), created_by_name, created_at, updated_by_name, updated_at').eq('batch_id', batchId).eq('organization_id', organization?.id).order('date', { ascending: true }),
-      supabase.from('sales').select('*, vendors(name), created_by_name, created_at, updated_by_name, updated_at, confirmed_by_name, confirmed_at').eq('batch_id', batchId).eq('organization_id', organization?.id).order('date', { ascending: true }),
+      supabase.from('sales').select('*, contacts(name), created_by_name, created_at, updated_by_name, updated_at, confirmed_by_name, confirmed_at').eq('batch_id', batchId).eq('organization_id', organization?.id).order('date', { ascending: true }),
       supabase.from('farm_expenses').select('*').eq('batch_id', batchId).eq('organization_id', organization?.id),
       supabase.from('batch_chick_purchases').select('id, quantity, price_per_chick, ancillary_per_chick, total_cost, source, notes, procurement_id, procurement:procurement_id(id, invoice_number, date)').eq('batch_id', batchId).eq('organization_id', organization?.id).order('created_at'),
-      supabase.from('vendors').select('id, name').eq('organization_id', organization?.id).order('name'),
+      supabase.from('contacts').select('id, name').eq('is_vendor', true).eq('organization_id', organization?.id).order('name'),
     ])
     setFarm(farmData)
 
@@ -514,7 +514,7 @@ ${sale.notes ? `<div class="notes"><strong>Notes</strong>${sale.notes}</div>` : 
     const [{ data: batchData }, { data: distData }, { data: salesData }, { data: expData }] = await Promise.all([
       supabase.from('batches').select('*').eq('id', batchId).eq('organization_id', organization?.id).single(),
       supabase.from('distributions').select('*, procurement:procurement_id(id, invoice_number, date), created_by_name, created_at, updated_by_name, updated_at').eq('batch_id', batchId).eq('organization_id', organization?.id).order('date', { ascending: true }),
-      supabase.from('sales').select('*, vendors(name), created_by_name, created_at, updated_by_name, updated_at, confirmed_by_name, confirmed_at').eq('batch_id', batchId).eq('organization_id', organization?.id).order('date', { ascending: true }),
+      supabase.from('sales').select('*, contacts(name), created_by_name, created_at, updated_by_name, updated_at, confirmed_by_name, confirmed_at').eq('batch_id', batchId).eq('organization_id', organization?.id).order('date', { ascending: true }),
       supabase.from('farm_expenses').select('*').eq('batch_id', batchId).eq('organization_id', organization?.id),
     ])
     // Fetch growing fee ledger separately (safe — won't break if migration not run yet)
@@ -1036,7 +1036,7 @@ ${sale.notes ? `<div class="notes"><strong>Notes</strong>${sale.notes}</div>` : 
     ...sales.map(s => ({
       date:   s.date,
       icon:   '💰',
-      label:  `Sale to ${s.vendors?.name ?? '—'} — ${formatCurrency(s.final_amount ?? s.total_amount)}`,
+      label:  `Sale to ${s.contacts?.name ?? '—'} — ${formatCurrency(s.final_amount ?? s.total_amount)}`,
       color:  '#dcfce7',
       border: '#86efac',
     })),
@@ -1083,7 +1083,7 @@ ${sale.notes ? `<div class="notes"><strong>Notes</strong>${sale.notes}</div>` : 
     const salesRows = sales.map(s => `
       <tr>
         <td>${fmtDate(s.date)}</td>
-        <td>${s.vendors?.name || '—'}</td>
+        <td>${s.contacts?.name || '—'}</td>
         <td style="text-align:right">${fmtNum(s.chicken_count)}</td>
         <td style="text-align:right">${fmtNum(s.kg_sold)} kg</td>
         <td style="text-align:right">${fmt(s.price_per_kg)}/kg</td>
@@ -1760,7 +1760,7 @@ ${sale.notes ? `<div class="notes"><strong>Notes</strong>${sale.notes}</div>` : 
                   <tr key={s.id}
                     style={{ borderBottom: i < sales.length - 1 ? '1px solid var(--border)' : 'none' }}>
                     <td className="px-5 py-3" style={{ color: 'var(--text-muted)' }}>{fmtDate(s.date)}</td>
-                    <td className="px-5 py-3 font-medium" style={{ color: 'var(--text)' }}>{s.vendors?.name ?? '—'}</td>
+                    <td className="px-5 py-3 font-medium" style={{ color: 'var(--text)' }}>{s.contacts?.name ?? '—'}</td>
                     <td className="px-5 py-3 text-right" style={{ color: 'var(--text-muted)' }}>{Number(s.kg_sold).toLocaleString('en-IN')}</td>
                     <td className="px-5 py-3 text-right" style={{ color: 'var(--text-muted)' }}>₹{Number(s.price_per_kg).toLocaleString('en-IN')}</td>
                     <td className="px-5 py-3 text-right font-bold" style={{ color: '#15803d' }}>

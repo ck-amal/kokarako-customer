@@ -137,7 +137,7 @@ function CollectionsTab({ collections }) {
             {collections.map(c => (
               <tr key={c.id} className="hover:bg-green-50/30 transition">
                 <td className="px-5 py-3.5 text-gray-500 whitespace-nowrap">
-                  {formatDate(c.created_at?.slice(0, 10), i18n.language)}
+                  {formatDate(c.date, i18n.language)}
                 </td>
                 <td className="px-5 py-3.5 text-right font-semibold text-green-600">
                   {formatCurrency(c.amount_paid)}
@@ -211,12 +211,12 @@ function LedgerTab({ sales, collections, openingBalance }) {
     .filter(c => c.status === 'verified')
     .forEach(c => entries.push({
       id:     c.id,
-      date:   c.created_at?.slice(0, 10) || '',
+      date:   c.date || c.created_at?.slice(0, 10) || '',
       type:   'collection',
-      label:  `Collection — ${c.method || 'Cash'}`,
+      label:  c.entry_type === 'credit' ? 'Vendor Credit' : `Collection — ${c.method || 'Cash'}`,
       sub:    c.notes || '',
-      debit:  0,
-      credit: Number(c.amount_paid),
+      debit:  c.entry_type === 'credit' ? Number(c.amount_paid) : 0,
+      credit: c.entry_type === 'credit' ? 0 : Number(c.amount_paid),
     }))
 
   entries.sort((a, b) => a.date.localeCompare(b.date))
@@ -300,7 +300,7 @@ export default function VendorDetail() {
   async function fetchAll() {
     setLoading(true)
     const [{ data: v }, { data: s }, { data: cc }] = await Promise.all([
-      supabase.from('vendors').select('*').eq('organization_id', organization.id).eq('id', id).single(),
+      supabase.from('contacts').select('*').eq('organization_id', organization.id).eq('id', id).single(),
       supabase
         .from('sales')
         .select('id, date, sale_type, total_amount, final_amount, chicken_count, status, item_id, batch_id, items(name)')
@@ -309,10 +309,10 @@ export default function VendorDetail() {
         .order('date', { ascending: false }),
       supabase
         .from('cash_collection')
-        .select('id, amount_paid, method, status, notes, created_at, collected_by_name')
+        .select('id, date, amount_paid, method, status, notes, created_at, collected_by_name, entry_type')
         .eq('organization_id', organization.id)
         .eq('vendor_id', id)
-        .order('created_at', { ascending: false }),
+        .order('date', { ascending: false }),
     ])
     setVendor(v)
     setSales((s || []).map(r => ({
@@ -340,9 +340,10 @@ export default function VendorDetail() {
   if (!canViewFinancials) return <Navigate to="/dashboard" replace />
 
   const totalSales       = sales.filter(s => s.status === 'confirmed').reduce((sum, s) => sum + Number(s.total_amount || s.final_amount || 0), 0)
-  const totalCollected   = collections.filter(c => c.status === 'verified').reduce((sum, c) => sum + Number(c.amount_paid), 0)
+  const totalCollected   = collections.filter(c => c.status === 'verified' && c.entry_type !== 'credit').reduce((sum, c) => sum + Number(c.amount_paid), 0)
+  const totalCredits     = collections.filter(c => c.status === 'verified' && c.entry_type === 'credit').reduce((sum, c) => sum + Number(c.amount_paid), 0)
   const openingBalance   = Number(vendor?.opening_balance || 0)
-  const outstanding      = openingBalance + totalSales - totalCollected
+  const outstanding      = openingBalance + totalSales + totalCredits - totalCollected
 
   if (loading) {
     return (
@@ -452,7 +453,7 @@ export default function VendorDetail() {
       </div>
 
       {activeTab === 'Sales'       && <SalesTab       sales={sales} />}
-      {activeTab === 'Collections' && <CollectionsTab collections={collections} />}
+      {activeTab === 'Collections' && <CollectionsTab collections={collections.filter(c => c.entry_type !== 'credit')} />}
       {activeTab === 'Ledger'      && <LedgerTab      sales={sales} collections={collections} openingBalance={openingBalance} />}
 
       {/* Add Sale modals */}

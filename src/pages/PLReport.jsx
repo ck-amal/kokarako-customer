@@ -186,7 +186,7 @@ export default function PLReport() {
     const [{ data: s }, { data: p }, { data: fe }, { data: fer }, { data: ex }, { data: soldBatchesInPeriod }] = await Promise.all([
       // Sales (chicken only, batch-filtered; goods sales fetched separately below)
       (() => {
-        let q = supabase.from('sales').select('id, total_amount, date, batch_id, sale_type, item_quantity, purchase_cost_per_unit, vendors(name), items(name)').eq('organization_id', organization?.id).eq('status', 'confirmed').eq('sale_type', 'chicken').gte('date', start).lte('date', end)
+        let q = supabase.from('sales').select('id, total_amount, date, batch_id, sale_type, item_quantity, purchase_cost_per_unit, contacts(name), items(name)').eq('organization_id', organization?.id).eq('status', 'confirmed').eq('sale_type', 'chicken').gte('date', start).lte('date', end)
         if (batchIds) q = q.in('batch_id', batchIds)
         return q
       })(),
@@ -247,7 +247,7 @@ export default function PLReport() {
     // Goods sales: always date-filtered only (not batch-specific)
     const { data: goodsSalesData } = await supabase
       .from('sales')
-      .select('id, total_amount, item_quantity, purchase_cost_per_unit, date, vendors(name), items(name)')
+      .select('id, total_amount, item_quantity, purchase_cost_per_unit, date, contacts(name), items(name)')
       .eq('organization_id', organization?.id)
       .eq('status', 'confirmed')
       .eq('sale_type', 'goods')
@@ -417,11 +417,11 @@ export default function PLReport() {
           {/* REVENUE */}
           <SectionCard title="Revenue">
             <PLRow label="Chicken Sales" amount={revenue}
-              detail={sales.map(s => ({ label: `${fmtDate(s.date)} — ${s.vendors?.name ?? 'Vendor'}`, amount: s.total_amount }))}
+              detail={sales.map(s => ({ label: `${fmtDate(s.date)} — ${s.contacts?.name ?? 'Vendor'}`, amount: s.total_amount }))}
               onExpand={() => toggleExpanded('sales')} expanded={expanded.sales} />
             {goodsRevenue > 0 && (
               <PLRow label="Goods Sales" amount={goodsRevenue}
-                detail={goodsSales.map(s => ({ label: `${fmtDate(s.date)} — ${s.items?.name ?? 'Item'} (${s.vendors?.name ?? 'Vendor'})`, amount: s.total_amount }))}
+                detail={goodsSales.map(s => ({ label: `${fmtDate(s.date)} — ${s.items?.name ?? 'Item'} (${s.contacts?.name ?? 'Vendor'})`, amount: s.total_amount }))}
                 onExpand={() => toggleExpanded('goodsSales')} expanded={expanded.goodsSales} />
             )}
             {ancillaryProfit > 0 && (

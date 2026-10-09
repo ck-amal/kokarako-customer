@@ -123,7 +123,7 @@ export default function BatchReport() {
       // 5. All confirmed sales linked to this batch
       const { data: sales } = await supabase
         .from('sales')
-        .select('*, vendors(name)')
+        .select('*, contacts(name)')
         .eq('organization_id', organization?.id)
         .eq('batch_id', id)
         .eq('status', 'confirmed')
@@ -351,7 +351,7 @@ export default function BatchReport() {
               {sal.map(s => (
                 <tr key={s.id} className="hover:bg-gray-50">
                   <td className="px-5 py-3 text-gray-600">{fmtDate(s.date)}</td>
-                  <td className="px-5 py-3 text-gray-700">{s.vendors?.name ?? '—'}</td>
+                  <td className="px-5 py-3 text-gray-700">{s.contacts?.name ?? '—'}</td>
                   <td className="px-5 py-3 text-right text-gray-700">{Number(s.kg_sold).toLocaleString('en-IN', { maximumFractionDigits: 2 })} kg</td>
                   <td className="px-5 py-3 text-right text-gray-700">{fmt(s.price_per_kg)}</td>
                   <td className="px-5 py-3 text-right font-semibold text-gray-800">{fmt(s.total_amount)}</td>
