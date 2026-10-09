@@ -120,13 +120,14 @@ function ProcurementModal({ onClose, onSaved }) {
   const [suppliers, setSuppliers]   = useState([])
   const [accounts, setAccounts]     = useState([])
   const [supplierOutstanding, setSupplierOutstanding] = useState(null)
-  const newLine = () => ({ item_type_id: '', item_id: '', quantity: '', cost_per_unit: '', cost: '', discount: '', items: [], extra_enabled: false, extra_per_unit: '0' })
+  const newLine = () => ({ item_type_id: '', item_id: '', quantity: '', cost_per_unit: '', cost: '', items: [], extra_enabled: false, extra_per_unit: '0' })
   const [lines, setLines] = useState([newLine()])
   const [header, setHeader] = useState({
     supplier_id:    '',
     date:           new Date().toISOString().slice(0, 10),
     invoice_number: '',
     notes:          '',
+    discount:       '',
     pay_now:        false,
     account_id:     '',
   })
@@ -184,17 +185,15 @@ function ProcurementModal({ onClose, onSaved }) {
     updateLine(i, { items, item_id: items[0]?.id || '', extra_enabled: hasRule, extra_per_unit: autoPerUnit })
   }
 
-  // Per-line field setter with auto-calc for quantity / cost_per_unit / discount
+  // Per-line field setter with auto-calc for quantity / cost_per_unit
   function setLineField(i, field, value) {
     setLines(prev => prev.map((ln, idx) => {
       if (idx !== i) return ln
       const next = { ...ln, [field]: value }
-      if (field === 'quantity' || field === 'cost_per_unit' || field === 'discount') {
-        const qty  = parseFloat(field === 'quantity'      ? value : ln.quantity)       || 0
-        const cpu  = parseFloat(field === 'cost_per_unit' ? value : ln.cost_per_unit)  || 0
-        const disc = parseFloat(field === 'discount'      ? value : (ln.discount || '0')) || 0
-        const gross = qty * cpu
-        next.cost = gross > 0 ? String(roundCurrency(Math.max(0, gross - disc))) : ''
+      if (field === 'quantity' || field === 'cost_per_unit') {
+        const qty = parseFloat(field === 'quantity' ? value : ln.quantity) || 0
+        const cpu = parseFloat(field === 'cost_per_unit' ? value : ln.cost_per_unit) || 0
+        next.cost = qty && cpu ? String(roundCurrency(qty * cpu)) : next.cost
       }
       // Auto-recompute percentage ancillary when cost_per_unit changes
       if (field === 'cost_per_unit' && next.extra_enabled) {
@@ -317,17 +316,24 @@ function ProcurementModal({ onClose, onSaved }) {
       if (!item) { setError(t('errors.required')); return }
       const qty = Number(ln.quantity)
       if (!qty || qty <= 0) { setError(`${t('procurement.quantity')} *`); return }
-      const disc = parseFloat(ln.discount) || 0
       const cost = Number(ln.cost)
       if (!cost || cost < 0) { setError(`${t('procurement.totalCost')} *`); return }
-      const cpu = qty > 0 ? roundCurrency(cost / qty) : 0
+      const cpu = parseFloat(ln.cost_per_unit) || (qty > 0 ? roundCurrency(cost / qty) : 0)
       const typeName = itemTypes.find(it => it.id === ln.item_type_id)?.name?.toLowerCase() ?? 'other'
       const extraEnabled = !!ln.extra_enabled
       const extraPerUnit = extraEnabled ? (parseFloat(ln.extra_per_unit) || 0) : 0
-      prepared.push({ item, item_id: ln.item_id, qty, cost, cpu, typeName, extraEnabled, extraPerUnit, disc })
+      prepared.push({ item, item_id: ln.item_id, qty, cost, cpu, typeName, extraEnabled, extraPerUnit })
     }
 
     setSaving(true)
+    const overallDiscount = parseFloat(header.discount) || 0
+    const grandTotalBase  = prepared.reduce((s, p) => s + p.cost, 0)
+    // Distribute discount proportionally across lines
+    prepared.forEach(p => {
+      p.lineDiscount = overallDiscount > 0 && grandTotalBase > 0
+        ? roundCurrency(overallDiscount * (p.cost / grandTotalBase))
+        : 0
+    })
     // All lines in one save share the same group ID (so they group together)
     const purchaseGroupId = crypto.randomUUID()
     let firstProcurementId = null
@@ -345,7 +351,8 @@ function ProcurementModal({ onClose, onSaved }) {
         supplier_id:   header.supplier_id || null,
         date:          header.date,
         invoice_number: header.invoice_number.trim() || null,
-        notes:         [header.notes.trim(), p.disc > 0 ? `Discount: ₹${p.disc.toLocaleString('en-IN')}` : ''].filter(Boolean).join(' | ') || null,
+        discount:      p.lineDiscount,
+        notes:         header.notes.trim() || null,
         has_extra_expense:     p.extraEnabled,
         extra_expense_per_unit: p.extraPerUnit,
         purchase_group_id:     purchaseGroupId,
@@ -364,7 +371,7 @@ function ProcurementModal({ onClose, onSaved }) {
           transaction_type: 'out',
           category:         'procurement',
           description:      `Purchase — ${p.item.name}`,
-          amount:           p.cost,
+          amount:           roundCurrency(p.cost - p.lineDiscount),
           transaction_date: header.date,
           reference_type:   'procurement',
           reference_id:     inserted.id,
@@ -638,36 +645,12 @@ function ProcurementModal({ onClose, onSaved }) {
                       />
                     </div>
                     <div>
-                      <label className="block text-xs font-medium text-gray-600 mb-1">Discount (₹)</label>
-                      <input
-                        type="number" min="0" step="0.01"
-                        value={ln.discount} onChange={e => setLineField(i, 'discount', e.target.value)}
-                        placeholder="0"
-                        className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
-                      />
+                      <label className="block text-xs font-medium text-gray-600 mb-1">{t('procurement.totalCost')} (₹)</label>
+                      <div className="w-full rounded-lg border border-gray-100 bg-gray-50 px-3 py-2 text-sm font-semibold text-gray-700">
+                        {parseFloat(ln.cost) > 0 ? formatCurrency(parseFloat(ln.cost)) : <span className="font-normal text-gray-400">Auto</span>}
+                      </div>
                     </div>
                   </div>
-                  {/* Net total display */}
-                  {(() => {
-                    const qty  = parseFloat(ln.quantity)      || 0
-                    const cpu  = parseFloat(ln.cost_per_unit) || 0
-                    const disc = parseFloat(ln.discount)      || 0
-                    const gross = roundCurrency(qty * cpu)
-                    const net   = roundCurrency(Math.max(0, gross - disc))
-                    if (!qty || !cpu) return null
-                    return (
-                      <div className="flex items-center justify-between text-xs mt-1.5 px-1">
-                        <span className="text-gray-400">
-                          {disc > 0
-                            ? `Gross ₹${gross.toLocaleString('en-IN')} − discount ₹${disc.toLocaleString('en-IN')}`
-                            : `${qty.toLocaleString('en-IN')} × ₹${cpu.toLocaleString('en-IN')}`}
-                        </span>
-                        <span className="font-semibold text-amber-700">
-                          Net: ₹{net.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
-                        </span>
-                      </div>
-                    )
-                  })()}
 
                   {/* Ancillary expense — shown only if item type has a rule configured */}
                   {(() => {
@@ -716,13 +699,35 @@ function ProcurementModal({ onClose, onSaved }) {
             </button>
           </div>
 
-          {/* Grand total */}
-          {grandTotal > 0 && (
-            <div className="flex items-center justify-between rounded-lg bg-amber-50 border border-amber-200 px-4 py-2.5">
-              <span className="text-xs text-amber-700 font-medium uppercase tracking-wide">{t('common.total')}</span>
-              <span className="text-base font-bold text-amber-700">{formatCurrency(grandTotal)}</span>
-            </div>
-          )}
+          {/* Grand total + discount */}
+          {grandTotal > 0 && (() => {
+            const disc    = parseFloat(header.discount) || 0
+            const netPay  = roundCurrency(Math.max(0, grandTotal - disc))
+            return (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-amber-700 font-medium uppercase tracking-wide">Gross Total</span>
+                  <span className="text-sm font-semibold text-amber-700">{formatCurrency(grandTotal)}</span>
+                </div>
+                <div className="flex items-center gap-3">
+                  <label className="text-xs text-amber-700 font-medium uppercase tracking-wide whitespace-nowrap">Discount (₹)</label>
+                  <input
+                    type="number" min="0" step="0.01" max={grandTotal}
+                    value={header.discount}
+                    onChange={e => setHeader(h => ({ ...h, discount: e.target.value }))}
+                    placeholder="0"
+                    className="flex-1 rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
+                  />
+                </div>
+                {disc > 0 && (
+                  <div className="flex items-center justify-between border-t border-amber-200 pt-2">
+                    <span className="text-xs text-amber-800 font-bold uppercase tracking-wide">Net Payable</span>
+                    <span className="text-base font-bold text-amber-800">{formatCurrency(netPay)}</span>
+                  </div>
+                )}
+              </div>
+            )
+          })()}
 
           {/* Notes */}
           <div>

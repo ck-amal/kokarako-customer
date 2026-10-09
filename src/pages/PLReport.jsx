@@ -142,6 +142,7 @@ export default function PLReport() {
   const [fcrBatches,        setFcrBatches]        = useState([])
   const [growingFeeLedger,  setGrowingFeeLedger]  = useState([]) // full accrual — total_fee per closed batch
   const [chickPurchasesData,setChickPurchasesData]= useState([]) // for ancillary profit
+  const [procDiscounts,     setProcDiscounts]     = useState([]) // supplier discounts
 
   // Expanded rows
   const [expanded,    setExpanded]    = useState({})
@@ -253,6 +254,14 @@ export default function PLReport() {
       .gte('date', start)
       .lte('date', end)
 
+    // Supplier discounts — all procurement types in the period where a discount was applied
+    const discQ = supabase.from('procurement')
+      .select('id, item_name, discount, date, type')
+      .eq('organization_id', organization?.id)
+      .gt('discount', 0)
+      .gte('date', start).lte('date', end)
+    const { data: discountData } = batchIds ? await discQ.in('batch_id', batchIds) : await discQ
+
     // Fetch batch_chick_purchases for batches started in the period (for ancillary profit)
     const { data: startedBatches } = await supabase
       .from('batches').select('id').eq('organization_id', organization?.id).gte('start_date', start).lte('start_date', end)
@@ -274,6 +283,7 @@ export default function PLReport() {
     setGrowingFeeLedger(gfLedger)
     setFcrBatches(fcrData || [])
     setChickPurchasesData(cpData)
+    setProcDiscounts(discountData || [])
     setLoading(false)
   }
 
@@ -283,7 +293,8 @@ export default function PLReport() {
   const goodsRevenue   = useMemo(() => goodsSales.reduce((s, r) => s + Number(r.total_amount), 0), [goodsSales])
   const ancillaryProfit= useMemo(() => chickPurchasesData.reduce((s, p) => s + Number(p.ancillary_per_chick || 0) * Number(p.quantity || 0), 0), [chickPurchasesData])
   const totalRevenue   = revenue + goodsRevenue + ancillaryProfit
-  const goodsCOGS    = useMemo(() => goodsSales.reduce((s, r) => s + Number(r.purchase_cost_per_unit || 0) * Number(r.item_quantity || 0), 0), [goodsSales])
+  const goodsCOGS       = useMemo(() => goodsSales.reduce((s, r) => s + Number(r.purchase_cost_per_unit || 0) * Number(r.item_quantity || 0), 0), [goodsSales])
+  const supplierDiscount = useMemo(() => procDiscounts.reduce((s, r) => s + Number(r.discount || 0), 0), [procDiscounts])
 
   const chickCost   = useMemo(() => procurement.reduce((s, r) => s + Number(r.cost), 0), [procurement])
   const feedCost    = useMemo(() => {
@@ -297,7 +308,7 @@ export default function PLReport() {
     return Math.max(0, gross - credit)
   }, [farmExp, farmExpReturns])
   const directExp   = useMemo(() => expenses.filter(e => e.expense_category_type === 'cogs').reduce((s, e) => s + Number(e.amount), 0), [expenses])
-  const totalCOGS   = chickCost + feedCost + medCost + directExp + goodsCOGS
+  const totalCOGS   = chickCost + feedCost + medCost + directExp + goodsCOGS - supplierDiscount
 
   const grossProfit = totalRevenue - totalCOGS
 
@@ -439,6 +450,11 @@ export default function PLReport() {
             <PLRow label="Direct Expenses" amount={directExp}
               detail={expenses.filter(e => e.expense_category_type === 'cogs').map(e => ({ label: `${fmtDate(e.date)} — ${e.description || e.category}`, amount: e.amount }))}
               onExpand={() => toggleExpanded('directExp')} expanded={expanded.directExp} />
+            {supplierDiscount > 0 && (
+              <PLRow label="Supplier Discounts (savings)" amount={-supplierDiscount}
+                detail={procDiscounts.map(r => ({ label: `${fmtDate(r.date)} — ${r.item_name}`, amount: -r.discount }))}
+                onExpand={() => toggleExpanded('supplierDiscount')} expanded={expanded.supplierDiscount} />
+            )}
             <Divider />
             <PLRow label="Total COGS" amount={totalCOGS} bold />
           </SectionCard>
