@@ -415,14 +415,14 @@ function ProcurementModal({ onClose, onSaved }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
-      <div className="w-full max-w-2xl bg-white rounded-2xl shadow-xl p-6 max-h-[90vh] overflow-y-auto">
+      <div className="w-full max-w-2xl bg-white rounded-2xl shadow-xl max-h-[90vh] flex flex-col">
 
-        <div className="flex items-center justify-between mb-5">
+        <div className="flex items-center justify-between px-6 py-5 border-b border-gray-100 shrink-0">
           <h2 className="text-lg font-semibold text-gray-800">{t('procurement.addPurchase')}</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form onSubmit={handleSubmit} className="space-y-4 overflow-y-auto px-6 py-5">
 
           {/* Supplier + Date (shared across the purchase) */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
