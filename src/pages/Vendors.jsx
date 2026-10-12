@@ -23,9 +23,10 @@ function VendorModal({ vendor, onClose, onSaved }) {
     : 0
 
   const [form, setForm]       = useState({
-    name:    vendor?.name    ?? '',
-    phone:   vendor?.phone   ?? '',
-    balance: isEdit ? String(currentOutstanding) : '0',
+    name:         vendor?.name        ?? '',
+    phone:        vendor?.phone       ?? '',
+    balance:      isEdit ? String(currentOutstanding) : '0',
+    also_supplier: vendor?.is_supplier ?? false,
   })
   const [saving, setSaving]   = useState(false)
   const [error, setError]     = useState('')
@@ -48,6 +49,7 @@ function VendorModal({ vendor, onClose, onSaved }) {
       name:            form.name.trim(),
       phone:           form.phone.trim() || null,
       opening_balance: openingBal,
+      is_supplier:     form.also_supplier,
     }
 
     const { error } = isEdit
@@ -145,6 +147,19 @@ function VendorModal({ vendor, onClose, onSaved }) {
             </p>
           </div>
 
+          <label className="flex items-center gap-3 cursor-pointer rounded-lg border border-gray-200 px-3 py-2.5">
+            <input
+              type="checkbox"
+              checked={form.also_supplier}
+              onChange={e => setForm(f => ({ ...f, also_supplier: e.target.checked }))}
+              className="h-4 w-4 rounded border-gray-300 accent-amber-500"
+            />
+            <div>
+              <p className="text-sm font-medium text-gray-700">Also a Supplier?</p>
+              <p className="text-xs text-gray-400">This contact can also supply goods (feed, medicine, etc.)</p>
+            </div>
+          </label>
+
           {error && (
             <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</p>
           )}
@@ -237,19 +252,20 @@ export default function Vendors() {
         .order('vendor_name'),
       supabase
         .from('contacts')
-        .select('id, phone')
+        .select('id, phone, is_supplier')
         .eq('is_vendor', true)
         .eq('organization_id', organization?.id),
     ])
 
-    const phoneMap = {}
-    rawVendors?.forEach(v => { phoneMap[v.id] = v.phone })
+    const contactMap = {}
+    rawVendors?.forEach(v => { contactMap[v.id] = { phone: v.phone, is_supplier: v.is_supplier } })
 
     setVendors(
       (data || []).map(v => ({
         id:              v.vendor_id,
         name:            v.vendor_name,
-        phone:           phoneMap[v.vendor_id] ?? '',
+        phone:           contactMap[v.vendor_id]?.phone ?? '',
+        is_supplier:     contactMap[v.vendor_id]?.is_supplier ?? false,
         opening_balance: Number(v.opening_balance || 0),
         total_sales:     Number(v.total_sales || 0),
         total_collected: Number(v.total_collected || 0),

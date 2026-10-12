@@ -31,11 +31,12 @@ function SupplierModal({ supplier, onClose, onSaved }) {
     : 0
 
   const [form, setForm] = useState({
-    name:    supplier?.name    ?? '',
-    phone:   supplier?.phone   ?? '',
-    address: supplier?.address ?? '',
-    notes:   supplier?.notes   ?? '',
-    balance: String(currentOutstanding),
+    name:       supplier?.name       ?? '',
+    phone:      supplier?.phone      ?? '',
+    address:    supplier?.address    ?? '',
+    notes:      supplier?.notes      ?? '',
+    balance:    String(currentOutstanding),
+    also_vendor: supplier?.is_vendor ?? false,
   })
   const [saving,   setSaving]   = useState(false)
   const [error,    setError]    = useState('')
@@ -64,6 +65,7 @@ function SupplierModal({ supplier, onClose, onSaved }) {
       address:         form.address.trim() || null,
       notes:           form.notes.trim()   || null,
       opening_balance: openingBal,
+      is_vendor:       form.also_vendor,
     }
 
     const { error: err } = isEdit
@@ -174,6 +176,19 @@ function SupplierModal({ supplier, onClose, onSaved }) {
                 : 'What is owed to this supplier before using this system. Positive = we owe them, Negative = advance already given.'}
             </p>
           </div>
+
+          <label className="flex items-center gap-3 cursor-pointer rounded-lg border border-gray-200 px-3 py-2.5">
+            <input
+              type="checkbox"
+              checked={form.also_vendor}
+              onChange={e => setForm(f => ({ ...f, also_vendor: e.target.checked }))}
+              className="h-4 w-4 rounded border-gray-300 accent-amber-500"
+            />
+            <div>
+              <p className="text-sm font-medium text-gray-700">Also a Vendor?</p>
+              <p className="text-xs text-gray-400">This contact can also buy chickens from you</p>
+            </div>
+          </label>
 
           {error && (
             <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</p>
