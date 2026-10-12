@@ -1,18 +1,59 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
 
+const ROLE_LABELS = {
+  owner: 'Owner', manager: 'Manager', farm_supervisor: 'Farm Supervisor',
+  accountant: 'Accountant', viewer: 'Viewer',
+}
+
 export default function OrgSetup() {
   const navigate = useNavigate()
   const { t } = useTranslation()
-  const { refreshOrg, signOut } = useAuth()
-  const [mode,    setMode]    = useState('') // 'create' | 'join'
-  const [token,   setToken]   = useState('')
-  const [name,    setName]    = useState('')
-  const [error,   setError]   = useState('')
-  const [loading, setLoading] = useState(false)
+  const { user, refreshOrg, signOut } = useAuth()
+  const [mode,       setMode]       = useState('') // 'create' | 'join'
+  const [token,      setToken]      = useState('')
+  const [name,       setName]       = useState('')
+  const [error,      setError]      = useState('')
+  const [loading,    setLoading]    = useState(false)
+  const [pendingInvs, setPendingInvs] = useState([])
+  const [accepting,  setAccepting]  = useState(null) // invitation id being accepted
+
+  useEffect(() => {
+    async function fetchPendingInvitations() {
+      if (!user?.email) return
+      const { data } = await supabase
+        .from('invitations')
+        .select('id, token, role, organization_id, organizations(name)')
+        .eq('email', user.email.toLowerCase())
+        .is('accepted_at', null)
+        .gt('expires_at', new Date().toISOString())
+      setPendingInvs(data || [])
+    }
+    fetchPendingInvitations()
+  }, [user])
+
+  async function handleAcceptInvitation(inv) {
+    setAccepting(inv.id); setError('')
+    const { data: { user: authUser } } = await supabase.auth.getUser()
+    const { data, error: rpcErr } = await supabase.rpc('accept_invitation', {
+      p_token:   inv.token,
+      p_user_id: authUser.id,
+    })
+    if (rpcErr || data?.error) {
+      setError(rpcErr?.message || data?.error)
+      setAccepting(null)
+      return
+    }
+    await refreshOrg()
+    navigate('/dashboard')
+  }
+
+  async function handleDeclineInvitation(inv) {
+    setPendingInvs(prev => prev.filter(i => i.id !== inv.id))
+  }
 
   async function handleCreate(e) {
     e.preventDefault()
@@ -75,6 +116,50 @@ export default function OrgSetup() {
           <h1 className="text-2xl font-bold text-gray-800">{t('org.setup')}</h1>
           <p className="text-sm text-gray-500 mt-1">Create a new organisation or join one with an invite</p>
         </div>
+
+        {/* Pending invitations — shown when the user's email has active invites */}
+        {pendingInvs.length > 0 && !mode && (
+          <div className="space-y-3 mb-4">
+            <p className="text-xs font-bold text-gray-500 uppercase tracking-widest text-center">
+              You have {pendingInvs.length === 1 ? 'an invitation' : `${pendingInvs.length} invitations`}
+            </p>
+            {pendingInvs.map(inv => (
+              <div key={inv.id} className="bg-white rounded-2xl border-2 border-amber-300 p-5 shadow-sm">
+                <div className="flex items-start gap-3">
+                  <div className="shrink-0 h-10 w-10 rounded-xl bg-amber-100 flex items-center justify-center text-xl">🐔</div>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-semibold text-gray-800 truncate">{inv.organizations?.name}</p>
+                    <p className="text-sm text-gray-500 mt-0.5">
+                      Invited as <span className="font-medium text-amber-700">{ROLE_LABELS[inv.role] ?? inv.role}</span>
+                    </p>
+                  </div>
+                </div>
+                {error && accepting === inv.id && (
+                  <p className="mt-3 text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</p>
+                )}
+                <div className="flex gap-2 mt-4">
+                  <button
+                    onClick={() => handleDeclineInvitation(inv)}
+                    disabled={accepting === inv.id}
+                    className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-50 transition">
+                    Decline
+                  </button>
+                  <button
+                    onClick={() => handleAcceptInvitation(inv)}
+                    disabled={accepting !== null}
+                    className="flex-1 rounded-lg bg-amber-500 hover:bg-amber-600 disabled:opacity-60 px-4 py-2 text-sm font-semibold text-white transition">
+                    {accepting === inv.id ? 'Joining…' : 'Accept & Join'}
+                  </button>
+                </div>
+              </div>
+            ))}
+            <div className="flex items-center gap-3 py-1">
+              <div className="flex-1 border-t border-gray-200" />
+              <span className="text-xs text-gray-400">or</span>
+              <div className="flex-1 border-t border-gray-200" />
+            </div>
+          </div>
+        )}
 
         {!mode && (
           <div className="space-y-3">

@@ -111,8 +111,19 @@ export function AuthProvider({ children }) {
         return
       }
 
-      // INITIAL_SESSION, SIGNED_IN, PASSWORD_RECOVERY — full org context load
-      loadOrgContext(session?.user ?? null)
+      // INITIAL_SESSION, SIGNED_IN, PASSWORD_RECOVERY — full org context load.
+      // If a Google OAuth invite redirect stored a token, accept it first so
+      // loadOrgContext finds the org on the very first load.
+      const pendingToken = localStorage.getItem('kokarako_invite_token')
+      if (pendingToken && session?.user) {
+        localStorage.removeItem('kokarako_invite_token');
+        (async () => {
+          await supabase.rpc('accept_invitation', { p_token: pendingToken, p_user_id: session.user.id })
+          await loadOrgContext(session.user)
+        })()
+      } else {
+        loadOrgContext(session?.user ?? null)
+      }
     })
 
     return () => subscription.unsubscribe()
