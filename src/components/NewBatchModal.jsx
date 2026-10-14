@@ -115,6 +115,13 @@ export default function NewBatchModal({ farmId, farms = [], initialFarmId, onClo
       return
     }
 
+    // Guard: if balance shows chicks available but no procurement lots exist,
+    // we'd create a zero-cost batch with no lot link — block this instead.
+    if (chickBalance !== null && chickBalance >= chickCount && chickCount > 0 && chickLots.length === 0) {
+      setError('Chick stock is recorded but no open procurement lot was found. Please add procurement first or check existing lots.')
+      return
+    }
+
     setSaving(true)
     const userName = user?.user_metadata?.full_name || user?.email || 'Unknown'
 
@@ -166,7 +173,8 @@ export default function NewBatchModal({ farmId, farms = [], initialFarmId, onClo
     const lotMap = Object.fromEntries(chickLots.map(l => [l.id, l]))
     const brandQty = {}
     for (const { procId, qty } of allocRows) {
-      const lotItemName = lotMap[procId]?.itemName || 'Chicks'
+      const lotItemName = lotMap[procId]?.itemName
+      if (!lotItemName) continue // skip if no valid lot — prevents generic 'Chicks' fallback corrupting stock
       brandQty[lotItemName] = (brandQty[lotItemName] || 0) + qty
     }
     for (const [name, qty] of Object.entries(brandQty)) {
