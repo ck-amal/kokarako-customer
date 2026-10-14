@@ -117,7 +117,7 @@ export async function getProcurementLots({ itemId, itemName, itemTypeName, organ
 
   let query = supabase
     .from('procurement')
-    .select('id, date, quantity, unit, cost_per_unit, item_name, invoice_number, suppliers(name), has_extra_expense, extra_expense_per_unit')
+    .select('id, date, quantity, unit, cost_per_unit, item_name, invoice_number, contacts(name), has_extra_expense, extra_expense_per_unit')
     .eq('organization_id', organizationId)
     .eq('is_return', false)
     .order('date', { ascending: true })
@@ -165,7 +165,7 @@ export async function getProcurementLots({ itemId, itemName, itemTypeName, organ
       id:                  p.id,
       itemName:            p.item_name || null,
       date:                p.date,
-      supplier:            p.suppliers?.name || null,
+      supplier:            p.contacts?.name || null,
       invoice:             p.invoice_number || null,
       procured,
       unit:                p.unit,
