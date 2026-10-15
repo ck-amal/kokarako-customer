@@ -184,6 +184,18 @@ export default function NewBatchModal({ farmId, farms = [], initialFarmId, onClo
         referenceType: 'batch', referenceId: inserted.id,
         date: form.start_date, organizationId: organization?.id,
       })
+      // Keep stock cache in sync — procurement adds to it, batch placement must subtract
+      const { data: stockRow } = await supabase
+        .from('stock')
+        .select('id, quantity')
+        .ilike('item_name', name)
+        .eq('organization_id', organization?.id)
+        .maybeSingle()
+      if (stockRow) {
+        await supabase.from('stock')
+          .update({ quantity: Math.max(0, Number(stockRow.quantity) - qty) })
+          .eq('id', stockRow.id)
+      }
     }
 
     onSaved()
