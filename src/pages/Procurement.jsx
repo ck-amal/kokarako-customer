@@ -816,6 +816,7 @@ function EditProcurementModal({ proc, onClose, onSaved }) {
     notes:          proc.notes || '',
     quantity:       String(proc.quantity),
     cost_per_unit:  String(proc.cost_per_unit ?? (Number(proc.cost) / Number(proc.quantity) || 0)),
+    discount:       proc.discount > 0 ? String(proc.discount) : '',
   })
   const [hasExtra,     setHasExtra]     = useState(Boolean(proc.has_extra_expense))
   const [extraPerUnit, setExtraPerUnit] = useState(
@@ -879,6 +880,7 @@ function EditProcurementModal({ proc, onClose, onSaved }) {
       quantity:              newQty,
       cost:                  newCost,
       cost_per_unit:         newCpu,
+      discount:              parseFloat(form.discount) || 0,
       has_extra_expense:     hasExtra,
       extra_expense_per_unit: newExtraPerUnit,
       updated_by_id:         user?.id,
@@ -1034,15 +1036,27 @@ function EditProcurementModal({ proc, onClose, onSaved }) {
             </div>
           )}
 
-          <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">{t('common.notes')}</label>
-            <input value={form.notes} onChange={set('notes')} placeholder="Optional" className={inputCls} />
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Discount (₹)</label>
+              <input type="number" min="0" step="any"
+                value={form.discount} onChange={set('discount')} placeholder="0" className={inputCls} />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">{t('common.notes')}</label>
+              <input value={form.notes} onChange={set('notes')} placeholder="Optional" className={inputCls} />
+            </div>
           </div>
 
           {form.quantity && form.cost_per_unit && Number(form.quantity) > 0 && (
-            <p className="text-xs text-gray-400">
-              Total cost: {formatCurrency(parseFloat(form.quantity) * parseFloat(form.cost_per_unit))}
-            </p>
+            <div className="text-xs text-gray-400 space-y-0.5">
+              <p>Gross cost: {formatCurrency(parseFloat(form.quantity) * parseFloat(form.cost_per_unit))}</p>
+              {parseFloat(form.discount) > 0 && (
+                <p className="text-green-600 font-medium">
+                  Net cost: {formatCurrency(parseFloat(form.quantity) * parseFloat(form.cost_per_unit) - (parseFloat(form.discount) || 0))}
+                </p>
+              )}
+            </div>
           )}
 
           {error && <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</p>}
