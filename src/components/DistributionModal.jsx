@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { supabase } from '../lib/supabaseClient'
 import { ledgerOut, getProcurementLots } from '../lib/stockLedger'
-import { roundCurrency } from '../utils/format'
+import { roundCurrency, formatCurrency } from '../utils/format'
 import { formatDate } from '../utils/dateFormat'
 import { useAuth } from '../contexts/AuthContext'
 
@@ -47,6 +47,25 @@ function lineCanonQty(ln) {
   return (isBag || isBottle)
     ? (parseFloat(ln.canonCount) || 0) + (parseFloat(ln.subCount) || 0) / factor
     : (parseFloat(ln.canonCount) || 0)
+}
+
+function lineEstimatedCost(ln) {
+  const canonQty = lineCanonQty(ln)
+  if (!canonQty || !ln.procLots.length) return null
+  const multiLot = ln.procLots.length > 1
+  let cost = 0, ancillary = 0
+  if (multiLot) {
+    for (const lot of ln.procLots) {
+      const q = Number(ln.lotAllocs[lot.id] || 0)
+      cost += q * lot.costPerUnit
+      ancillary += q * lot.extraExpensePerUnit
+    }
+  } else {
+    const lot = ln.procLots[0]
+    cost = canonQty * lot.costPerUnit
+    ancillary = canonQty * lot.extraExpensePerUnit
+  }
+  return { cost: roundCurrency(cost), ancillary: roundCurrency(ancillary) }
 }
 
 export default function DistributionModal({ farmId, initialBatchId, onClose, onSaved }) {
@@ -437,38 +456,76 @@ export default function DistributionModal({ farmId, initialBatchId, onClose, onS
                   {!ln.lotsLoading && multiLot && canonQty > 0 && (
                     <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-3 space-y-2.5">
                       <p className="text-xs font-semibold text-indigo-700">Allocate from procurement lots (FIFO pre-filled):</p>
-                      {ln.procLots.map(lot => (
-                        <div key={lot.id} className="flex items-center gap-2">
-                          <div className="flex-1 min-w-0">
-                            <p className="text-xs font-medium text-gray-700 truncate">
-                              {fmtDate(lot.date, i18n.language)}{lot.supplier && ` — ${lot.supplier}`}
-                            </p>
-                            <p className="text-xs text-gray-400">
-                              {lot.invoice && `${lot.invoice} · `}{fmtQty(lot.remaining)} {lot.unit} available
-                            </p>
+                      {ln.procLots.map(lot => {
+                        const allocQty = Number(ln.lotAllocs[lot.id] || 0)
+                        const lotCost  = allocQty > 0 ? roundCurrency(allocQty * lot.costPerUnit) : null
+                        return (
+                          <div key={lot.id} className="flex items-start gap-2">
+                            <div className="flex-1 min-w-0">
+                              <p className="text-xs font-medium text-gray-700 truncate">
+                                {fmtDate(lot.date, i18n.language)}{lot.supplier && ` — ${lot.supplier}`}
+                              </p>
+                              <p className="text-xs text-gray-400">
+                                {lot.invoice && `${lot.invoice} · `}{fmtQty(lot.remaining)} {lot.unit} available
+                              </p>
+                              <p className="text-xs text-indigo-600 font-medium mt-0.5">
+                                {formatCurrency(lot.costPerUnit)}/{lot.unit}
+                                {lot.extraExpensePerUnit > 0 && (
+                                  <span className="text-amber-600"> + {formatCurrency(lot.extraExpensePerUnit)} ancillary</span>
+                                )}
+                                {lotCost !== null && (
+                                  <span className="text-gray-500 font-normal"> · Total: {formatCurrency(lotCost)}</span>
+                                )}
+                              </p>
+                            </div>
+                            <div className="flex items-center gap-1.5 shrink-0 mt-0.5">
+                              <input type="number" min="0" max={lot.remaining} step="any"
+                                value={ln.lotAllocs[lot.id] ?? ''}
+                                onChange={e => patchLine(i, { lotAllocs: { ...ln.lotAllocs, [lot.id]: parseFloat(e.target.value) || 0 } })}
+                                className="w-24 rounded-lg border border-gray-300 px-2 py-1.5 text-sm text-right focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                              />
+                              <span className="text-xs text-gray-400 whitespace-nowrap">{canonLabel}</span>
+                            </div>
                           </div>
-                          <div className="flex items-center gap-1.5 shrink-0">
-                            <input type="number" min="0" max={lot.remaining} step="any"
-                              value={ln.lotAllocs[lot.id] ?? ''}
-                              onChange={e => patchLine(i, { lotAllocs: { ...ln.lotAllocs, [lot.id]: parseFloat(e.target.value) || 0 } })}
-                              className="w-24 rounded-lg border border-gray-300 px-2 py-1.5 text-sm text-right focus:outline-none focus:ring-2 focus:ring-indigo-400"
-                            />
-                            <span className="text-xs text-gray-400 whitespace-nowrap">{canonLabel}</span>
-                          </div>
-                        </div>
-                      ))}
+                        )
+                      })}
                       <div className={`text-xs font-semibold pt-1 border-t border-indigo-200 ${allocMatches ? 'text-green-600' : 'text-red-500'}`}>
                         Total: {fmtQty(allocTotal)} / {fmtQty(canonQty)} {canonLabel}{allocMatches ? ' ✓' : ' — must match quantity'}
                       </div>
                     </div>
                   )}
                   {!ln.lotsLoading && !multiLot && ln.procLots.length === 1 && (
-                    <p className="text-xs text-gray-400">
-                      From: {fmtDate(ln.procLots[0].date, i18n.language)}
-                      {ln.procLots[0].supplier && ` (${ln.procLots[0].supplier})`}
-                      {ln.procLots[0].invoice && ` · ${ln.procLots[0].invoice}`}
-                    </p>
+                    <div className="rounded-lg bg-indigo-50 border border-indigo-100 px-3 py-2 space-y-0.5">
+                      <p className="text-xs text-gray-500">
+                        From: {fmtDate(ln.procLots[0].date, i18n.language)}
+                        {ln.procLots[0].supplier && ` (${ln.procLots[0].supplier})`}
+                        {ln.procLots[0].invoice && ` · ${ln.procLots[0].invoice}`}
+                      </p>
+                      <p className="text-xs text-indigo-600 font-medium">
+                        {formatCurrency(ln.procLots[0].costPerUnit)}/{ln.procLots[0].unit}
+                        {ln.procLots[0].extraExpensePerUnit > 0 && (
+                          <span className="text-amber-600"> + {formatCurrency(ln.procLots[0].extraExpensePerUnit)} ancillary</span>
+                        )}
+                      </p>
+                    </div>
                   )}
+
+                  {/* Cost summary */}
+                  {(() => {
+                    const est = lineEstimatedCost(ln)
+                    if (!est || est.cost === 0) return null
+                    return (
+                      <div className="rounded-lg bg-gray-100 border border-gray-200 px-3 py-2 flex flex-wrap gap-x-4 gap-y-0.5">
+                        <span className="text-xs text-gray-600">Cost: <span className="font-semibold text-gray-800">{formatCurrency(est.cost)}</span></span>
+                        {est.ancillary > 0 && (
+                          <span className="text-xs text-amber-700">Ancillary: <span className="font-semibold">{formatCurrency(est.ancillary)}</span></span>
+                        )}
+                        {est.ancillary > 0 && (
+                          <span className="text-xs text-gray-500">Total: <span className="font-semibold text-gray-800">{formatCurrency(est.cost + est.ancillary)}</span></span>
+                        )}
+                      </div>
+                    )
+                  })()}
 
                   {/* Notes per line */}
                   <div>
