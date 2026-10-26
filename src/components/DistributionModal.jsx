@@ -10,15 +10,16 @@ function fmtDate(d, lang = 'en') { return formatDate(d, lang) }
 function fmtQty(n) { return Number(n || 0).toLocaleString('en-IN', { maximumFractionDigits: 3 }) }
 
 const blankLine = () => ({
-  typeId:      '',
-  items:       [],
-  item_id:     '',
-  canonCount:  '',
-  subCount:    '',
-  notes:       '',
-  procLots:    [],
-  lotAllocs:   {},
-  lotsLoading: false,
+  typeId:           '',
+  items:            [],
+  item_id:          '',
+  canonCount:       '',
+  subCount:         '',
+  notes:            '',
+  procLots:         [],
+  lotAllocs:        {},
+  lotsLoading:      false,
+  ancillaryOverride: '',   // user-editable; '' means use lot default
 })
 
 function computeFIFO(canonCount, subCount, lots, item) {
@@ -49,23 +50,27 @@ function lineCanonQty(ln) {
     : (parseFloat(ln.canonCount) || 0)
 }
 
+// Returns the effective ancillary per unit for a line (override wins, else lot default)
+function effectiveAncillary(ln) {
+  if (ln.ancillaryOverride !== '') return parseFloat(ln.ancillaryOverride) || 0
+  // Use first lot's value as default (ancillary is per item type, same across lots)
+  return ln.procLots[0]?.extraExpensePerUnit || 0
+}
+
 function lineEstimatedCost(ln) {
   const canonQty = lineCanonQty(ln)
   if (!canonQty || !ln.procLots.length) return null
   const multiLot = ln.procLots.length > 1
-  let cost = 0, ancillary = 0
+  const anc = effectiveAncillary(ln)
+  let cost = 0
   if (multiLot) {
     for (const lot of ln.procLots) {
-      const q = Number(ln.lotAllocs[lot.id] || 0)
-      cost += q * lot.costPerUnit
-      ancillary += q * lot.extraExpensePerUnit
+      cost += Number(ln.lotAllocs[lot.id] || 0) * lot.costPerUnit
     }
   } else {
-    const lot = ln.procLots[0]
-    cost = canonQty * lot.costPerUnit
-    ancillary = canonQty * lot.extraExpensePerUnit
+    cost = canonQty * ln.procLots[0].costPerUnit
   }
-  return { cost: roundCurrency(cost), ancillary: roundCurrency(ancillary) }
+  return { cost: roundCurrency(cost), ancillary: roundCurrency(canonQty * anc) }
 }
 
 export default function DistributionModal({ farmId, initialBatchId, onClose, onSaved }) {
@@ -117,7 +122,7 @@ export default function DistributionModal({ farmId, initialBatchId, onClose, onS
         const lots = firstId
           ? (await getProcurementLots({ itemId: firstId, organizationId: organization?.id })).filter(l => l.remaining > 0)
           : []
-        setLines([{ ...blankLine(), typeId: firstType.id, items, item_id: firstId, procLots: lots }])
+        setLines([{ ...blankLine(), typeId: firstType.id, items, item_id: firstId, procLots: lots, ancillaryOverride: String(lots[0]?.extraExpensePerUnit || '') }])
       })
   }, [farmId, organization?.id])
 
@@ -145,13 +150,13 @@ export default function DistributionModal({ farmId, initialBatchId, onClose, onS
     const items  = await fetchItems(typeId)
     const firstId = items[0]?.id || ''
     const lots   = await fetchLots(firstId)
-    patchLine(i, { items, item_id: firstId, procLots: lots, lotAllocs: {}, lotsLoading: false })
+    patchLine(i, { items, item_id: firstId, procLots: lots, lotAllocs: {}, lotsLoading: false, ancillaryOverride: String(lots[0]?.extraExpensePerUnit || '') })
   }
 
   async function handleItemChange(i, itemId) {
     patchLine(i, { item_id: itemId, procLots: [], lotAllocs: {}, canonCount: '', subCount: '', lotsLoading: true })
     const lots = await fetchLots(itemId)
-    patchLine(i, { procLots: lots, lotAllocs: {}, lotsLoading: false })
+    patchLine(i, { procLots: lots, lotAllocs: {}, lotsLoading: false, ancillaryOverride: String(lots[0]?.extraExpensePerUnit || '') })
   }
 
   function handleQtyChange(i, field, value) {
@@ -170,7 +175,7 @@ export default function DistributionModal({ farmId, initialBatchId, onClose, onS
     const items   = await fetchItems(firstType.id)
     const firstId = items[0]?.id || ''
     const lots    = await fetchLots(firstId)
-    setLines(prev => [...prev, { ...blankLine(), typeId: firstType.id, items, item_id: firstId, procLots: lots }])
+    setLines(prev => [...prev, { ...blankLine(), typeId: firstType.id, items, item_id: firstId, procLots: lots, ancillaryOverride: String(lots[0]?.extraExpensePerUnit || '') }])
   }
 
   function removeLine(i) {
@@ -230,12 +235,13 @@ export default function DistributionModal({ farmId, initialBatchId, onClose, onS
       const canonQty   = lineCanonQty(ln)
       const multiLot   = ln.procLots.length > 1
 
+      const lineAnc    = effectiveAncillary(ln)
       const allocRows  = multiLot
         ? Object.entries(ln.lotAllocs).filter(([, qty]) => Number(qty) > 0).map(([id, qty]) => {
             const lot = ln.procLots.find(l => l.id === id)
-            return { procId: id, qty: Number(qty), costPerUnit: lot?.costPerUnit || 0, extraExpensePerUnit: lot?.extraExpensePerUnit || 0 }
+            return { procId: id, qty: Number(qty), costPerUnit: lot?.costPerUnit || 0, extraExpensePerUnit: lineAnc }
           })
-        : [{ procId: ln.procLots[0]?.id || null, qty: canonQty, costPerUnit: ln.procLots[0]?.costPerUnit || 0, extraExpensePerUnit: ln.procLots[0]?.extraExpensePerUnit || 0 }]
+        : [{ procId: ln.procLots[0]?.id || null, qty: canonQty, costPerUnit: ln.procLots[0]?.costPerUnit || 0, extraExpensePerUnit: lineAnc }]
 
       let anyFailed = false
       for (const { procId, qty, costPerUnit, extraExpensePerUnit } of allocRows) {
@@ -510,22 +516,37 @@ export default function DistributionModal({ farmId, initialBatchId, onClose, onS
                     </div>
                   )}
 
-                  {/* Cost summary */}
-                  {(() => {
-                    const est = lineEstimatedCost(ln)
-                    if (!est || est.cost === 0) return null
-                    return (
-                      <div className="rounded-lg bg-gray-100 border border-gray-200 px-3 py-2 flex flex-wrap gap-x-4 gap-y-0.5">
-                        <span className="text-xs text-gray-600">Cost: <span className="font-semibold text-gray-800">{formatCurrency(est.cost)}</span></span>
-                        {est.ancillary > 0 && (
-                          <span className="text-xs text-amber-700">Ancillary: <span className="font-semibold">{formatCurrency(est.ancillary)}</span></span>
-                        )}
-                        {est.ancillary > 0 && (
-                          <span className="text-xs text-gray-500">Total: <span className="font-semibold text-gray-800">{formatCurrency(est.cost + est.ancillary)}</span></span>
-                        )}
+                  {/* Ancillary + cost summary */}
+                  {ln.procLots.length > 0 && (
+                    <div className="rounded-lg bg-gray-100 border border-gray-200 px-3 py-2.5 space-y-2">
+                      <div className="flex items-center gap-2">
+                        <label className="text-xs font-medium text-gray-600 whitespace-nowrap">Ancillary (₹/{ln.procLots[0]?.unit || 'unit'})</label>
+                        <input
+                          type="number" min="0" step="any"
+                          value={ln.ancillaryOverride}
+                          onChange={e => patchLine(i, { ancillaryOverride: e.target.value })}
+                          placeholder="0"
+                          className="w-28 rounded-lg border border-amber-300 bg-white px-2 py-1 text-sm text-right focus:outline-none focus:ring-2 focus:ring-amber-400"
+                        />
+                        <span className="text-xs text-gray-400">per {ln.procLots[0]?.unit || 'unit'}</span>
                       </div>
-                    )
-                  })()}
+                      {(() => {
+                        const est = lineEstimatedCost(ln)
+                        if (!est || est.cost === 0) return null
+                        return (
+                          <div className="flex flex-wrap gap-x-4 gap-y-0.5 pt-1 border-t border-gray-200">
+                            <span className="text-xs text-gray-600">Cost: <span className="font-semibold text-gray-800">{formatCurrency(est.cost)}</span></span>
+                            {est.ancillary > 0 && (
+                              <span className="text-xs text-amber-700">Ancillary: <span className="font-semibold">{formatCurrency(est.ancillary)}</span></span>
+                            )}
+                            {est.ancillary > 0 && (
+                              <span className="text-xs text-gray-500">Total: <span className="font-semibold text-gray-800">{formatCurrency(est.cost + est.ancillary)}</span></span>
+                            )}
+                          </div>
+                        )
+                      })()}
+                    </div>
+                  )}
 
                   {/* Notes per line */}
                   <div>
