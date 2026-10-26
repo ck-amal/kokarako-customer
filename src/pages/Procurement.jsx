@@ -1085,6 +1085,7 @@ export default function Procurement() {
   const [deleteConfirmText, setDeleteConfirmText] = useState('')
   const [deletingBusy,      setDeletingBusy]      = useState(false)
   const [deleteError,       setDeleteError]       = useState('')
+  const [editBlockMsg,      setEditBlockMsg]      = useState('')
   const [typeFilter, setTypeFilter] = useState('all')
   const [dateFrom,   setDateFrom]   = useState(() => { const d = new Date(); d.setDate(d.getDate() - 30); return d.toISOString().slice(0, 10) })
   const [dateTo,     setDateTo]     = useState(new Date().toISOString().slice(0, 10))
@@ -1106,6 +1107,18 @@ export default function Procurement() {
   }
 
   useEffect(() => { fetchData() }, [])
+
+  async function handleEditClick(r) {
+    const { count } = await supabase
+      .from('distributions')
+      .select('id', { count: 'exact', head: true })
+      .eq('procurement_id', r.id)
+    if (count > 0) {
+      setEditBlockMsg('Cannot edit — stock has already been distributed from this procurement.')
+      return
+    }
+    setEditingProc(r)
+  }
 
   // Reset to the first page whenever a filter changes
   useEffect(() => { setPage(1) }, [typeFilter, dateFrom, dateTo])
@@ -1176,6 +1189,14 @@ export default function Procurement() {
           </div>
         )
       })()}
+
+      {/* Edit blocked notice */}
+      {editBlockMsg && (
+        <div className="mb-4 rounded-xl bg-red-50 border border-red-200 px-4 py-3 flex items-center gap-3">
+          <span className="text-sm text-red-700 flex-1">{editBlockMsg}</span>
+          <button onClick={() => setEditBlockMsg('')} className="text-red-400 hover:text-red-600 text-lg leading-none">&times;</button>
+        </div>
+      )}
 
       {/* Summary bar */}
       {!loading && <SummaryBar records={records} />}
@@ -1330,6 +1351,14 @@ export default function Procurement() {
                         {(canEdit || canDelete) && !r.is_return && (
                           <td className="px-4 py-3.5" onClick={e => e.stopPropagation()}>
                             <div className="flex items-center gap-1.5">
+                              {canEdit && (
+                                <button
+                                  onClick={() => handleEditClick(r)}
+                                  className="rounded-lg border border-gray-200 px-2.5 py-1 text-xs font-medium text-gray-600 hover:bg-gray-50 transition"
+                                >
+                                  Edit
+                                </button>
+                              )}
                               {canDelete && (
                                 <button
                                   onClick={() => { setDeletingProc(r); setDeleteConfirmText(''); setDeleteError('') }}
