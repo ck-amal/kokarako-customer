@@ -31,7 +31,7 @@ export default function StockReturnModal({ distribution, onClose, onSaved }) {
     async function loadData() {
       const [{ data: feData }, { data: retData }, { data: itemData }] = await Promise.all([
         supabase.from('farm_expenses')
-          .select('id, cost_per_unit, total_cost, quantity')
+          .select('id, cost_per_unit, extra_cost_per_unit, total_cost, quantity')
           .eq('distribution_id', distribution.id)
           .maybeSingle(),
         supabase.from('stock_returns')
@@ -68,7 +68,7 @@ export default function StockReturnModal({ distribution, onClose, onSaved }) {
     : (parseFloat(canonCount) || 0)
 
   const maxReturnable       = Math.max(0, Number(distribution.quantity) - alreadyReturned)
-  const costPerUnit         = farmExpense ? Number(farmExpense.cost_per_unit || 0) : 0
+  const costPerUnit         = farmExpense ? Number(farmExpense.cost_per_unit || 0) + Number(farmExpense.extra_cost_per_unit || 0) : 0
   const returnValue         = roundCurrency(returnQty * costPerUnit)
   const handlingPerUnit     = roundCurrency(parseFloat(handlingCharges) || 0)
   const handlingChargesTotal = roundCurrency(handlingPerUnit * returnQty)
