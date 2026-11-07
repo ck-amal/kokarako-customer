@@ -210,7 +210,7 @@ export default function EditDistributionModal({ distribution, onClose, onSaved }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
-      <div className="w-full max-w-sm bg-white rounded-2xl shadow-xl p-6">
+      <div className="w-full max-w-sm bg-white rounded-2xl shadow-xl p-6 max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between mb-4">
           <div>
             <h2 className="text-base font-semibold text-gray-800">Edit Distribution</h2>
