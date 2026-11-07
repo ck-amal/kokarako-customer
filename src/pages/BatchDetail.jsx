@@ -440,7 +440,8 @@ ${sale.notes ? `<div class="notes"><strong>Notes</strong>${sale.notes}</div>` : 
   const [returnModal,    setReturnModal]    = useState(null)
   const [editingDist,    setEditingDist]    = useState(null)
   const [postCloseModal, setPostCloseModal] = useState(false) // prompt after batch close
-  const [expenseReturns, setExpenseReturns] = useState([])
+  const [expenseReturns,   setExpenseReturns]   = useState([])
+  const [generalExpenses,  setGeneralExpenses]  = useState([])
   const [showEditFeeModal, setShowEditFeeModal] = useState(false)
   const [pendingFarmAdvs,  setPendingFarmAdvs]  = useState(null) // { advances: [], recalcData: {} }
   const [expandedPLRows,   setExpandedPLRows]   = useState(new Set())
@@ -507,6 +508,14 @@ ${sale.notes ? `<div class="notes"><strong>Notes</strong>${sale.notes}</div>` : 
       .eq('organization_id', organization?.id)
     setExpenseReturns(ferData || [])
 
+    const { data: genExpData } = await supabase
+      .from('expenses')
+      .select('id, category, amount, description, date')
+      .eq('batch_id', batchId)
+      .eq('organization_id', organization?.id)
+      .order('date', { ascending: true })
+    setGeneralExpenses(genExpData || [])
+
     setLoading(false)
   }
 
@@ -543,6 +552,14 @@ ${sale.notes ? `<div class="notes"><strong>Notes</strong>${sale.notes}</div>` : 
       .eq('batch_id', batchId)
       .eq('organization_id', organization?.id)
     setExpenseReturns(ferData || [])
+
+    const { data: genExpData } = await supabase
+      .from('expenses')
+      .select('id, category, amount, description, date')
+      .eq('batch_id', batchId)
+      .eq('organization_id', organization?.id)
+      .order('date', { ascending: true })
+    setGeneralExpenses(genExpData || [])
 
     setBatch(batchData ? { ...batchData, growing_fee_ledger: ledgerData } : null)
     setDistributions(distData || [])
@@ -1014,9 +1031,10 @@ ${sale.notes ? `<div class="notes"><strong>Notes</strong>${sale.notes}</div>` : 
   const chickCost      = roundCurrency(chickPurchases.reduce((s, p) => s + Number(p.total_cost || 0), 0))
   const ancillaryProfit = roundCurrency(chickPurchases.reduce((s, p) => s + Number(p.ancillary_per_chick || 0) * Number(p.quantity || 0), 0))
 
-  const growingFee    = (!isActive && batch.growing_fee_total != null) ? Number(batch.growing_fee_total) : 0
-  const totalExpenses = chickCost + feedCost + medCost + growingFee + feedAncillaryCost + medAncillaryCost
-  const profit        = revenue + ancillaryProfit - totalExpenses
+  const growingFee           = (!isActive && batch.growing_fee_total != null) ? Number(batch.growing_fee_total) : 0
+  const generalExpensesTotal = roundCurrency(generalExpenses.reduce((s, e) => s + Number(e.amount || 0), 0))
+  const totalExpenses        = chickCost + feedCost + medCost + growingFee + feedAncillaryCost + medAncillaryCost + generalExpensesTotal
+  const profit               = revenue + ancillaryProfit - totalExpenses
   const margin        = revenue > 0 ? (profit / revenue) * 100 : 0
 
   // Feed & medicine summaries from distributions
@@ -1457,6 +1475,7 @@ ${sale.notes ? `<div class="notes"><strong>Notes</strong>${sale.notes}</div>` : 
               { label: t('batches.medicineCost'),  value: formatCurrency(medCost),                                     color: '#dc2626', bold: false, breakdown: medExpenses,      breakdownType: 'expense' },
               ...(medAncillaryCost > 0 ? [{ label: 'Medicine ancillary', value: formatCurrency(medAncillaryCost), color: '#ea580c', bold: false, breakdown: medAncExp, breakdownType: 'ancillary' }] : []),
               ...(growingFee > 0 ? [{ label: t('growingFees.title'), value: formatCurrency(growingFee), color: '#7c3aed', bold: false }] : []),
+              ...(generalExpensesTotal > 0 ? [{ label: 'General Expenses', value: formatCurrency(generalExpensesTotal), color: '#dc2626', bold: false, breakdown: generalExpenses, breakdownType: 'general' }] : []),
               { label: t('batches.totalExpenses'), value: formatCurrency(totalExpenses),                               color: '#dc2626', bold: true },
               { label: t('batches.grossProfit'),   value: (profit < 0 ? '−' : '') + formatCurrency(Math.abs(profit)), color: profit >= 0 ? '#15803d' : '#dc2626', bold: true },
               { label: t('batches.profitMargin'),  value: `${margin.toFixed(1)}%`,                                    color: margin >= 0 ? '#15803d' : '#dc2626', bold: false },
@@ -1551,6 +1570,12 @@ ${sale.notes ? `<div class="notes"><strong>Notes</strong>${sale.notes}</div>` : 
                             <div key={line.id} className="flex justify-between items-center text-xs" style={{ color: 'var(--text-muted)' }}>
                               <span>{line.item_name}</span>
                               <span>{formatCurrency(Number(line.extra_total_cost))}</span>
+                            </div>
+                          ))}
+                          {row.breakdownType === 'general' && row.breakdown.map(line => (
+                            <div key={line.id} className="flex justify-between items-center text-xs" style={{ color: 'var(--text-muted)' }}>
+                              <span className="capitalize">{line.category}{line.description ? ` — ${line.description}` : ''}</span>
+                              <span>{formatCurrency(Number(line.amount))}</span>
                             </div>
                           ))}
                         </div>
