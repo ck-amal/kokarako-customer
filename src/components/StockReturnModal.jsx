@@ -43,7 +43,9 @@ export default function StockReturnModal({ distribution, onClose, onSaved }) {
           .maybeSingle(),
       ])
       setFarmExpense(feData)
+      // Use distribution.returned_quantity as source of truth; fall back to stock_returns sum
       setAlreadyReturned(
+        Number(distribution.returned_quantity || 0) ||
         (retData || []).reduce((s, r) => s + Number(r.quantity || 0), 0)
       )
       if (distribution.unit === 'Bag' && Number(itemData?.kg_per_unit) > 0) {
