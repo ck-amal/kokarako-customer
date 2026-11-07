@@ -195,6 +195,11 @@ function ProcurementModal({ onClose, onSaved }) {
         const cpu = parseFloat(field === 'cost_per_unit' ? value : ln.cost_per_unit) || 0
         next.cost = qty && cpu ? String(roundCurrency(qty * cpu)) : next.cost
       }
+      if (field === 'cost') {
+        const qty = parseFloat(ln.quantity) || 0
+        const total = parseFloat(value) || 0
+        if (qty > 0 && total > 0) next.cost_per_unit = String(roundCurrency(total / qty))
+      }
       // Auto-recompute percentage ancillary when cost_per_unit changes
       if (field === 'cost_per_unit' && next.extra_enabled) {
         const typeRule = itemTypes.find(t => t.id === ln.item_type_id)
@@ -646,9 +651,12 @@ function ProcurementModal({ onClose, onSaved }) {
                     </div>
                     <div>
                       <label className="block text-xs font-medium text-gray-600 mb-1">{t('procurement.totalCost')} (₹)</label>
-                      <div className="w-full rounded-lg border border-gray-100 bg-gray-50 px-3 py-2 text-sm font-semibold text-gray-700">
-                        {parseFloat(ln.cost) > 0 ? formatCurrency(parseFloat(ln.cost)) : <span className="font-normal text-gray-400">Auto</span>}
-                      </div>
+                      <input
+                        type="number" min="0" step="0.01"
+                        value={ln.cost} onChange={e => setLineField(i, 'cost', e.target.value)}
+                        placeholder="Auto"
+                        className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
+                      />
                     </div>
                   </div>
 
