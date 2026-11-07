@@ -1543,15 +1543,15 @@ ${sale.notes ? `<div class="notes"><strong>Notes</strong>${sale.notes}</div>` : 
                                 const hasReturn       = returnCredit > 0
                                 return (
                                   <div key={line.id} className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>
-                                    <div className="flex justify-between items-center">
+                                    <div className="flex justify-between items-start">
                                       <span>{line.item_name} — {Number(line.quantity).toLocaleString('en-IN')} {line.unit} @ {formatCurrency(line.cost_per_unit)}/{line.unit}</span>
-                                      <span>{formatCurrency(hasReturn ? combined : originalCost + ancillary)}</span>
-                                    </div>
-                                    {ancillary > 0 && (
-                                      <div className="flex justify-start items-center pl-3 opacity-50 text-xs">
-                                        <span>{formatCurrency(originalCost)} + {formatCurrency(ancillary)} ancillary</span>
+                                      <div className="text-right ml-2 shrink-0">
+                                        <div>{formatCurrency(originalCost + ancillary)}</div>
+                                        {ancillary > 0 && (
+                                          <div className="opacity-50" style={{ fontSize: 10 }}>{formatCurrency(originalCost)} + {formatCurrency(ancillary)} anc</div>
+                                        )}
                                       </div>
-                                    )}
+                                    </div>
                                     {hasReturn && (
                                       <div className="flex justify-between items-center pl-3" style={{ color: '#16a34a' }}>
                                         <span>↳ Returned {Number(ret.returnedQty).toLocaleString('en-IN')} {ret.unit}</span>
