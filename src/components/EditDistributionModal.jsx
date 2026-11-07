@@ -11,7 +11,9 @@ export default function EditDistributionModal({ distribution, onClose, onSaved }
     date:     distribution.date,
     notes:    distribution.notes || '',
   })
-  const [costPerUnit, setCostPerUnit] = useState(null)
+  const [costPerUnit,      setCostPerUnit]      = useState(null)
+  const [extraPerUnit,     setExtraPerUnit]     = useState('')   // ancillary per unit
+  const [farmExpenseId,    setFarmExpenseId]    = useState(null)
 
   // Return state — one entry per farm_expense_return row for this distribution
   const [returns,     setReturns]     = useState([])  // { fer, sr, qty, handling }[]
@@ -24,7 +26,7 @@ export default function EditDistributionModal({ distribution, onClose, onSaved }
     const orgId = organization?.id
     Promise.all([
       supabase.from('farm_expenses')
-        .select('cost_per_unit')
+        .select('id, cost_per_unit, extra_cost_per_unit')
         .eq('distribution_id', distribution.id)
         .eq('organization_id', orgId)
         .maybeSingle(),
@@ -34,6 +36,9 @@ export default function EditDistributionModal({ distribution, onClose, onSaved }
         .eq('organization_id', orgId),
     ]).then(async ([{ data: feData }, { data: ferRows }]) => {
       setCostPerUnit(Number(feData?.cost_per_unit || 0))
+      setFarmExpenseId(feData?.id || null)
+      const epu = Number(feData?.extra_cost_per_unit || 0)
+      setExtraPerUnit(epu > 0 ? String(epu) : '')
 
       const rows = ferRows || []
       // For each fer, also load the linked stock_return (for return_to_stock flag)
@@ -86,13 +91,17 @@ export default function EditDistributionModal({ distribution, onClose, onSaved }
 
     if (distErr) { setError(distErr.message); setSaving(false); return }
 
+    const newExtraPerUnit = parseFloat(extraPerUnit) || 0
+
     if (qtyDiff !== 0) {
-      // 2. Update farm_expenses quantity + total_cost
+      // 2. Update farm_expenses quantity + total_cost + ancillary
       if (costPerUnit !== null && costPerUnit >= 0) {
         await supabase.from('farm_expenses').update({
-          quantity:   newQty,
-          total_cost: roundCurrency(newQty * costPerUnit),
-          date:       form.date,
+          quantity:          newQty,
+          total_cost:        roundCurrency(newQty * costPerUnit),
+          extra_cost_per_unit: newExtraPerUnit,
+          extra_total_cost:  newExtraPerUnit > 0 ? roundCurrency(newQty * newExtraPerUnit) : 0,
+          date:              form.date,
         }).eq('distribution_id', distribution.id).eq('organization_id', orgId)
       }
 
@@ -128,9 +137,15 @@ export default function EditDistributionModal({ distribution, onClose, onSaved }
           }).eq('id', fsRow.id)
         }
       }
-    } else if (form.date !== distribution.date) {
-      await supabase.from('farm_expenses').update({ date: form.date })
-        .eq('distribution_id', distribution.id).eq('organization_id', orgId)
+    } else {
+      // No qty change — still update ancillary + date
+      if (farmExpenseId) {
+        await supabase.from('farm_expenses').update({
+          date:                form.date,
+          extra_cost_per_unit: newExtraPerUnit,
+          extra_total_cost:    newExtraPerUnit > 0 ? roundCurrency(newQty * newExtraPerUnit) : 0,
+        }).eq('id', farmExpenseId).eq('organization_id', orgId)
+      }
     }
 
     // 6. Save each return edit
@@ -238,6 +253,24 @@ export default function EditDistributionModal({ distribution, onClose, onSaved }
               placeholder="Optional"
               className={inputCls}
             />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Ancillary per {distribution.unit}
+              <span className="text-xs font-normal text-gray-400 ml-1">(transport, loading…)</span>
+            </label>
+            <input type="number" min="0" step="any"
+              value={extraPerUnit}
+              onChange={e => setExtraPerUnit(e.target.value)}
+              placeholder="0"
+              className={inputCls}
+            />
+            {parseFloat(extraPerUnit) > 0 && costPerUnit > 0 && newQty > 0 && (
+              <p className="text-xs text-amber-600 mt-1">
+                Ancillary total: {formatCurrency(roundCurrency(newQty * (parseFloat(extraPerUnit) || 0)))}
+              </p>
+            )}
           </div>
 
           {/* Return section */}
