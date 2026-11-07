@@ -1470,10 +1470,8 @@ ${sale.notes ? `<div class="notes"><strong>Notes</strong>${sale.notes}</div>` : 
               { label: t('batches.revenue'),       value: formatCurrency(revenue),                                     color: '#15803d', bold: false },
               ...(ancillaryProfit > 0 ? [{ label: 'Ancillary income (chick markup)', value: formatCurrency(ancillaryProfit), color: '#15803d', bold: false }] : []),
               { label: t('batches.chickCost'),     value: formatCurrency(chickCost),                                   color: '#dc2626', bold: false, breakdown: chickPurchases,  breakdownType: 'chick' },
-              { label: t('batches.feedCost'),      value: formatCurrency(feedCost),                                    color: '#dc2626', bold: false, breakdown: feedExpenses,     breakdownType: 'expense' },
-              ...(feedAncillaryCost > 0 ? [{ label: 'Feed ancillary (transport/labour)', value: formatCurrency(feedAncillaryCost), color: '#ea580c', bold: false, breakdown: feedAncExp, breakdownType: 'ancillary' }] : []),
-              { label: t('batches.medicineCost'),  value: formatCurrency(medCost),                                     color: '#dc2626', bold: false, breakdown: medExpenses,      breakdownType: 'expense' },
-              ...(medAncillaryCost > 0 ? [{ label: 'Medicine ancillary', value: formatCurrency(medAncillaryCost), color: '#ea580c', bold: false, breakdown: medAncExp, breakdownType: 'ancillary' }] : []),
+              { label: t('batches.feedCost'),      value: formatCurrency(feedCost + feedAncillaryCost),                color: '#dc2626', bold: false, breakdown: feedExpenses, breakdownType: 'expense', ancillaryTotal: feedAncillaryCost },
+              { label: t('batches.medicineCost'),  value: formatCurrency(medCost + medAncillaryCost),                  color: '#dc2626', bold: false, breakdown: medExpenses,  breakdownType: 'expense', ancillaryTotal: medAncillaryCost },
               ...(growingFee > 0 ? [{ label: t('growingFees.title'), value: formatCurrency(growingFee), color: '#7c3aed', bold: false }] : []),
               ...(generalExpensesTotal > 0 ? [{ label: 'General Expenses', value: formatCurrency(generalExpensesTotal), color: '#dc2626', bold: false, breakdown: generalExpenses, breakdownType: 'general' }] : []),
               { label: t('batches.totalExpenses'), value: formatCurrency(totalExpenses),                               color: '#dc2626', bold: true },
@@ -1532,46 +1530,57 @@ ${sale.notes ? `<div class="notes"><strong>Notes</strong>${sale.notes}</div>` : 
                               <span>{formatCurrency(line.total_cost)}</span>
                             </div>
                           ))}
-                          {row.breakdownType === 'expense' && row.breakdown.map(line => {
-                            const ret = returnDetailByDist[line.distribution_id]
-                            const originalCost = Number(line.total_cost || 0)
-                            const returnCredit = ret ? ret.returnCredit : 0
-                            const handlingCharges = ret ? ret.handlingCharges : 0
-                            const netCost = originalCost - returnCredit + handlingCharges
-                            const hasReturn = returnCredit > 0
-                            return (
-                              <div key={line.id} className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>
-                                <div className="flex justify-between items-center">
-                                  <span>{line.item_name} — {Number(line.quantity).toLocaleString('en-IN')} {line.unit} @ {formatCurrency(line.cost_per_unit)}/{line.unit}</span>
-                                  <span>{formatCurrency(originalCost)}</span>
+                          {row.breakdownType === 'expense' && (
+                            <>
+                              {row.breakdown.map(line => {
+                                const ret = returnDetailByDist[line.distribution_id]
+                                const originalCost    = Number(line.total_cost       || 0)
+                                const ancillary       = Number(line.extra_total_cost || 0)
+                                const returnCredit    = ret ? ret.returnCredit    : 0
+                                const handlingCharges = ret ? ret.handlingCharges : 0
+                                const netBase         = originalCost - returnCredit + handlingCharges
+                                const combined        = netBase + ancillary
+                                const hasReturn       = returnCredit > 0
+                                return (
+                                  <div key={line.id} className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>
+                                    <div className="flex justify-between items-center">
+                                      <span>{line.item_name} — {Number(line.quantity).toLocaleString('en-IN')} {line.unit} @ {formatCurrency(line.cost_per_unit)}/{line.unit}</span>
+                                      <span>{formatCurrency(hasReturn ? combined : originalCost + ancillary)}</span>
+                                    </div>
+                                    {ancillary > 0 && (
+                                      <div className="flex justify-start items-center pl-3 opacity-50 text-xs">
+                                        <span>{formatCurrency(originalCost)} + {formatCurrency(ancillary)} ancillary</span>
+                                      </div>
+                                    )}
+                                    {hasReturn && (
+                                      <div className="flex justify-between items-center pl-3" style={{ color: '#16a34a' }}>
+                                        <span>↳ Returned {Number(ret.returnedQty).toLocaleString('en-IN')} {ret.unit}</span>
+                                        <span>−{formatCurrency(returnCredit)}</span>
+                                      </div>
+                                    )}
+                                    {handlingCharges > 0 && (
+                                      <div className="flex justify-between items-center pl-3" style={{ color: '#ea580c' }}>
+                                        <span>↳ Handling charges</span>
+                                        <span>+{formatCurrency(handlingCharges)}</span>
+                                      </div>
+                                    )}
+                                    {hasReturn && (
+                                      <div className="flex justify-between items-center pl-3 font-semibold" style={{ color: 'var(--text)' }}>
+                                        <span>Net cost</span>
+                                        <span>{formatCurrency(combined)}</span>
+                                      </div>
+                                    )}
+                                  </div>
+                                )
+                              })}
+                              {row.ancillaryTotal > 0 && (
+                                <div className="flex justify-between items-center text-xs mt-1 pt-1.5" style={{ borderTop: '1px dashed var(--border)', color: '#ea580c', opacity: 0.75 }}>
+                                  <span>Ancillary total (transport/labour)</span>
+                                  <span>{formatCurrency(row.ancillaryTotal)}</span>
                                 </div>
-                                {hasReturn && (
-                                  <div className="flex justify-between items-center pl-3" style={{ color: '#16a34a' }}>
-                                    <span>↳ Returned {Number(ret.returnedQty).toLocaleString('en-IN')} {ret.unit}</span>
-                                    <span>−{formatCurrency(returnCredit)}</span>
-                                  </div>
-                                )}
-                                {handlingCharges > 0 && (
-                                  <div className="flex justify-between items-center pl-3" style={{ color: '#ea580c' }}>
-                                    <span>↳ Handling charges</span>
-                                    <span>+{formatCurrency(handlingCharges)}</span>
-                                  </div>
-                                )}
-                                {hasReturn && (
-                                  <div className="flex justify-between items-center pl-3 font-semibold" style={{ color: 'var(--text)' }}>
-                                    <span>Net cost</span>
-                                    <span>{formatCurrency(netCost)}</span>
-                                  </div>
-                                )}
-                              </div>
-                            )
-                          })}
-                          {row.breakdownType === 'ancillary' && row.breakdown.map(line => (
-                            <div key={line.id} className="flex justify-between items-center text-xs" style={{ color: 'var(--text-muted)' }}>
-                              <span>{line.item_name}</span>
-                              <span>{formatCurrency(Number(line.extra_total_cost))}</span>
-                            </div>
-                          ))}
+                              )}
+                            </>
+                          )}
                           {row.breakdownType === 'general' && row.breakdown.map(line => (
                             <div key={line.id} className="flex justify-between items-center text-xs" style={{ color: 'var(--text-muted)' }}>
                               <span className="capitalize">{line.category}{line.description ? ` — ${line.description}` : ''}</span>
