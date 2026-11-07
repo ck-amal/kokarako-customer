@@ -12,17 +12,55 @@ export default function EditDistributionModal({ distribution, onClose, onSaved }
     notes:    distribution.notes || '',
   })
   const [costPerUnit, setCostPerUnit] = useState(null)
-  const [saving,      setSaving]      = useState(false)
-  const [error,       setError]       = useState('')
+
+  // Return state — one entry per farm_expense_return row for this distribution
+  const [returns,     setReturns]     = useState([])  // { fer, sr, qty, handling }[]
+  const [returnsLoading, setReturnsLoading] = useState(true)
+
+  const [saving, setSaving] = useState(false)
+  const [error,  setError]  = useState('')
 
   useEffect(() => {
-    supabase.from('farm_expenses')
-      .select('cost_per_unit')
-      .eq('distribution_id', distribution.id)
-      .eq('organization_id', organization?.id)
-      .maybeSingle()
-      .then(({ data }) => setCostPerUnit(Number(data?.cost_per_unit || 0)))
-  }, [distribution.id])
+    const orgId = organization?.id
+    Promise.all([
+      supabase.from('farm_expenses')
+        .select('cost_per_unit')
+        .eq('distribution_id', distribution.id)
+        .eq('organization_id', orgId)
+        .maybeSingle(),
+      supabase.from('farm_expense_returns')
+        .select('id, stock_return_id, quantity, cost_per_unit, total_cost, handling_charges, unit, item_name')
+        .eq('distribution_id', distribution.id)
+        .eq('organization_id', orgId),
+    ]).then(async ([{ data: feData }, { data: ferRows }]) => {
+      setCostPerUnit(Number(feData?.cost_per_unit || 0))
+
+      const rows = ferRows || []
+      // For each fer, also load the linked stock_return (for return_to_stock flag)
+      const enhanced = await Promise.all(rows.map(async fer => {
+        let sr = null
+        if (fer.stock_return_id) {
+          const { data } = await supabase.from('stock_returns')
+            .select('id, quantity, handling_charges, return_to_stock, date, reason')
+            .eq('id', fer.stock_return_id)
+            .maybeSingle()
+          sr = data
+        }
+        return {
+          fer,
+          sr,
+          qty:      String(fer.quantity),
+          handling: fer.handling_charges > 0 ? String(fer.handling_charges) : '',
+        }
+      }))
+      setReturns(enhanced)
+      setReturnsLoading(false)
+    })
+  }, [distribution.id, organization?.id])
+
+  function updateReturn(i, field, value) {
+    setReturns(prev => prev.map((r, idx) => idx === i ? { ...r, [field]: value } : r))
+  }
 
   async function handleSave(e) {
     e.preventDefault()
@@ -34,6 +72,7 @@ export default function EditDistributionModal({ distribution, onClose, onSaved }
     setError('')
     const qtyDiff  = newQty - oldQty
     const userName = user?.user_metadata?.full_name || user?.email || 'Unknown'
+    const orgId    = organization?.id
 
     // 1. Update distributions row
     const { error: distErr } = await supabase.from('distributions').update({
@@ -43,7 +82,7 @@ export default function EditDistributionModal({ distribution, onClose, onSaved }
       updated_by_id:   user?.id,
       updated_by_name: userName,
       updated_at:      new Date().toISOString(),
-    }).eq('id', distribution.id).eq('organization_id', organization?.id)
+    }).eq('id', distribution.id).eq('organization_id', orgId)
 
     if (distErr) { setError(distErr.message); setSaving(false); return }
 
@@ -54,20 +93,20 @@ export default function EditDistributionModal({ distribution, onClose, onSaved }
           quantity:   newQty,
           total_cost: roundCurrency(newQty * costPerUnit),
           date:       form.date,
-        }).eq('distribution_id', distribution.id).eq('organization_id', organization?.id)
+        }).eq('distribution_id', distribution.id).eq('organization_id', orgId)
       }
 
       // 3. Update stock_ledger OUT entry
       await supabase.from('stock_ledger').update({ quantity: newQty })
         .eq('reference_type', 'distribution')
         .eq('reference_id', distribution.id)
-        .eq('organization_id', organization?.id)
+        .eq('organization_id', orgId)
 
-      // 4. Adjust central stock (more distributed = less stock)
+      // 4. Adjust central stock
       const { data: stockRow } = await supabase.from('stock')
         .select('id, quantity')
         .ilike('item_name', distribution.item_name)
-        .eq('organization_id', organization?.id)
+        .eq('organization_id', orgId)
         .maybeSingle()
       if (stockRow) {
         await supabase.from('stock').update({
@@ -75,13 +114,13 @@ export default function EditDistributionModal({ distribution, onClose, onSaved }
         }).eq('id', stockRow.id)
       }
 
-      // 5. Adjust farm_stock (more distributed = more on-farm)
+      // 5. Adjust farm_stock
       if (distribution.farm_id) {
         const { data: fsRow } = await supabase.from('farm_stock')
           .select('id, quantity_on_hand')
           .eq('farm_id', distribution.farm_id)
           .ilike('item_name', distribution.item_name)
-          .eq('organization_id', organization?.id)
+          .eq('organization_id', orgId)
           .maybeSingle()
         if (fsRow) {
           await supabase.from('farm_stock').update({
@@ -90,9 +129,61 @@ export default function EditDistributionModal({ distribution, onClose, onSaved }
         }
       }
     } else if (form.date !== distribution.date) {
-      // Date-only change — update farm_expenses date too
       await supabase.from('farm_expenses').update({ date: form.date })
-        .eq('distribution_id', distribution.id).eq('organization_id', organization?.id)
+        .eq('distribution_id', distribution.id).eq('organization_id', orgId)
+    }
+
+    // 6. Save each return edit
+    for (const r of returns) {
+      const newRetQty  = parseFloat(r.qty)
+      const newHandling = parseFloat(r.handling) || 0
+      if (!newRetQty || newRetQty <= 0) continue
+
+      const oldRetQty     = Number(r.fer.quantity)
+      const retQtyDiff    = newRetQty - oldRetQty
+      const ferCpu        = Number(r.fer.cost_per_unit || costPerUnit || 0)
+      const newNetCredit  = roundCurrency(newRetQty * ferCpu - newHandling)
+
+      // Update farm_expense_returns
+      await supabase.from('farm_expense_returns').update({
+        quantity:         newRetQty,
+        handling_charges: newHandling,
+        total_cost:       newNetCredit,
+      }).eq('id', r.fer.id).eq('organization_id', orgId)
+
+      // Update stock_returns if linked
+      if (r.sr) {
+        await supabase.from('stock_returns').update({
+          quantity:         newRetQty,
+          handling_charges: newHandling,
+        }).eq('id', r.sr.id)
+      }
+
+      // Update distributions.returned_quantity
+      await supabase.from('distributions').update({
+        returned_quantity: newRetQty,
+      }).eq('id', distribution.id).eq('organization_id', orgId)
+
+      // Adjust stock if return_to_stock — retQtyDiff > 0 means more returned (add to stock)
+      if (retQtyDiff !== 0 && r.sr?.return_to_stock) {
+        const { data: stockRow2 } = await supabase.from('stock')
+          .select('id, quantity')
+          .ilike('item_name', distribution.item_name)
+          .eq('organization_id', orgId)
+          .maybeSingle()
+        if (stockRow2) {
+          await supabase.from('stock').update({
+            quantity: Math.max(0, Number(stockRow2.quantity) + retQtyDiff),
+          }).eq('id', stockRow2.id)
+        }
+        // Update stock_ledger for the return entry
+        if (r.sr) {
+          await supabase.from('stock_ledger').update({ quantity: newRetQty })
+            .eq('reference_type', 'stock_return')
+            .eq('reference_id', r.sr.id)
+            .eq('organization_id', orgId)
+        }
+      }
     }
 
     setSaving(false)
@@ -148,6 +239,62 @@ export default function EditDistributionModal({ distribution, onClose, onSaved }
               className={inputCls}
             />
           </div>
+
+          {/* Return section */}
+          {!returnsLoading && returns.length > 0 && (
+            <div className="border-t border-gray-100 pt-4 space-y-3">
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                Return{returns.length > 1 ? 's' : ''}
+              </p>
+              {returns.map((r, i) => {
+                const ferCpu = Number(r.fer.cost_per_unit || costPerUnit || 0)
+                const retQty = parseFloat(r.qty) || 0
+                const handling = parseFloat(r.handling) || 0
+                const netCredit = retQty > 0 ? roundCurrency(retQty * ferCpu - handling) : 0
+                return (
+                  <div key={r.fer.id} className="rounded-xl bg-gray-50 border border-gray-200 p-3 space-y-3">
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">
+                        Returned Quantity *
+                      </label>
+                      <div className="flex items-center gap-2">
+                        <input type="number" min="0.01" step="any"
+                          value={r.qty}
+                          onChange={e => updateReturn(i, 'qty', e.target.value)}
+                          className={inputCls}
+                        />
+                        <span className="text-sm text-gray-500 shrink-0">{r.fer.unit}</span>
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">
+                        Handling Charges
+                      </label>
+                      <input type="number" min="0" step="any"
+                        value={r.handling}
+                        onChange={e => updateReturn(i, 'handling', e.target.value)}
+                        placeholder="0"
+                        className={inputCls}
+                      />
+                    </div>
+                    {retQty > 0 && ferCpu > 0 && (
+                      <p className="text-xs text-gray-400">
+                        Net credit: {formatCurrency(netCredit)}
+                        {handling > 0 && (
+                          <span className="ml-1 text-gray-300">
+                            ({formatCurrency(retQty * ferCpu)} − ₹{handling} handling)
+                          </span>
+                        )}
+                      </p>
+                    )}
+                    {r.sr?.return_to_stock && (
+                      <p className="text-xs text-green-600">↩ Stock returned to warehouse</p>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          )}
 
           {error && (
             <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</p>
