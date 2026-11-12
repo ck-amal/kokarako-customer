@@ -57,26 +57,35 @@ function effectiveAncillary(ln) {
   return ln.procLots[0]?.extraExpensePerUnit || 0
 }
 
-// Returns the effective distribution price per unit (override wins, else lot CPU)
-function effectiveCostPerUnit(ln, lot) {
-  if (ln.costOverride !== '') return parseFloat(ln.costOverride) || 0
-  return lot?.costPerUnit || 0
+// Returns markup per unit: dist price above lot CPU, treated as ancillary
+function distMarkup(ln, lot) {
+  if (ln.costOverride === '') return 0
+  const distPrice = parseFloat(ln.costOverride) || 0
+  return Math.max(0, distPrice - (lot?.costPerUnit || 0))
+}
+
+// Combined extra per unit = ancillary + distribution markup
+function effectiveExtraPerUnit(ln, lot) {
+  return effectiveAncillary(ln) + distMarkup(ln, lot)
 }
 
 function lineEstimatedCost(ln) {
   const canonQty = lineCanonQty(ln)
   if (!canonQty || !ln.procLots.length) return null
   const multiLot = ln.procLots.length > 1
-  const anc = effectiveAncillary(ln)
   let cost = 0
+  let anc = 0
   if (multiLot) {
     for (const lot of ln.procLots) {
-      cost += Number(ln.lotAllocs[lot.id] || 0) * effectiveCostPerUnit(ln, lot)
+      const qty = Number(ln.lotAllocs[lot.id] || 0)
+      cost += qty * lot.costPerUnit
+      anc  += qty * effectiveExtraPerUnit(ln, lot)
     }
   } else {
-    cost = canonQty * effectiveCostPerUnit(ln, ln.procLots[0])
+    cost = canonQty * ln.procLots[0].costPerUnit
+    anc  = canonQty * effectiveExtraPerUnit(ln, ln.procLots[0])
   }
-  return { cost: roundCurrency(cost), ancillary: roundCurrency(canonQty * anc) }
+  return { cost: roundCurrency(cost), ancillary: roundCurrency(anc) }
 }
 
 export default function DistributionModal({ farmId, initialBatchId, onClose, onSaved }) {
@@ -241,13 +250,12 @@ export default function DistributionModal({ farmId, initialBatchId, onClose, onS
       const canonQty   = lineCanonQty(ln)
       const multiLot   = ln.procLots.length > 1
 
-      const lineAnc    = effectiveAncillary(ln)
       const allocRows  = multiLot
         ? Object.entries(ln.lotAllocs).filter(([, qty]) => Number(qty) > 0).map(([id, qty]) => {
             const lot = ln.procLots.find(l => l.id === id)
-            return { procId: id, qty: Number(qty), costPerUnit: effectiveCostPerUnit(ln, lot), extraExpensePerUnit: lineAnc }
+            return { procId: id, qty: Number(qty), costPerUnit: lot?.costPerUnit || 0, extraExpensePerUnit: effectiveExtraPerUnit(ln, lot) }
           })
-        : [{ procId: ln.procLots[0]?.id || null, qty: canonQty, costPerUnit: effectiveCostPerUnit(ln, ln.procLots[0]), extraExpensePerUnit: lineAnc }]
+        : [{ procId: ln.procLots[0]?.id || null, qty: canonQty, costPerUnit: ln.procLots[0]?.costPerUnit || 0, extraExpensePerUnit: effectiveExtraPerUnit(ln, ln.procLots[0]) }]
 
       let anyFailed = false
       for (const { procId, qty, costPerUnit, extraExpensePerUnit } of allocRows) {
