@@ -20,6 +20,7 @@ const blankLine = () => ({
   lotAllocs:        {},
   lotsLoading:      false,
   ancillaryOverride: '',   // user-editable; '' means use lot default
+  costOverride:      '',   // user-editable distribution price per unit; '' means use lot CPU
 })
 
 function computeFIFO(canonCount, subCount, lots, item) {
@@ -53,8 +54,13 @@ function lineCanonQty(ln) {
 // Returns the effective ancillary per unit for a line (override wins, else lot default)
 function effectiveAncillary(ln) {
   if (ln.ancillaryOverride !== '') return parseFloat(ln.ancillaryOverride) || 0
-  // Use first lot's value as default (ancillary is per item type, same across lots)
   return ln.procLots[0]?.extraExpensePerUnit || 0
+}
+
+// Returns the effective distribution price per unit (override wins, else lot CPU)
+function effectiveCostPerUnit(ln, lot) {
+  if (ln.costOverride !== '') return parseFloat(ln.costOverride) || 0
+  return lot?.costPerUnit || 0
 }
 
 function lineEstimatedCost(ln) {
@@ -65,10 +71,10 @@ function lineEstimatedCost(ln) {
   let cost = 0
   if (multiLot) {
     for (const lot of ln.procLots) {
-      cost += Number(ln.lotAllocs[lot.id] || 0) * lot.costPerUnit
+      cost += Number(ln.lotAllocs[lot.id] || 0) * effectiveCostPerUnit(ln, lot)
     }
   } else {
-    cost = canonQty * ln.procLots[0].costPerUnit
+    cost = canonQty * effectiveCostPerUnit(ln, ln.procLots[0])
   }
   return { cost: roundCurrency(cost), ancillary: roundCurrency(canonQty * anc) }
 }
@@ -150,13 +156,13 @@ export default function DistributionModal({ farmId, initialBatchId, onClose, onS
     const items  = await fetchItems(typeId)
     const firstId = items[0]?.id || ''
     const lots   = await fetchLots(firstId)
-    patchLine(i, { items, item_id: firstId, procLots: lots, lotAllocs: {}, lotsLoading: false, ancillaryOverride: String(lots[0]?.extraExpensePerUnit || '') })
+    patchLine(i, { items, item_id: firstId, procLots: lots, lotAllocs: {}, lotsLoading: false, ancillaryOverride: String(lots[0]?.extraExpensePerUnit || ''), costOverride: '' })
   }
 
   async function handleItemChange(i, itemId) {
     patchLine(i, { item_id: itemId, procLots: [], lotAllocs: {}, canonCount: '', subCount: '', lotsLoading: true })
     const lots = await fetchLots(itemId)
-    patchLine(i, { procLots: lots, lotAllocs: {}, lotsLoading: false, ancillaryOverride: String(lots[0]?.extraExpensePerUnit || '') })
+    patchLine(i, { procLots: lots, lotAllocs: {}, lotsLoading: false, ancillaryOverride: String(lots[0]?.extraExpensePerUnit || ''), costOverride: '' })
   }
 
   function handleQtyChange(i, field, value) {
@@ -239,9 +245,9 @@ export default function DistributionModal({ farmId, initialBatchId, onClose, onS
       const allocRows  = multiLot
         ? Object.entries(ln.lotAllocs).filter(([, qty]) => Number(qty) > 0).map(([id, qty]) => {
             const lot = ln.procLots.find(l => l.id === id)
-            return { procId: id, qty: Number(qty), costPerUnit: lot?.costPerUnit || 0, extraExpensePerUnit: lineAnc }
+            return { procId: id, qty: Number(qty), costPerUnit: effectiveCostPerUnit(ln, lot), extraExpensePerUnit: lineAnc }
           })
-        : [{ procId: ln.procLots[0]?.id || null, qty: canonQty, costPerUnit: ln.procLots[0]?.costPerUnit || 0, extraExpensePerUnit: lineAnc }]
+        : [{ procId: ln.procLots[0]?.id || null, qty: canonQty, costPerUnit: effectiveCostPerUnit(ln, ln.procLots[0]), extraExpensePerUnit: lineAnc }]
 
       let anyFailed = false
       for (const { procId, qty, costPerUnit, extraExpensePerUnit } of allocRows) {
@@ -516,9 +522,20 @@ export default function DistributionModal({ farmId, initialBatchId, onClose, onS
                     </div>
                   )}
 
-                  {/* Ancillary + cost summary */}
+                  {/* Distribution Price + Ancillary + cost summary */}
                   {ln.procLots.length > 0 && (
                     <div className="rounded-lg bg-gray-100 border border-gray-200 px-3 py-2.5 space-y-2">
+                      <div className="flex items-center gap-2">
+                        <label className="text-xs font-medium text-gray-600 whitespace-nowrap">Dist. Price (₹/{ln.procLots[0]?.unit || 'unit'})</label>
+                        <input
+                          type="number" min="0" step="any"
+                          value={ln.costOverride}
+                          onChange={e => patchLine(i, { costOverride: e.target.value })}
+                          placeholder={String(ln.procLots[0]?.costPerUnit || '')}
+                          className="w-28 rounded-lg border border-indigo-300 bg-white px-2 py-1 text-sm text-right focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                        />
+                        <span className="text-xs text-gray-400">per {ln.procLots[0]?.unit || 'unit'}</span>
+                      </div>
                       <div className="flex items-center gap-2">
                         <label className="text-xs font-medium text-gray-600 whitespace-nowrap">Ancillary (₹/{ln.procLots[0]?.unit || 'unit'})</label>
                         <input
