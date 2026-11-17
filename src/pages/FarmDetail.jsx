@@ -1881,7 +1881,7 @@ export default function FarmDetail() {
                 <tfoot>
                   <tr className="border-t-2 border-gray-200 bg-gray-50">
                     <td colSpan={7} className="px-5 py-3 text-sm font-semibold text-gray-700 text-right">{t('distributions.totalNetCost')}</td>
-                    <td className="px-5 py-3 text-right font-bold text-red-600">{formatCurrency(feedCost + medicineCost)}</td>
+                    <td className="px-5 py-3 text-right font-bold text-red-600">{formatCurrency(feedCost + medicineCost + (distFilter === 'all' ? chickCost : 0))}</td>
                     <td></td>
                     <td></td>
                   </tr>
