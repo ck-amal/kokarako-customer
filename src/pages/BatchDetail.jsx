@@ -431,6 +431,7 @@ ${sale.notes ? `<div class="notes"><strong>Notes</strong>${sale.notes}</div>` : 
   const [editLotsLoading,  setEditLotsLoading]  = useState(false)
   const [mortalityModal,        setMortalityModal]        = useState(false)
   const [mortalityVal,          setMortalityVal]          = useState('')
+  const [mortalityDate,         setMortalityDate]         = useState(new Date().toISOString().slice(0, 10))
   const [mortalityHistoryOpen,  setMortalityHistoryOpen]  = useState(false)
   const [mortalityHistory,      setMortalityHistory]      = useState([])
   const [mortalityHistoryLoading, setMortalityHistoryLoading] = useState(false)
@@ -678,11 +679,38 @@ ${sale.notes ? `<div class="notes"><strong>Notes</strong>${sale.notes}</div>` : 
   async function handleMortality(e) {
     e.preventDefault()
     const n = Number(mortalityVal)
-    if (isNaN(n) || n < 0) { setActionError('Enter a valid number (0 or more)'); return }
+    if (isNaN(n) || n <= 0) { setActionError('Enter a valid number greater than 0'); return }
+    if (!mortalityDate) { setActionError('Select a date'); return }
     setSaving(true)
-    const { error } = await supabase.from('batches').update({ mortality_count: n }).eq('id', batchId)
+    const visitorName = user?.user_metadata?.full_name || user?.email || ''
+
+    // Create a farm_visits row for this date
+    const { data: visitRow, error: visitErr } = await supabase.from('farm_visits').insert({
+      farm_id:          farmId,
+      organization_id:  organization?.id,
+      visit_date:       mortalityDate,
+      visited_by_id:    user?.id ?? null,
+      visited_by_name:  visitorName,
+      notes:            'Recorded from batch detail',
+    }).select('id').single()
+
+    if (visitErr) { setActionError(visitErr.message); setSaving(false); return }
+
+    // Link mortality to this visit + batch
+    const { error: mortErr } = await supabase.from('farm_visit_mortality').insert({
+      organization_id: organization?.id,
+      visit_id:        visitRow.id,
+      batch_id:        batchId,
+      mortality_count: n,
+    })
+    if (mortErr) { setActionError(mortErr.message); setSaving(false); return }
+
+    // Increment batch mortality_count
+    const { error: batchErr } = await supabase.from('batches')
+      .update({ mortality_count: Number(batch.mortality_count || 0) + n })
+      .eq('id', batchId)
     setSaving(false)
-    if (error) { setActionError(error.message); return }
+    if (batchErr) { setActionError(batchErr.message); return }
     setMortalityModal(false)
     refresh()
   }
@@ -1375,7 +1403,7 @@ ${sale.notes ? `<div class="notes"><strong>Notes</strong>${sale.notes}</div>` : 
               )}
               {canEdit && (
                 <button
-                  onClick={() => { setMortalityVal(String(batch.mortality_count || 0)); setActionError(''); setMortalityModal(true) }}
+                  onClick={() => { setMortalityVal(''); setMortalityDate(new Date().toISOString().slice(0, 10)); setActionError(''); setMortalityModal(true) }}
                   style={{ borderColor: '#fecaca', color: '#dc2626', backgroundColor: '#fef2f2' }}
                   className="rounded-lg border px-3 py-1.5 text-xs font-semibold hover:opacity-80 transition"
                 >
@@ -2266,15 +2294,24 @@ ${sale.notes ? `<div class="notes"><strong>Notes</strong>${sale.notes}</div>` : 
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
         <div className="w-full max-w-sm bg-white rounded-2xl shadow-xl p-6">
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-base font-semibold text-gray-800">{t('batches.setMortalityCount')}</h2>
+            <div>
+              <h2 className="text-base font-semibold text-gray-800">Record Deaths</h2>
+              <p className="text-xs text-gray-400 mt-0.5">Current total: {Number(batch.mortality_count || 0).toLocaleString('en-IN')}</p>
+            </div>
             <button onClick={() => setMortalityModal(false)} className="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
           </div>
           <form onSubmit={handleMortality} className="space-y-4">
-            <p className="text-sm text-gray-500">{t('batches.mortalityDesc')}</p>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">{t('batches.mortalityCount')} *</label>
-              <input required type="number" min="0" value={mortalityVal}
+              <label className="block text-sm font-medium text-gray-700 mb-1">Date *</label>
+              <input required type="date" value={mortalityDate}
+                onChange={e => setMortalityDate(e.target.value)}
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-400" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Deaths on this date *</label>
+              <input required type="number" min="1" value={mortalityVal}
                 onChange={e => setMortalityVal(e.target.value)}
+                placeholder="e.g. 5"
                 className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-400" />
             </div>
             {actionError && <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{actionError}</p>}
@@ -2283,7 +2320,7 @@ ${sale.notes ? `<div class="notes"><strong>Notes</strong>${sale.notes}</div>` : 
                 className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition">{t('common.cancel')}</button>
               <button type="submit" disabled={saving}
                 className="flex-1 rounded-lg bg-red-600 hover:bg-red-700 disabled:opacity-60 px-4 py-2 text-sm font-semibold text-white transition">
-                {saving ? t('batches.saving') : t('batches.update')}
+                {saving ? t('batches.saving') : 'Record'}
               </button>
             </div>
           </form>
