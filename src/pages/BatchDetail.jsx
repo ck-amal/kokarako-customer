@@ -429,8 +429,11 @@ ${sale.notes ? `<div class="notes"><strong>Notes</strong>${sale.notes}</div>` : 
   const [editLotAllocs,    setEditLotAllocs]    = useState({})
   const [editLotAncillary, setEditLotAncillary] = useState({})
   const [editLotsLoading,  setEditLotsLoading]  = useState(false)
-  const [mortalityModal, setMortalityModal] = useState(false)
-  const [mortalityVal,   setMortalityVal]   = useState('')
+  const [mortalityModal,        setMortalityModal]        = useState(false)
+  const [mortalityVal,          setMortalityVal]          = useState('')
+  const [mortalityHistoryOpen,  setMortalityHistoryOpen]  = useState(false)
+  const [mortalityHistory,      setMortalityHistory]      = useState([])
+  const [mortalityHistoryLoading, setMortalityHistoryLoading] = useState(false)
   const [saleModal,      setSaleModal]      = useState(false)
   const [distModal,      setDistModal]      = useState(false)
   const [saleForm,       setSaleForm]       = useState({ vendor_id: '', chicken_count: '', kg_sold: '', price_per_kg: '', final_amount: '', date: new Date().toISOString().slice(0, 10) })
@@ -682,6 +685,21 @@ ${sale.notes ? `<div class="notes"><strong>Notes</strong>${sale.notes}</div>` : 
     if (error) { setActionError(error.message); return }
     setMortalityModal(false)
     refresh()
+  }
+
+  async function openMortalityHistory() {
+    setMortalityHistoryOpen(true)
+    setMortalityHistoryLoading(true)
+    const { data } = await supabase
+      .from('farm_visit_mortality')
+      .select('mortality_count, farm_visits!visit_id(visit_date, visited_by_name)')
+      .eq('batch_id', batchId)
+      .eq('organization_id', organization?.id)
+    const rows = (data || [])
+      .filter(r => r.farm_visits)
+      .sort((a, b) => new Date(b.farm_visits.visit_date) - new Date(a.farm_visits.visit_date))
+    setMortalityHistory(rows)
+    setMortalityHistoryLoading(false)
   }
 
   function promptMarkStatus(newStatus) {
@@ -1416,7 +1434,6 @@ ${sale.notes ? `<div class="notes"><strong>Notes</strong>${sale.notes}</div>` : 
           { label: t('batches.alive'),        value: alive.toLocaleString('en-IN'),                       bg: '#f0fdf4', color: '#15803d' },
           { label: t('batches.daysElapsed'),  value: t('batches.dayCount', { day: elapsed }),             bg: isOverdue ? '#fef2f2' : isApproaching ? '#fffbeb' : 'var(--surface-2)', color: isOverdue ? '#dc2626' : isApproaching ? '#d97706' : 'var(--text)' },
           { label: isActive ? t('batches.toHarvest') : t('batches.totalDays'), value: isActive ? (daysToHarvest < 0 ? t('batches.daysOverdue', { days: Math.abs(daysToHarvest) }) : `${daysToHarvest}d`) : `${elapsed}d`, bg: 'var(--surface-2)', color: 'var(--text-muted)' },
-          { label: t('batches.mortality'),    value: Number(batch.mortality_count || 0).toLocaleString('en-IN'), bg: '#fef2f2', color: '#dc2626' },
           { label: t('batches.distributions'), value: distributions.length,                               bg: 'var(--surface-2)', color: 'var(--text-muted)' },
         ].map(card => (
           <div key={card.label}
@@ -1426,6 +1443,13 @@ ${sale.notes ? `<div class="notes"><strong>Notes</strong>${sale.notes}</div>` : 
             <p style={{ color: 'var(--text-muted)' }} className="text-xs mt-1.5 font-medium">{card.label}</p>
           </div>
         ))}
+        <button
+          onClick={openMortalityHistory}
+          style={{ backgroundColor: '#fef2f2', borderColor: 'var(--border)' }}
+          className="rounded-xl border p-4 text-center hover:bg-red-100 transition cursor-pointer w-full">
+          <p style={{ color: '#dc2626' }} className="text-2xl font-extrabold">{Number(batch.mortality_count || 0).toLocaleString('en-IN')}</p>
+          <p style={{ color: 'var(--text-muted)' }} className="text-xs mt-1.5 font-medium">{t('batches.mortality')}</p>
+        </button>
       </div>
 
       {/* ── Financial summary ─────────────────────────────────────────── */}
@@ -2266,6 +2290,50 @@ ${sale.notes ? `<div class="notes"><strong>Notes</strong>${sale.notes}</div>` : 
         </div>
       </div>
     )}
+    {/* ── Mortality History Modal ──────────────────────────────────────── */}
+    {mortalityHistoryOpen && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+        <div className="w-full max-w-sm bg-white rounded-2xl shadow-xl p-6 max-h-[80vh] overflow-y-auto">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h2 className="text-base font-semibold text-gray-800">Mortality History</h2>
+              <p className="text-xs text-gray-400 mt-0.5">Deaths recorded per farm visit</p>
+            </div>
+            <button onClick={() => setMortalityHistoryOpen(false)} className="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
+          </div>
+          {mortalityHistoryLoading ? (
+            <p className="text-sm text-gray-400 text-center py-6">Loading…</p>
+          ) : mortalityHistory.length === 0 ? (
+            <p className="text-sm text-gray-400 text-center py-6">No visit records found for this batch.</p>
+          ) : (
+            <div className="space-y-2">
+              {mortalityHistory.map((r, i) => (
+                <div key={i} className="flex items-center justify-between rounded-lg bg-red-50 border border-red-100 px-3 py-2.5">
+                  <div>
+                    <p className="text-sm font-medium text-gray-800">
+                      {new Date(r.farm_visits.visit_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
+                    </p>
+                    {r.farm_visits.visited_by_name && (
+                      <p className="text-xs text-gray-400 mt-0.5">by {r.farm_visits.visited_by_name}</p>
+                    )}
+                  </div>
+                  <span className="text-base font-bold text-red-600">
+                    {Number(r.mortality_count).toLocaleString('en-IN')} dead
+                  </span>
+                </div>
+              ))}
+              <div className="flex justify-between pt-2 border-t border-gray-100 text-sm font-semibold text-gray-700">
+                <span>Total</span>
+                <span className="text-red-600">
+                  {mortalityHistory.reduce((s, r) => s + Number(r.mortality_count || 0), 0).toLocaleString('en-IN')} dead
+                </span>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    )}
+
     {/* ── Confirm Status Modal ─────────────────────────────────────────── */}
     {confirmModal && (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
