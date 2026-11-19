@@ -158,9 +158,10 @@ export async function getProcurementLots({ itemId, itemName, itemTypeName, organ
   for (const r of (batchRows || [])) consumedMap[r.procurement_id] = (consumedMap[r.procurement_id] || 0) + Number(r.quantity)
   for (const r of (returnRows || [])) consumedMap[r.original_procurement_id] = (consumedMap[r.original_procurement_id] || 0) + Number(r.quantity)
 
-  return procs.map(p => {
-    const consumed  = consumedMap[p.id] || 0
-    const procured  = Number(p.quantity)
+  // Build lots (procs already sorted date ascending = FIFO order)
+  const rawLots = procs.map(p => {
+    const consumed = consumedMap[p.id] || 0
+    const procured = Number(p.quantity)
     return {
       id:                  p.id,
       itemName:            p.item_name || null,
@@ -175,4 +176,32 @@ export async function getProcurementLots({ itemId, itemName, itemTypeName, organ
       remaining:           Math.max(0, procured - consumed),
     }
   })
+
+  // Subtract manual stock adjustments (reference_type='adjustment') from FIFO lots.
+  // Adjustments only write to stock_ledger (not to procurement rows), so they are
+  // invisible to the consumed calc above — reduce from oldest lots first.
+  const itemNames = [...new Set(rawLots.map(l => l.itemName).filter(Boolean))]
+  if (itemNames.length > 0) {
+    const { data: adjRows } = await supabase.from('stock_ledger')
+      .select('item_name, change_type, quantity')
+      .eq('organization_id', organizationId)
+      .eq('reference_type', 'adjustment')
+      .in('item_name', itemNames)
+
+    const netAdjMap = {} // item_name → net out (positive = stock removed via adjustment)
+    for (const r of (adjRows || [])) {
+      const sign = r.change_type === 'out' ? 1 : -1
+      netAdjMap[r.item_name] = (netAdjMap[r.item_name] || 0) + sign * Number(r.quantity)
+    }
+
+    for (const lot of rawLots) {
+      const adj = netAdjMap[lot.itemName] || 0
+      if (adj <= 0) continue
+      const reduce = Math.min(lot.remaining, adj)
+      lot.remaining -= reduce
+      netAdjMap[lot.itemName] -= reduce
+    }
+  }
+
+  return rawLots
 }
