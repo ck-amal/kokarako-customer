@@ -203,17 +203,48 @@ function EditBatchModal({ batch, onClose, onSaved }) {
     e.preventDefault()
     setSaving(true)
     const userName = user?.user_metadata?.full_name || user?.email || 'Unknown'
+    const newCount = Number(form.chick_count)
+
     const { error } = await supabase.from('batches').update({
-      chick_count:     Number(form.chick_count),
+      chick_count:     newCount,
       start_date:      form.start_date,
       mortality_count: Number(form.mortality_count),
       updated_by_id:   user?.id,
       updated_by_name: userName,
       updated_at:      new Date().toISOString(),
     }).eq('id', batch.id)
+
+    if (error) { setError(error.message); setSaving(false); return }
+
+    // Sync batch_chick_purchases quantity + total_cost
+    const { data: cpRows } = await supabase.from('batch_chick_purchases')
+      .select('id, quantity, price_per_chick, ancillary_per_chick')
+      .eq('batch_id', batch.id)
+
+    if (cpRows?.length === 1) {
+      const cp = cpRows[0]
+      const ppc = Number(cp.price_per_chick || 0)
+      const apc = Number(cp.ancillary_per_chick || 0)
+      await supabase.from('batch_chick_purchases').update({
+        quantity:   newCount,
+        total_cost: roundCurrency(newCount * (ppc + apc)),
+      }).eq('id', cp.id)
+    } else if (cpRows?.length > 1) {
+      // Multiple lots: redistribute proportionally
+      const oldTotal = cpRows.reduce((s, r) => s + Number(r.quantity), 0)
+      for (const cp of cpRows) {
+        const newQty = oldTotal > 0 ? Math.round((Number(cp.quantity) / oldTotal) * newCount) : 0
+        const ppc = Number(cp.price_per_chick || 0)
+        const apc = Number(cp.ancillary_per_chick || 0)
+        await supabase.from('batch_chick_purchases').update({
+          quantity:   newQty,
+          total_cost: roundCurrency(newQty * (ppc + apc)),
+        }).eq('id', cp.id)
+      }
+    }
+
     setSaving(false)
-    if (error) setError(error.message)
-    else onSaved()
+    onSaved()
   }
 
   return (
