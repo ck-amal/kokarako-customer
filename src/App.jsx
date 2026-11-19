@@ -34,6 +34,7 @@ import VendorDetail    from './pages/VendorDetail'
 import AccountsPage    from './pages/AccountsPage'
 import PLReport        from './pages/PLReport'
 import FCRReport       from './pages/FCRReport'
+import TrialBalance    from './pages/TrialBalance'
 import GrowingFees         from './pages/GrowingFees'
 import GrowingFeeSettings  from './pages/GrowingFeeSettings'
 import Profile             from './pages/Profile'
@@ -99,8 +100,9 @@ export default function App() {
         <Route path="/suppliers"       element={<P><Suppliers /></P>} />
         <Route path="/suppliers/:id"   element={<P><SupplierDetail /></P>} />
         <Route path="/accounts"        element={<P><AccountsPage /></P>} />
-        <Route path="/reports/pl"      element={<P><PLReport /></P>} />
-        <Route path="/reports/fcr"     element={<P><FCRReport /></P>} />
+        <Route path="/reports/pl"           element={<P><PLReport /></P>} />
+        <Route path="/reports/fcr"          element={<P><FCRReport /></P>} />
+        <Route path="/reports/trial-balance" element={<P><TrialBalance /></P>} />
         <Route path="/growing-fees"    element={<P><GrowingFees /></P>} />
         <Route path="/assets"          element={<P><FixedAssets /></P>} />
         <Route path="/visits"          element={<P><Visits /></P>} />

@@ -44,8 +44,9 @@ const REPORTS_GROUP = {
   icon:     '📊',
   children: [
     { to: '/accounts',    labelKey: 'nav.cashBank',  icon: '💵', roles: ['owner','manager','accountant'] },
-    { to: '/reports/pl',  labelKey: 'nav.plReport',  icon: '📈', roles: ['owner','manager','accountant'] },
-    { to: '/reports/fcr', labelKey: 'nav.fcrReport', icon: '🌾', roles: ['owner','manager','accountant'] },
+    { to: '/reports/pl',            labelKey: 'nav.plReport',      icon: '📈', roles: ['owner','manager','accountant'] },
+    { to: '/reports/fcr',           labelKey: 'nav.fcrReport',     icon: '🌾', roles: ['owner','manager','accountant'] },
+    { to: '/reports/trial-balance', label: 'Trial Balance',        icon: '⚖️', roles: ['owner','manager','accountant'] },
   ],
 }
 
@@ -131,7 +132,7 @@ function NavGroup({ group, userRole, onChildClick }) {
             <NavItem
               key={child.to}
               to={child.to}
-              label={t(child.labelKey)}
+              label={child.labelKey ? t(child.labelKey) : child.label}
               icon={child.icon}
               onClick={onChildClick}
               sub
