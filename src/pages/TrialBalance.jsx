@@ -1,139 +1,106 @@
-import { useEffect, useState, useMemo } from 'react'
+import { useEffect, useState, useMemo, useRef } from 'react'
 import { supabase } from '../lib/supabaseClient'
-import { formatCurrency } from '../utils/format'
 import { useAuth } from '../contexts/AuthContext'
 
-function monthRange(offset = 0) {
+function fmt(n) {
+  if (n == null || n === 0) return ''
+  return Number(n).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+}
+
+function fyRange() {
   const now = new Date()
-  const start = new Date(now.getFullYear(), now.getMonth() + offset, 1).toISOString().slice(0, 10)
-  const end   = new Date(now.getFullYear(), now.getMonth() + offset + 1, 0).toISOString().slice(0, 10)
-  return { start, end }
+  const yr  = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1
+  return { start: `${yr}-04-01`, end: now.toISOString().slice(0, 10), label: `FY : ${String(yr).slice(-2)}-${String(yr + 1).slice(-2)}` }
 }
 
-function quarterRange() {
-  const now = new Date(); const q = Math.floor(now.getMonth() / 3)
-  return {
-    start: new Date(now.getFullYear(), q * 3, 1).toISOString().slice(0, 10),
-    end:   new Date(now.getFullYear(), q * 3 + 3, 0).toISOString().slice(0, 10),
-  }
+// ─── Print styles injected once ──────────────────────────────────────────────
+const PRINT_STYLE = `
+@media print {
+  body * { visibility: hidden !important; }
+  #tb-print-area, #tb-print-area * { visibility: visible !important; }
+  #tb-print-area { position: fixed; top: 0; left: 0; width: 100%; }
+  #tb-no-print { display: none !important; }
 }
-
-const DATE_PRESETS = [
-  { label: 'This Month',   fn: () => monthRange(0) },
-  { label: 'Last Month',   fn: () => monthRange(-1) },
-  { label: 'This Quarter', fn: quarterRange },
-  { label: 'This Year',    fn: () => ({ start: `${new Date().getFullYear()}-01-01`, end: `${new Date().getFullYear()}-12-31` }) },
-  { label: 'All Time',     fn: () => ({ start: '2000-01-01', end: new Date().toISOString().slice(0, 10) }) },
-]
-
-// ─── Row components ───────────────────────────────────────────────────────────
-
-function TBRow({ label, debit, credit, bold, indent, separator, muted }) {
-  if (separator) return <tr><td colSpan={3} className="pt-1 pb-0"><div className="border-t border-gray-200" /></td></tr>
-  return (
-    <tr className={bold ? 'bg-gray-50' : ''}>
-      <td className={`py-2 text-sm ${indent ? 'pl-8' : bold ? 'pl-3 font-semibold' : 'pl-3'} ${muted ? 'text-gray-400' : 'text-gray-700'} pr-2`}>
-        {label}
-      </td>
-      <td className="py-2 text-sm text-right pr-4 tabular-nums text-gray-800 font-medium">
-        {debit != null && debit !== 0 ? formatCurrency(debit) : (bold && debit === 0 ? formatCurrency(0) : '')}
-      </td>
-      <td className="py-2 text-sm text-right pr-3 tabular-nums text-gray-800 font-medium">
-        {credit != null && credit !== 0 ? formatCurrency(credit) : (bold && credit === 0 ? formatCurrency(0) : '')}
-      </td>
-    </tr>
-  )
-}
-
-function SectionHead({ label }) {
-  return (
-    <tr className="bg-indigo-50">
-      <td colSpan={3} className="pl-3 py-1.5 text-xs font-bold text-indigo-700 uppercase tracking-widest">{label}</td>
-    </tr>
-  )
-}
-
-// ─── Main page ────────────────────────────────────────────────────────────────
+`
 
 export default function TrialBalance() {
   const { organization } = useAuth()
-  const [loading,       setLoading]       = useState(false)
-  const [activePreset,  setActivePreset]  = useState('This Month')
-  const [dateRange,     setDateRange]     = useState(monthRange(0))
+  const [loading,  setLoading]  = useState(false)
+  const [asOf,     setAsOf]     = useState(new Date().toISOString().slice(0, 10))
+  const [fyLabel,  setFyLabel]  = useState(fyRange().label)
 
-  // Income / expense data (period-scoped)
-  const [chickenSales,  setChickenSales]  = useState([])
-  const [goodsSales,    setGoodsSales]    = useState([])
-  const [chickPurch,    setChickPurch]    = useState([])   // batch_chick_purchases — chick cost + ancillary
-  const [farmExp,       setFarmExp]       = useState([])
-  const [farmExpRet,    setFarmExpRet]    = useState([])
-  const [expenses,      setExpenses]      = useState([])
-  const [gfLedger,      setGfLedger]      = useState([])
+  // Raw data
+  const [chickenSales,   setChickenSales]   = useState([])
+  const [goodsSales,     setGoodsSales]     = useState([])
+  const [chickPurch,     setChickPurch]     = useState([])
+  const [farmExp,        setFarmExp]        = useState([])
+  const [farmExpRet,     setFarmExpRet]     = useState([])
+  const [expenses,       setExpenses]       = useState([])
+  const [gfLedger,       setGfLedger]       = useState([])
+  const [vendors,        setVendors]        = useState([])
+  const [allSales,       setAllSales]       = useState([])
+  const [allCollections, setAllCollections] = useState([])
+  const [suppliers,      setSuppliers]      = useState([])
+  const [allProcurement, setAllProcurement] = useState([])
+  const [allSupPayments, setAllSupPayments] = useState([])
+  const [accounts,       setAccounts]       = useState([])
+  const [transactions,   setTransactions]   = useState([])
 
-  // Balance sheet data (cumulative up to period end)
-  const [accounts,      setAccounts]      = useState([])
-  const [transactions,  setTransactions]  = useState([])
-  const [vendors,       setVendors]       = useState([])
-  const [allSales,      setAllSales]      = useState([])
-  const [allCollections,setAllCollections]= useState([])
-  const [suppliers,     setSuppliers]     = useState([])
-  const [allProcurement,setAllProcurement]= useState([])
-  const [allSupPayments,setAllSupPayments]= useState([])
+  useEffect(() => {
+    const { label } = fyRange()
+    setFyLabel(label)
+    fetchData(fyRange().start, asOf)
+  }, [organization, asOf])
 
-  useEffect(() => { fetchData() }, [dateRange, organization])
-
-  async function fetchData() {
+  async function fetchData(start, end) {
     if (!organization?.id) return
     setLoading(true)
-    const { start, end } = dateRange
+    const oid = organization.id
 
-    // ── Period income / expense queries ──────────────────────────────────────
+    // Income / expense (FY period)
     const [
       { data: cs }, { data: gs },
       { data: fe }, { data: fer }, { data: ex },
-      { data: soldBatches },
+      { data: soldB },
     ] = await Promise.all([
-      supabase.from('sales').select('total_amount').eq('organization_id', organization.id).eq('status', 'confirmed').eq('sale_type', 'chicken').gte('date', start).lte('date', end),
-      supabase.from('sales').select('total_amount, item_quantity, purchase_cost_per_unit').eq('organization_id', organization.id).eq('status', 'confirmed').eq('sale_type', 'goods').gte('date', start).lte('date', end),
-      supabase.from('farm_expenses').select('item_type, total_cost').eq('organization_id', organization.id).gte('date', start).lte('date', end),
-      supabase.from('farm_expense_returns').select('item_type, total_cost').eq('organization_id', organization.id).gte('date', start).lte('date', end),
-      supabase.from('expenses').select('category, amount').eq('organization_id', organization.id).gte('date', start).lte('date', end),
-      supabase.from('batches').select('id').eq('organization_id', organization.id).eq('status', 'sold').gte('sold_at', start).lte('sold_at', end),
+      supabase.from('sales').select('total_amount, final_amount').eq('organization_id', oid).eq('status', 'confirmed').eq('sale_type', 'chicken').gte('date', start).lte('date', end),
+      supabase.from('sales').select('total_amount, final_amount, item_quantity, purchase_cost_per_unit').eq('organization_id', oid).eq('status', 'confirmed').eq('sale_type', 'goods').gte('date', start).lte('date', end),
+      supabase.from('farm_expenses').select('item_type, total_cost').eq('organization_id', oid).gte('date', start).lte('date', end),
+      supabase.from('farm_expense_returns').select('item_type, total_cost').eq('organization_id', oid).gte('date', start).lte('date', end),
+      supabase.from('expenses').select('category, amount').eq('organization_id', oid).gte('date', start).lte('date', end),
+      supabase.from('batches').select('id').eq('organization_id', oid).eq('status', 'sold').gte('sold_at', start).lte('sold_at', end),
     ])
 
-    // batch_chick_purchases for batches started in period
-    const { data: startedBatches } = await supabase.from('batches').select('id').eq('organization_id', organization.id).gte('start_date', start).lte('start_date', end)
+    // Chick purchases for batches started in period
+    const { data: stB } = await supabase.from('batches').select('id').eq('organization_id', oid).gte('start_date', start).lte('start_date', end)
     let cpData = []
-    if ((startedBatches || []).length > 0) {
-      const { data } = await supabase.from('batch_chick_purchases')
-        .select('quantity, price_per_chick, ancillary_per_chick')
-        .eq('organization_id', organization.id)
-        .in('batch_id', startedBatches.map(b => b.id))
+    if ((stB || []).length > 0) {
+      const { data } = await supabase.from('batch_chick_purchases').select('quantity, price_per_chick, ancillary_per_chick').eq('organization_id', oid).in('batch_id', stB.map(b => b.id))
       cpData = data || []
     }
 
-    // Growing fee ledger for batches closed in period
+    // Growing fees for batches closed in period
     let gfl = []
-    const soldIds = (soldBatches || []).map(b => b.id)
+    const soldIds = (soldB || []).map(b => b.id)
     if (soldIds.length > 0) {
-      const { data } = await supabase.from('growing_fee_ledger').select('total_fee').eq('organization_id', organization.id).in('batch_id', soldIds)
+      const { data } = await supabase.from('growing_fee_ledger').select('total_fee').eq('organization_id', oid).in('batch_id', soldIds)
       gfl = data || []
     }
 
-    // ── Balance sheet queries (cumulative up to period end) ───────────────────
+    // Balance sheet — cumulative up to `end`
     const [
-      { data: accts }, { data: txns },
-      { data: vs },    { data: aSales }, { data: aCollect },
-      { data: sups },  { data: aProcurement }, { data: aSupPay },
+      { data: vs },   { data: aSales }, { data: aCollect },
+      { data: sups }, { data: aProc },  { data: aSupPay },
+      { data: accts },{ data: txns },
     ] = await Promise.all([
-      supabase.from('accounts').select('id, name, type, opening_balance, is_active').eq('organization_id', organization.id).eq('is_active', true),
-      supabase.from('transactions').select('account_id, transaction_type, amount').eq('organization_id', organization.id).lte('transaction_date', end),
-      supabase.from('contacts').select('id, name').eq('organization_id', organization.id).eq('is_vendor', true),
-      supabase.from('sales').select('vendor_id, total_amount, final_amount').eq('organization_id', organization.id).eq('status', 'confirmed').lte('date', end),
-      supabase.from('cash_collection').select('vendor_id, amount_paid').eq('organization_id', organization.id).lte('date', end),
-      supabase.from('suppliers').select('id, name, opening_balance').eq('organization_id', organization.id),
-      supabase.from('procurement').select('supplier_id, cost, is_return').eq('organization_id', organization.id).lte('date', end),
-      supabase.from('supplier_payments').select('supplier_id, amount').eq('organization_id', organization.id).lte('payment_date', end),
+      supabase.from('contacts').select('id, name').eq('organization_id', oid).eq('is_vendor', true).order('name'),
+      supabase.from('sales').select('vendor_id, total_amount, final_amount').eq('organization_id', oid).eq('status', 'confirmed').lte('date', end),
+      supabase.from('cash_collection').select('vendor_id, amount_paid').eq('organization_id', oid).lte('date', end),
+      supabase.from('suppliers').select('id, name, opening_balance').eq('organization_id', oid).order('name'),
+      supabase.from('procurement').select('supplier_id, cost, is_return').eq('organization_id', oid).lte('date', end),
+      supabase.from('supplier_payments').select('supplier_id, amount').eq('organization_id', oid).lte('payment_date', end),
+      supabase.from('accounts').select('id, name, type, opening_balance').eq('organization_id', oid).eq('is_active', true).order('name'),
+      supabase.from('transactions').select('account_id, transaction_type, amount').eq('organization_id', oid).lte('transaction_date', end),
     ])
 
     setChickenSales(cs || [])
@@ -143,270 +110,267 @@ export default function TrialBalance() {
     setFarmExpRet(fer || [])
     setExpenses(ex || [])
     setGfLedger(gfl)
-    setAccounts(accts || [])
-    setTransactions(txns || [])
     setVendors(vs || [])
     setAllSales(aSales || [])
     setAllCollections(aCollect || [])
     setSuppliers(sups || [])
-    setAllProcurement(aProcurement || [])
+    setAllProcurement(aProc || [])
     setAllSupPayments(aSupPay || [])
+    setAccounts(accts || [])
+    setTransactions(txns || [])
     setLoading(false)
   }
 
-  // ─── Income calculations ──────────────────────────────────────────────────
-  const chickenSalesTotal = useMemo(() => chickenSales.reduce((s, r) => s + Number(r.total_amount), 0), [chickenSales])
-  const goodsSalesTotal   = useMemo(() => goodsSales.reduce((s, r) => s + Number(r.total_amount), 0), [goodsSales])
-  const ancillaryIncome   = useMemo(() => chickPurch.reduce((s, r) => s + Number(r.ancillary_per_chick || 0) * Number(r.quantity || 0), 0), [chickPurch])
-  const totalIncome       = chickenSalesTotal + goodsSalesTotal + ancillaryIncome
+  // ─── Computed values ──────────────────────────────────────────────────────
 
-  // ─── Direct cost calculations ─────────────────────────────────────────────
-  const chickCost = useMemo(() => chickPurch.reduce((s, r) => s + Number(r.price_per_chick || 0) * Number(r.quantity || 0), 0), [chickPurch])
-  const feedCost  = useMemo(() => {
-    const gross  = farmExp.filter(r => r.item_type?.toLowerCase().includes('feed')).reduce((s, r) => s + Number(r.total_cost), 0)
-    const credit = farmExpRet.filter(r => r.item_type?.toLowerCase().includes('feed')).reduce((s, r) => s + Number(r.total_cost), 0)
-    return Math.max(0, gross - credit)
-  }, [farmExp, farmExpRet])
-  const medCost   = useMemo(() => {
-    const gross  = farmExp.filter(r => r.item_type?.toLowerCase().includes('medicine')).reduce((s, r) => s + Number(r.total_cost), 0)
-    const credit = farmExpRet.filter(r => r.item_type?.toLowerCase().includes('medicine')).reduce((s, r) => s + Number(r.total_cost), 0)
-    return Math.max(0, gross - credit)
-  }, [farmExp, farmExpRet])
-  const otherFarmCost = useMemo(() => {
-    const gross  = farmExp.filter(r => !r.item_type?.toLowerCase().includes('feed') && !r.item_type?.toLowerCase().includes('medicine')).reduce((s, r) => s + Number(r.total_cost), 0)
-    const credit = farmExpRet.filter(r => !r.item_type?.toLowerCase().includes('feed') && !r.item_type?.toLowerCase().includes('medicine')).reduce((s, r) => s + Number(r.total_cost), 0)
-    return Math.max(0, gross - credit)
-  }, [farmExp, farmExpRet])
-  const goodsCOGS     = useMemo(() => goodsSales.reduce((s, r) => s + Number(r.purchase_cost_per_unit || 0) * Number(r.item_quantity || 0), 0), [goodsSales])
-  const totalDirectCosts = chickCost + feedCost + medCost + otherFarmCost + goodsCOGS
+  const chickenSalesAmt  = useMemo(() => chickenSales.reduce((s, r) => s + Number(r.final_amount || r.total_amount), 0), [chickenSales])
+  const goodsSalesAmt    = useMemo(() => goodsSales.reduce((s, r) => s + Number(r.final_amount || r.total_amount), 0), [goodsSales])
+  const ancillaryAmt     = useMemo(() => chickPurch.reduce((s, r) => s + Number(r.ancillary_per_chick || 0) * Number(r.quantity || 0), 0), [chickPurch])
 
-  // ─── Operating expense calculations ──────────────────────────────────────
+  const chickCostAmt = useMemo(() => chickPurch.reduce((s, r) => s + Number(r.price_per_chick || 0) * Number(r.quantity || 0), 0), [chickPurch])
+
+  const feedCostAmt = useMemo(() => {
+    const g = farmExp.filter(r => r.item_type?.toLowerCase().includes('feed')).reduce((s, r) => s + Number(r.total_cost), 0)
+    const c = farmExpRet.filter(r => r.item_type?.toLowerCase().includes('feed')).reduce((s, r) => s + Number(r.total_cost), 0)
+    return Math.max(0, g - c)
+  }, [farmExp, farmExpRet])
+
+  const medCostAmt = useMemo(() => {
+    const g = farmExp.filter(r => r.item_type?.toLowerCase().includes('medicine')).reduce((s, r) => s + Number(r.total_cost), 0)
+    const c = farmExpRet.filter(r => r.item_type?.toLowerCase().includes('medicine')).reduce((s, r) => s + Number(r.total_cost), 0)
+    return Math.max(0, g - c)
+  }, [farmExp, farmExpRet])
+
+  const otherFarmAmt = useMemo(() => {
+    const g = farmExp.filter(r => !r.item_type?.toLowerCase().includes('feed') && !r.item_type?.toLowerCase().includes('medicine')).reduce((s, r) => s + Number(r.total_cost), 0)
+    const c = farmExpRet.filter(r => !r.item_type?.toLowerCase().includes('feed') && !r.item_type?.toLowerCase().includes('medicine')).reduce((s, r) => s + Number(r.total_cost), 0)
+    return Math.max(0, g - c)
+  }, [farmExp, farmExpRet])
+
   const expByCategory = useMemo(() => {
     const map = {}
     for (const e of expenses) {
-      const cat = e.category || 'Other'
+      const cat = (e.category || 'Other').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
       map[cat] = (map[cat] || 0) + Number(e.amount)
     }
     return Object.entries(map).sort((a, b) => b[1] - a[1])
   }, [expenses])
-  const totalOpExp = useMemo(() => expenses.reduce((s, e) => s + Number(e.amount), 0), [expenses])
-  const growingFeeTotal = useMemo(() => gfLedger.reduce((s, r) => s + Number(r.total_fee || 0), 0), [gfLedger])
-  const totalOpExpWithGF = totalOpExp + growingFeeTotal
 
-  const totalExpenses = totalDirectCosts + totalOpExpWithGF
-  const netProfit     = totalIncome - totalExpenses
+  const growingFeeAmt = useMemo(() => gfLedger.reduce((s, r) => s + Number(r.total_fee || 0), 0), [gfLedger])
 
-  // ─── Balance sheet calculations ───────────────────────────────────────────
+  const vendorRows = useMemo(() => {
+    const salesMap = {}; const collectMap = {}
+    for (const s of allSales)       salesMap[s.vendor_id]   = (salesMap[s.vendor_id]   || 0) + Number(s.final_amount || s.total_amount)
+    for (const c of allCollections) collectMap[c.vendor_id] = (collectMap[c.vendor_id] || 0) + Number(c.amount_paid)
+    return vendors.map(v => ({ ...v, balance: (salesMap[v.id] || 0) - (collectMap[v.id] || 0) })).filter(v => Math.abs(v.balance) > 0.01)
+  }, [vendors, allSales, allCollections])
 
-  // Cash/bank: opening_balance + tx_in - tx_out per account
-  const accountBalances = useMemo(() => {
+  const supplierRows = useMemo(() => {
+    const purchMap = {}; const payMap = {}
+    for (const p of allProcurement) {
+      const sign = p.is_return ? -1 : 1
+      purchMap[p.supplier_id] = (purchMap[p.supplier_id] || 0) + sign * Number(p.cost)
+    }
+    for (const p of allSupPayments) payMap[p.supplier_id] = (payMap[p.supplier_id] || 0) + Number(p.amount)
+    return suppliers.map(s => ({ ...s, balance: Number(s.opening_balance || 0) + (purchMap[s.id] || 0) - (payMap[s.id] || 0) })).filter(s => Math.abs(s.balance) > 0.01)
+  }, [suppliers, allProcurement, allSupPayments])
+
+  const accountRows = useMemo(() => {
     const txMap = {}
     for (const t of transactions) {
       if (!txMap[t.account_id]) txMap[t.account_id] = { in: 0, out: 0 }
       if (t.transaction_type === 'in')  txMap[t.account_id].in  += Number(t.amount)
       if (t.transaction_type === 'out') txMap[t.account_id].out += Number(t.amount)
     }
-    return accounts.map(a => ({
-      ...a,
-      balance: Number(a.opening_balance || 0) + (txMap[a.id]?.in || 0) - (txMap[a.id]?.out || 0),
-    })).filter(a => a.balance !== 0)
+    return accounts.map(a => ({ ...a, balance: Number(a.opening_balance || 0) + (txMap[a.id]?.in || 0) - (txMap[a.id]?.out || 0) })).filter(a => Math.abs(a.balance) > 0.01)
   }, [accounts, transactions])
-  const totalCash = accountBalances.reduce((s, a) => s + a.balance, 0)
 
-  // Vendor receivables: total confirmed sales - total cash collected (cumulative)
-  const vendorReceivables = useMemo(() => {
-    const salesByVendor   = {}
-    const collectByVendor = {}
-    for (const s of allSales)       salesByVendor[s.vendor_id]   = (salesByVendor[s.vendor_id]   || 0) + Number(s.final_amount || s.total_amount)
-    for (const c of allCollections) collectByVendor[c.vendor_id] = (collectByVendor[c.vendor_id] || 0) + Number(c.amount_paid)
-    const rows = vendors.map(v => ({
-      ...v,
-      outstanding: (salesByVendor[v.id] || 0) - (collectByVendor[v.id] || 0),
-    })).filter(v => v.outstanding > 0.01)
-    return { rows, total: rows.reduce((s, v) => s + v.outstanding, 0) }
-  }, [vendors, allSales, allCollections])
+  // ─── Build sections ───────────────────────────────────────────────────────
 
-  // Supplier payables: opening_balance + purchases - returns - payments (cumulative)
-  const supplierPayables = useMemo(() => {
-    const purchBySupplier = {}; const payBySupplier = {}
-    for (const p of allProcurement) {
-      const sign = p.is_return ? -1 : 1
-      purchBySupplier[p.supplier_id] = (purchBySupplier[p.supplier_id] || 0) + sign * Number(p.cost)
+  const sections = useMemo(() => {
+    const list = []
+
+    // 1. DIRECT INCOME
+    const incItems = [
+      { name: 'Chicken Sales Account', debit: 0, credit: chickenSalesAmt },
+      { name: 'Goods Sales Account',   debit: 0, credit: goodsSalesAmt },
+      ...(ancillaryAmt > 0 ? [{ name: 'Ancillary Income Account', debit: 0, credit: ancillaryAmt }] : []),
+    ].filter(i => i.credit > 0)
+    if (incItems.length > 0) list.push({ code: 'INC', title: 'DIRECT INCOME', items: incItems })
+
+    // 2. DIRECT EXPENSE
+    const expItems = [
+      { name: 'Chick Procurement Account',   debit: chickCostAmt,  credit: 0 },
+      { name: 'Feed Expenses Account',        debit: feedCostAmt,   credit: 0 },
+      { name: 'Medicine Expenses Account',    debit: medCostAmt,    credit: 0 },
+      ...(otherFarmAmt > 0 ? [{ name: 'Other Farm Expenses Account', debit: otherFarmAmt, credit: 0 }] : []),
+    ].filter(i => i.debit > 0)
+    if (expItems.length > 0) list.push({ code: 'DEXP', title: 'DIRECT EXPENSE', items: expItems })
+
+    // 3. INDIRECT EXPENSE
+    const indItems = [
+      ...expByCategory.filter(([, amt]) => amt > 0).map(([cat, amt]) => ({ name: cat, debit: amt, credit: 0 })),
+      ...(growingFeeAmt > 0 ? [{ name: 'Growing Fee', debit: growingFeeAmt, credit: 0 }] : []),
+    ]
+    if (indItems.length > 0) list.push({ code: 'IEXP', title: 'INDIRECT EXPENSE', items: indItems })
+
+    // 4. CUSTOMERS (vendor receivables)
+    if (vendorRows.length > 0) {
+      list.push({
+        code: 'AA',
+        title: 'CUSTOMERS',
+        items: vendorRows.map(v => ({
+          name:   v.name,
+          debit:  v.balance > 0 ? v.balance : 0,
+          credit: v.balance < 0 ? Math.abs(v.balance) : 0,
+        })),
+      })
     }
-    for (const p of allSupPayments) payBySupplier[p.supplier_id] = (payBySupplier[p.supplier_id] || 0) + Number(p.amount)
-    const rows = suppliers.map(s => ({
-      ...s,
-      outstanding: Number(s.opening_balance || 0) + (purchBySupplier[s.id] || 0) - (payBySupplier[s.id] || 0),
-    })).filter(s => Math.abs(s.outstanding) > 0.01)
-    return { rows, total: rows.reduce((s, v) => s + v.outstanding, 0) }
-  }, [suppliers, allProcurement, allSupPayments])
 
-  // ─── Trial balance totals ─────────────────────────────────────────────────
-  // Debit  = expenses + assets (receivables + cash)
-  // Credit = income + liabilities (payables)
-  const totalDebit  = totalExpenses + vendorReceivables.total + (totalCash > 0 ? totalCash : 0)
-  const totalCredit = totalIncome   + (supplierPayables.total > 0 ? supplierPayables.total : 0) + (totalCash < 0 ? Math.abs(totalCash) : 0)
-  const difference  = totalCredit - totalDebit  // positive = profit
+    // 5. SUPPLIERS
+    if (supplierRows.length > 0) {
+      list.push({
+        code: 'SUP',
+        title: 'SUPPLIER ACCOUNT',
+        items: supplierRows.map(s => ({
+          name:   s.name,
+          debit:  s.balance < 0 ? Math.abs(s.balance) : 0,
+          credit: s.balance > 0 ? s.balance : 0,
+        })),
+      })
+    }
 
-  const ICON = { cash: '💵', bank: '🏦', wallet: '📱' }
+    // 6. CASH / BANK
+    if (accountRows.length > 0) {
+      list.push({
+        code: 'CASH',
+        title: 'CASH / BANK ACCOUNT',
+        items: accountRows.map(a => ({
+          name:   a.name,
+          debit:  a.balance > 0 ? a.balance : 0,
+          credit: a.balance < 0 ? Math.abs(a.balance) : 0,
+        })),
+      })
+    }
+
+    return list
+  }, [chickenSalesAmt, goodsSalesAmt, ancillaryAmt, chickCostAmt, feedCostAmt, medCostAmt, otherFarmAmt, expByCategory, growingFeeAmt, vendorRows, supplierRows, accountRows])
+
+  const grandDebit  = useMemo(() => sections.reduce((s, sec) => s + sec.items.reduce((a, i) => a + i.debit,  0), 0), [sections])
+  const grandCredit = useMemo(() => sections.reduce((s, sec) => s + sec.items.reduce((a, i) => a + i.credit, 0), 0), [sections])
+
+  // Sequential Sl numbering across all sections
+  let slCounter = 0
 
   return (
-    <div className="max-w-3xl mx-auto px-4 py-8 space-y-6">
+    <>
+      <style>{PRINT_STYLE}</style>
 
-      {/* Header */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">Trial Balance</h1>
-          <p className="text-sm text-gray-500 mt-0.5">
-            Income & expenses for the period · Balance sheet as of period end
-          </p>
-        </div>
-        {loading && <span className="text-sm text-indigo-500 animate-pulse">Loading…</span>}
-      </div>
+      <div className="max-w-4xl mx-auto px-4 py-8 space-y-4">
 
-      {/* Date range */}
-      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm px-5 py-4 space-y-3">
-        <div className="flex flex-wrap gap-2">
-          {DATE_PRESETS.map(p => (
-            <button key={p.label} onClick={() => { setActivePreset(p.label); setDateRange(p.fn()) }}
-              className={`px-3 py-1.5 rounded-full text-xs font-semibold border transition ${activePreset === p.label ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-gray-600 border-gray-300 hover:border-indigo-400'}`}>
-              {p.label}
-            </button>
-          ))}
-        </div>
-        <div className="flex flex-wrap gap-3 items-center">
-          <div className="flex items-center gap-2">
-            <label className="text-xs text-gray-500">From</label>
-            <input type="date" value={dateRange.start}
-              onChange={e => { setActivePreset('Custom'); setDateRange(r => ({ ...r, start: e.target.value })) }}
-              className="rounded-lg border border-gray-300 px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+        {/* Controls */}
+        <div id="tb-no-print" className="flex flex-wrap items-center justify-between gap-3 bg-white rounded-2xl border border-gray-100 shadow-sm px-5 py-4">
+          <div className="flex items-center gap-3 flex-wrap">
+            <label className="text-sm font-medium text-gray-700">As on:</label>
+            <input type="date" value={asOf} onChange={e => setAsOf(e.target.value)}
+              className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+            {loading && <span className="text-sm text-indigo-500 animate-pulse">Loading…</span>}
           </div>
-          <div className="flex items-center gap-2">
-            <label className="text-xs text-gray-500">To</label>
-            <input type="date" value={dateRange.end}
-              onChange={e => { setActivePreset('Custom'); setDateRange(r => ({ ...r, end: e.target.value })) }}
-              className="rounded-lg border border-gray-300 px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" />
-          </div>
-        </div>
-      </div>
-
-      {/* Trial Balance Table */}
-      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
-
-        {/* Table header */}
-        <div className="grid grid-cols-3 bg-gray-800 text-white text-xs font-bold uppercase tracking-widest px-3 py-3">
-          <span>Account</span>
-          <span className="text-right pr-4">Debit (₹)</span>
-          <span className="text-right pr-3">Credit (₹)</span>
+          <button onClick={() => window.print()}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-gray-800 text-white text-sm font-semibold hover:bg-gray-700 transition">
+            🖨️ Print
+          </button>
         </div>
 
-        <table className="w-full">
-          <tbody>
-            {/* ─── INCOME ─── */}
-            <SectionHead label="Income" />
-            <TBRow label="Chicken Sales"   indent credit={chickenSalesTotal} />
-            <TBRow label="Goods Sales"     indent credit={goodsSalesTotal} />
-            <TBRow label="Ancillary Income" indent credit={ancillaryIncome} />
-            <TBRow label="Total Income" bold debit={0} credit={totalIncome} />
-            <TBRow separator />
+        {/* Trial Balance Table */}
+        <div id="tb-print-area" className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
 
-            {/* ─── DIRECT COSTS ─── */}
-            <SectionHead label="Direct Costs" />
-            <TBRow label="Chick Procurement" indent debit={chickCost} />
-            <TBRow label="Feed Expenses"     indent debit={feedCost} />
-            <TBRow label="Medicine Expenses" indent debit={medCost} />
-            {otherFarmCost > 0 && <TBRow label="Other Farm Expenses" indent debit={otherFarmCost} />}
-            {goodsCOGS > 0     && <TBRow label="Goods Cost of Sales" indent debit={goodsCOGS} />}
-            <TBRow label="Total Direct Costs" bold debit={totalDirectCosts} credit={0} />
-            <TBRow separator />
-
-            {/* ─── OPERATING EXPENSES ─── */}
-            <SectionHead label="Operating Expenses" />
-            {expByCategory.map(([cat, amt]) => (
-              <TBRow key={cat} label={cat.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())} indent debit={amt} />
-            ))}
-            {expByCategory.length === 0 && <TBRow label="No expenses in period" indent muted debit={0} />}
-            {growingFeeTotal > 0 && <TBRow label="Growing Fees" indent debit={growingFeeTotal} />}
-            <TBRow label="Total Operating Expenses" bold debit={totalOpExpWithGF} credit={0} />
-            <TBRow separator />
-
-            {/* ─── BALANCE SHEET ─── */}
-            <SectionHead label="Balance Sheet (cumulative as of period end)" />
-
-            {/* Cash / Bank */}
-            {accountBalances.map(a => (
-              <TBRow key={a.id} label={`${ICON[a.type] || '💰'} ${a.name}`} indent
-                debit={a.balance > 0 ? a.balance : undefined}
-                credit={a.balance < 0 ? Math.abs(a.balance) : undefined} />
-            ))}
-            {accountBalances.length === 0 && <TBRow label="No accounts" indent muted />}
-            <TBRow label={`Cash / Bank Total`} bold
-              debit={totalCash > 0 ? totalCash : 0}
-              credit={totalCash < 0 ? Math.abs(totalCash) : 0} />
-            <TBRow separator />
-
-            {/* Vendor Receivables */}
-            {vendorReceivables.rows.map(v => (
-              <TBRow key={v.id} label={`${v.name} (receivable)`} indent debit={v.outstanding} />
-            ))}
-            {vendorReceivables.rows.length === 0 && <TBRow label="No outstanding vendor receivables" indent muted />}
-            <TBRow label="Vendor Receivables Total" bold debit={vendorReceivables.total} credit={0} />
-            <TBRow separator />
-
-            {/* Supplier Payables */}
-            {supplierPayables.rows.map(s => (
-              <TBRow key={s.id} label={`${s.name} (payable)`} indent
-                debit={s.outstanding < 0 ? Math.abs(s.outstanding) : undefined}
-                credit={s.outstanding > 0 ? s.outstanding : undefined} />
-            ))}
-            {supplierPayables.rows.length === 0 && <TBRow label="No outstanding supplier payables" indent muted />}
-            <TBRow label="Supplier Payables Total" bold
-              debit={supplierPayables.total < 0 ? Math.abs(supplierPayables.total) : 0}
-              credit={supplierPayables.total > 0 ? supplierPayables.total : 0} />
-            <TBRow separator />
-
-            {/* ─── GRAND TOTALS ─── */}
-            <tr className="bg-gray-900 text-white">
-              <td className="pl-3 py-3 text-sm font-bold">Grand Total</td>
-              <td className="py-3 text-sm font-bold text-right pr-4 tabular-nums">{formatCurrency(totalDebit)}</td>
-              <td className="py-3 text-sm font-bold text-right pr-3 tabular-nums">{formatCurrency(totalCredit)}</td>
-            </tr>
-
-            {/* Net Profit / Loss row */}
-            <tr className={difference >= 0 ? 'bg-green-50' : 'bg-red-50'}>
-              <td className={`pl-3 py-3 text-sm font-bold ${difference >= 0 ? 'text-green-700' : 'text-red-700'}`}>
-                {difference >= 0 ? '▲ Net Profit (Period)' : '▼ Net Loss (Period)'}
-              </td>
-              <td className={`py-3 text-sm font-bold text-right pr-4 tabular-nums ${difference >= 0 ? 'text-green-700' : 'text-red-700'}`}>
-                {difference < 0 ? formatCurrency(Math.abs(difference)) : ''}
-              </td>
-              <td className={`py-3 text-sm font-bold text-right pr-3 tabular-nums ${difference >= 0 ? 'text-green-700' : 'text-red-700'}`}>
-                {difference >= 0 ? formatCurrency(difference) : ''}
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-
-      {/* Summary cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-        {[
-          { label: 'Total Income',    value: totalIncome,              color: 'text-green-700', bg: 'bg-green-50  border-green-200' },
-          { label: 'Total Expenses',  value: totalExpenses,            color: 'text-red-700',   bg: 'bg-red-50    border-red-200' },
-          { label: netProfit >= 0 ? 'Net Profit' : 'Net Loss',
-            value: Math.abs(netProfit),
-            color: netProfit >= 0 ? 'text-indigo-700' : 'text-orange-700',
-            bg:    netProfit >= 0 ? 'bg-indigo-50 border-indigo-200' : 'bg-orange-50 border-orange-200' },
-          { label: 'Vendor Receivables', value: vendorReceivables.total, color: 'text-blue-700',   bg: 'bg-blue-50   border-blue-200' },
-          { label: 'Supplier Payables',  value: supplierPayables.total,  color: 'text-amber-700',  bg: 'bg-amber-50  border-amber-200' },
-          { label: 'Cash / Bank',        value: totalCash,               color: totalCash >= 0 ? 'text-teal-700' : 'text-red-700', bg: totalCash >= 0 ? 'bg-teal-50 border-teal-200' : 'bg-red-50 border-red-200' },
-        ].map(c => (
-          <div key={c.label} className={`rounded-xl border px-4 py-3 ${c.bg}`}>
-            <p className="text-xs text-gray-500 font-medium">{c.label}</p>
-            <p className={`text-lg font-bold tabular-nums mt-0.5 ${c.color}`}>{formatCurrency(c.value)}</p>
+          {/* Header */}
+          <div className="text-center py-4 border-b border-gray-200 px-6">
+            <div className="flex items-start justify-between">
+              <div className="text-left">
+                <p className="text-xl font-extrabold text-gray-900 tracking-wide">{organization?.name || 'Organization'}</p>
+                <p className="text-sm text-gray-500">{organization?.business_name || ''}</p>
+              </div>
+              <div className="border-2 border-gray-800 px-4 py-2 rounded text-sm font-bold text-gray-800 text-center">
+                {fyLabel}
+              </div>
+            </div>
+            <p className="text-lg font-bold text-gray-800 mt-3">Trial Balance as on {new Date(asOf).toLocaleDateString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric' })}</p>
           </div>
-        ))}
+
+          {/* Table */}
+          <table className="w-full border-collapse text-sm">
+            <thead>
+              <tr className="bg-gray-800 text-white">
+                <th className="text-center py-2.5 px-3 font-bold w-12">Sl</th>
+                <th className="text-left py-2.5 px-4 font-bold">Name</th>
+                <th className="text-right py-2.5 px-4 font-bold w-36 tabular-nums">Debit</th>
+                <th className="text-right py-2.5 px-4 font-bold w-36 tabular-nums">Credit</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sections.map((sec, si) => {
+                const secDebit  = sec.items.reduce((a, i) => a + i.debit,  0)
+                const secCredit = sec.items.reduce((a, i) => a + i.credit, 0)
+                return (
+                  <>
+                    {/* Group code row */}
+                    <tr key={`code-${si}`} className="bg-gray-50">
+                      <td colSpan={4} className="px-4 py-1.5 text-xs font-bold text-gray-500 tracking-widest">{sec.code}</td>
+                    </tr>
+                    {/* Group title row */}
+                    <tr key={`title-${si}`}>
+                      <td colSpan={4} className="px-4 py-1 text-sm font-bold text-gray-800 border-b border-gray-100">{sec.title}</td>
+                    </tr>
+                    {/* Item rows */}
+                    {sec.items.map((item, ii) => {
+                      slCounter++
+                      const sl = slCounter
+                      return (
+                        <tr key={`${si}-${ii}`} className="hover:bg-gray-50 border-b border-gray-50">
+                          <td className="text-center py-1.5 px-3 text-gray-500">{sl}</td>
+                          <td className="py-1.5 px-4 text-gray-700">{item.name}</td>
+                          <td className="py-1.5 px-4 text-right tabular-nums text-gray-800">{fmt(item.debit)}</td>
+                          <td className="py-1.5 px-4 text-right tabular-nums text-gray-800">{fmt(item.credit)}</td>
+                        </tr>
+                      )
+                    })}
+                    {/* Section subtotal row */}
+                    <tr key={`sub-${si}`} className="bg-gray-50 border-t border-gray-200">
+                      <td colSpan={2}></td>
+                      <td className="py-1.5 px-4 text-right font-bold tabular-nums text-gray-900">{fmt(secDebit)}</td>
+                      <td className="py-1.5 px-4 text-right font-bold tabular-nums text-gray-900">{fmt(secCredit)}</td>
+                    </tr>
+                  </>
+                )
+              })}
+
+              {/* Grand Total */}
+              <tr className="bg-gray-800 text-white border-t-2 border-gray-400">
+                <td colSpan={2} className="py-3 px-4 font-bold text-sm"></td>
+                <td className="py-3 px-4 text-right font-bold tabular-nums text-base">{fmt(grandDebit)}</td>
+                <td className="py-3 px-4 text-right font-bold tabular-nums text-base">{fmt(grandCredit)}</td>
+              </tr>
+
+              {/* Difference note if books don't balance */}
+              {Math.abs(grandDebit - grandCredit) > 0.01 && (
+                <tr className="bg-amber-50 border-t border-amber-200">
+                  <td colSpan={2} className="py-2 px-4 text-xs text-amber-700 font-medium">
+                    Difference (Net Profit / Closing Balance)
+                  </td>
+                  <td className="py-2 px-4 text-right tabular-nums text-xs font-bold text-amber-700">
+                    {grandCredit > grandDebit ? fmt(grandCredit - grandDebit) : ''}
+                  </td>
+                  <td className="py-2 px-4 text-right tabular-nums text-xs font-bold text-amber-700">
+                    {grandDebit > grandCredit ? fmt(grandDebit - grandCredit) : ''}
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
-    </div>
+    </>
   )
 }
