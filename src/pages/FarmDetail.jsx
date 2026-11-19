@@ -2,6 +2,7 @@ import { useEffect, useState, useRef } from 'react'
 import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { supabase } from '../lib/supabaseClient'
+import { ledgerIn, ledgerOut } from '../lib/stockLedger'
 import NewBatchModal from '../components/NewBatchModal'
 import DistributionModal from '../components/DistributionModal'
 import { formatCurrency, roundCurrency } from '../utils/format'
@@ -187,7 +188,7 @@ function FarmEditModal({ farm, onClose, onSaved }) {
 // ─── Edit Batch Modal ─────────────────────────────────────────────────────────
 
 function EditBatchModal({ batch, onClose, onSaved }) {
-  const { user } = useAuth()
+  const { user, organization } = useAuth()
   const { t } = useTranslation()
   const [form, setForm] = useState({
     chick_count:     String(batch.chick_count),
@@ -240,6 +241,48 @@ function EditBatchModal({ batch, onClose, onSaved }) {
           quantity:   newQty,
           total_cost: roundCurrency(newQty * (ppc + apc)),
         }).eq('id', cp.id)
+      }
+    }
+
+    // Adjust stock for the chick count difference
+    const diff = newCount - Number(batch.chick_count)
+    if (diff !== 0) {
+      const { data: ledgerRows } = await supabase.from('stock_ledger')
+        .select('item_name, quantity')
+        .eq('reference_type', 'batch').eq('reference_id', batch.id)
+        .eq('change_type', 'out').eq('organization_id', organization?.id)
+
+      const totalLedger = (ledgerRows || []).reduce((s, r) => s + Number(r.quantity), 0)
+      for (const lr of ledgerRows || []) {
+        const absDiff = totalLedger > 0
+          ? Math.round((Number(lr.quantity) / totalLedger) * Math.abs(diff))
+          : 0
+        if (absDiff === 0) continue
+
+        // Update stock_ledger out entry to reflect new quantity
+        await supabase.from('stock_ledger')
+          .update({ quantity: Math.max(0, Number(lr.quantity) - (diff < 0 ? -diff : 0) + (diff > 0 ? diff : 0)) })
+          .eq('reference_type', 'batch').eq('reference_id', batch.id)
+          .eq('change_type', 'out').eq('item_name', lr.item_name)
+          .eq('organization_id', organization?.id)
+
+        const { data: stockRow } = await supabase.from('stock')
+          .select('id, quantity').ilike('item_name', lr.item_name)
+          .eq('organization_id', organization?.id).maybeSingle()
+        if (stockRow) {
+          // Reduced count → chicks go back to stock; increased → deduct from stock
+          const newStockQty = diff < 0
+            ? Number(stockRow.quantity) + absDiff
+            : Math.max(0, Number(stockRow.quantity) - absDiff)
+          await supabase.from('stock').update({ quantity: newStockQty }).eq('id', stockRow.id)
+        }
+
+        // Ledger correction entry
+        if (diff < 0) {
+          await ledgerIn({ itemName: lr.item_name, itemType: 'chick', quantity: absDiff, unit: 'birds', referenceType: 'batch_edit', referenceId: batch.id, date: batch.start_date, organizationId: organization?.id })
+        } else {
+          await ledgerOut({ itemName: lr.item_name, itemType: 'chick', quantity: absDiff, unit: 'birds', referenceType: 'batch_edit', referenceId: batch.id, date: batch.start_date, organizationId: organization?.id })
+        }
       }
     }
 
