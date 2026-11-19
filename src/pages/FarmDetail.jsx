@@ -322,6 +322,126 @@ function EditBatchModal({ batch, onClose, onSaved }) {
   )
 }
 
+// ─── Edit Chick Placement Modal ───────────────────────────────────────────────
+
+function EditChickPlacementModal({ cp, onClose, onSaved }) {
+  const { user, organization } = useAuth()
+  const [form, setForm] = useState({
+    quantity:      String(cp.quantity),
+    price_per_chick: String(cp.price_per_chick || ''),
+  })
+  const [saving, setSaving] = useState(false)
+  const [error,  setError]  = useState('')
+
+  function set(f) { return e => setForm(p => ({ ...p, [f]: e.target.value })) }
+
+  async function handleSubmit(e) {
+    e.preventDefault()
+    setSaving(true)
+    const userName = user?.user_metadata?.full_name || user?.email || 'Unknown'
+    const newQty = Number(form.quantity)
+    const newPpc = Number(form.price_per_chick || 0)
+    const apc    = Number(cp.ancillary_per_chick || 0)
+    const newTotalCost = roundCurrency(newQty * (newPpc + apc))
+
+    // 1. Update this batch_chick_purchases row
+    const { error: cpErr } = await supabase.from('batch_chick_purchases').update({
+      quantity:        newQty,
+      price_per_chick: newPpc,
+      total_cost:      newTotalCost,
+      updated_at:      new Date().toISOString(),
+    }).eq('id', cp.id)
+    if (cpErr) { setError(cpErr.message); setSaving(false); return }
+
+    // 2. Sum all rows for this batch → new chick_count
+    const { data: allRows } = await supabase.from('batch_chick_purchases')
+      .select('quantity').eq('batch_id', cp.batch_id)
+    const newBatchCount = (allRows || []).reduce((s, r) => s + Number(r.quantity), 0)
+    const oldBatchCount = Number(cp.batchObj?.chick_count || 0)
+
+    await supabase.from('batches').update({
+      chick_count:     newBatchCount,
+      updated_by_id:   user?.id,
+      updated_by_name: userName,
+      updated_at:      new Date().toISOString(),
+    }).eq('id', cp.batch_id)
+
+    // 3. Adjust stock for the diff
+    const diff = newBatchCount - oldBatchCount
+    if (diff !== 0) {
+      const { data: ledgerRows } = await supabase.from('stock_ledger')
+        .select('item_name, quantity')
+        .eq('reference_type', 'batch').eq('reference_id', cp.batch_id)
+        .eq('change_type', 'out').eq('organization_id', organization?.id)
+
+      const totalLedger = (ledgerRows || []).reduce((s, r) => s + Number(r.quantity), 0)
+      for (const lr of ledgerRows || []) {
+        const absDiff = totalLedger > 0
+          ? Math.round((Number(lr.quantity) / totalLedger) * Math.abs(diff))
+          : 0
+        if (absDiff === 0) continue
+
+        if (diff < 0) {
+          await ledgerIn({ itemName: lr.item_name, itemType: 'chick', quantity: absDiff, unit: 'birds', referenceType: 'batch_edit', referenceId: cp.batch_id, date: cp.batchObj?.start_date, organizationId: organization?.id })
+        } else {
+          await ledgerOut({ itemName: lr.item_name, itemType: 'chick', quantity: absDiff, unit: 'birds', referenceType: 'batch_edit', referenceId: cp.batch_id, date: cp.batchObj?.start_date, organizationId: organization?.id })
+        }
+
+        const { data: stockRow } = await supabase.from('stock')
+          .select('id, quantity').ilike('item_name', lr.item_name)
+          .eq('organization_id', organization?.id).maybeSingle()
+        if (stockRow) {
+          const newStockQty = diff < 0
+            ? Number(stockRow.quantity) + absDiff
+            : Math.max(0, Number(stockRow.quantity) - absDiff)
+          await supabase.from('stock').update({ quantity: newStockQty }).eq('id', stockRow.id)
+        }
+      }
+    }
+
+    setSaving(false)
+    onSaved()
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+      <div className="w-full max-w-md bg-white rounded-2xl shadow-xl p-6">
+        <div className="flex items-center justify-between mb-5">
+          <h2 className="text-lg font-semibold text-gray-800">Edit Chick Placement</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
+        </div>
+        <p className="text-sm text-gray-500 mb-4">
+          Updating quantity will also adjust the batch chick count and stock.
+        </p>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Quantity (birds) *</label>
+            <input required type="number" min="1" value={form.quantity} onChange={set('quantity')}
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Price per Chick (₹)</label>
+            <input type="number" min="0" step="0.01" value={form.price_per_chick} onChange={set('price_per_chick')}
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+          </div>
+          {cp.ancillary_per_chick > 0 && (
+            <p className="text-xs text-gray-400">Ancillary: ₹{Number(cp.ancillary_per_chick).toFixed(2)}/bird (unchanged)</p>
+          )}
+          {error && <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</p>}
+          <div className="flex gap-3 pt-1">
+            <button type="button" onClick={onClose}
+              className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition">Cancel</button>
+            <button type="submit" disabled={saving}
+              className="flex-1 rounded-lg bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 px-4 py-2 text-sm font-semibold text-white transition">
+              {saving ? 'Saving…' : 'Save'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
 // ─── Sale Modal ───────────────────────────────────────────────────────────────
 
 function SaleModal({ activeBatch, vendors, onClose, onSaved }) {
@@ -935,6 +1055,7 @@ export default function FarmDetail() {
   const [editingFarmStock,   setEditingFarmStock]   = useState(null) // {id,item_name,unit,quantity_on_hand}
   const [returnModal,        setReturnModal]        = useState(null)
   const [editingDist,        setEditingDist]        = useState(null)
+  const [editingChickPlacement, setEditingChickPlacement] = useState(null) // batch_chick_purchases row
 
   const [activeTab,        setActiveTab]        = useState('overview')
   const [distFilter,       setDistFilter]       = useState('all')
@@ -974,7 +1095,7 @@ export default function FarmDetail() {
       supabase.from('stock').select('id, item_name, quantity, unit').eq('organization_id', organization?.id).gt('quantity', 0).order('item_name'),
       supabase.from('contacts').select('id, name').eq('is_vendor', true).eq('organization_id', organization?.id).order('name'),
       batchIds.length
-        ? supabase.from('batch_chick_purchases').select('id, batch_id, quantity, price_per_chick, total_cost, procurement_id, procurement:procurement_id(id, invoice_number, date)').in('batch_id', batchIds).eq('organization_id', organization?.id).order('created_at')
+        ? supabase.from('batch_chick_purchases').select('id, batch_id, quantity, price_per_chick, ancillary_per_chick, total_cost, procurement_id, procurement:procurement_id(id, invoice_number, date)').in('batch_id', batchIds).eq('organization_id', organization?.id).order('created_at')
         : Promise.resolve({ data: [] }),
       supabase.from('farm_expenses').select('*').eq('farm_id', id).eq('organization_id', organization?.id),
       supabase.from('farm_expense_returns').select('distribution_id, item_type, total_cost').eq('farm_id', id).eq('organization_id', organization?.id),
@@ -1859,7 +1980,16 @@ export default function FarmDetail() {
                           ) : <span className="text-gray-300">—</span>}
                         </td>
                         <td className="px-4 py-3"></td>
-                        <td className="px-5 py-3"></td>
+                        <td className="px-5 py-3 text-right">
+                          {canEdit && (
+                            <button
+                              onClick={() => setEditingChickPlacement({ ...cp, batchObj })}
+                              className="text-xs text-indigo-600 hover:text-indigo-800 font-medium hover:underline"
+                            >
+                              Edit
+                            </button>
+                          )}
+                        </td>
                       </tr>
                     )
                   })}
@@ -2180,6 +2310,7 @@ export default function FarmDetail() {
       {editModal    && <FarmEditModal  farm={farm}          onClose={() => setEditModal(false)}    onSaved={() => { setEditModal(false);    refresh() }} />}
       {batchModal   && <NewBatchModal farmId={id}          onClose={() => setBatchModal(false)}   onSaved={() => { setBatchModal(false);   refresh() }} />}
       {editingBatch && <EditBatchModal batch={editingBatch} onClose={() => setEditingBatch(null)} onSaved={() => { setEditingBatch(null); refresh() }} />}
+      {editingChickPlacement && <EditChickPlacementModal cp={editingChickPlacement} onClose={() => setEditingChickPlacement(null)} onSaved={() => { setEditingChickPlacement(null); refresh() }} />}
       {visitModal && (
         <AddVisitModal
           farmId={id}
