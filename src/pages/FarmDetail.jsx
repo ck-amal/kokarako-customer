@@ -259,29 +259,23 @@ function EditBatchModal({ batch, onClose, onSaved }) {
           : 0
         if (absDiff === 0) continue
 
-        // Update stock_ledger out entry to reflect new quantity
-        await supabase.from('stock_ledger')
-          .update({ quantity: Math.max(0, Number(lr.quantity) - (diff < 0 ? -diff : 0) + (diff > 0 ? diff : 0)) })
-          .eq('reference_type', 'batch').eq('reference_id', batch.id)
-          .eq('change_type', 'out').eq('item_name', lr.item_name)
-          .eq('organization_id', organization?.id)
-
-        const { data: stockRow } = await supabase.from('stock')
-          .select('id, quantity').ilike('item_name', lr.item_name)
-          .eq('organization_id', organization?.id).maybeSingle()
-        if (stockRow) {
-          // Reduced count → chicks go back to stock; increased → deduct from stock
-          const newStockQty = diff < 0
-            ? Number(stockRow.quantity) + absDiff
-            : Math.max(0, Number(stockRow.quantity) - absDiff)
-          await supabase.from('stock').update({ quantity: newStockQty }).eq('id', stockRow.id)
-        }
-
-        // Ledger correction entry
+        // Add a correction ledger entry for the difference only
+        // (original entry is preserved as historical record)
         if (diff < 0) {
           await ledgerIn({ itemName: lr.item_name, itemType: 'chick', quantity: absDiff, unit: 'birds', referenceType: 'batch_edit', referenceId: batch.id, date: batch.start_date, organizationId: organization?.id })
         } else {
           await ledgerOut({ itemName: lr.item_name, itemType: 'chick', quantity: absDiff, unit: 'birds', referenceType: 'batch_edit', referenceId: batch.id, date: batch.start_date, organizationId: organization?.id })
+        }
+
+        // Adjust stock cache
+        const { data: stockRow } = await supabase.from('stock')
+          .select('id, quantity').ilike('item_name', lr.item_name)
+          .eq('organization_id', organization?.id).maybeSingle()
+        if (stockRow) {
+          const newStockQty = diff < 0
+            ? Number(stockRow.quantity) + absDiff
+            : Math.max(0, Number(stockRow.quantity) - absDiff)
+          await supabase.from('stock').update({ quantity: newStockQty }).eq('id', stockRow.id)
         }
       }
     }
