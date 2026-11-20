@@ -69,8 +69,8 @@ export default function TrialBalance() {
     ] = await Promise.all([
       supabase.from('sales').select('total_amount, final_amount').eq('organization_id', oid).eq('status', 'confirmed').eq('sale_type', 'chicken').gte('date', start).lte('date', end),
       supabase.from('sales').select('total_amount, final_amount, item_quantity, purchase_cost_per_unit').eq('organization_id', oid).eq('status', 'confirmed').eq('sale_type', 'goods').gte('date', start).lte('date', end),
-      supabase.from('farm_expenses').select('item_type, total_cost').eq('organization_id', oid).gte('date', start).lte('date', end),
-      supabase.from('farm_expense_returns').select('item_type, total_cost').eq('organization_id', oid).gte('date', start).lte('date', end),
+      supabase.from('farm_expenses').select('farm_id, item_type, total_cost').eq('organization_id', oid).gte('date', start).lte('date', end),
+      supabase.from('farm_expense_returns').select('farm_id, item_type, total_cost').eq('organization_id', oid).gte('date', start).lte('date', end),
       supabase.from('expenses').select('category, amount').eq('organization_id', oid).gte('date', start).lte('date', end),
       supabase.from('batches').select('id').eq('organization_id', oid).eq('status', 'sold').gte('sold_at', start).lte('sold_at', end),
     ])
@@ -208,6 +208,23 @@ export default function TrialBalance() {
       .filter(f => Math.abs(f.balance) > 0.01)
   }, [farms, gfLedgerAll, gfAdvAll, gfPayAll])
 
+  const farmExpRows = useMemo(() => {
+    const farmMap = Object.fromEntries(farms.map(f => [f.id, f.name]))
+    const expMap = {}
+    for (const r of farmExp) {
+      if (!r.farm_id) continue
+      expMap[r.farm_id] = (expMap[r.farm_id] || 0) + Number(r.total_cost || 0)
+    }
+    for (const r of farmExpRet) {
+      if (!r.farm_id) continue
+      expMap[r.farm_id] = (expMap[r.farm_id] || 0) - Number(r.total_cost || 0)
+    }
+    return Object.entries(expMap)
+      .filter(([, amt]) => amt > 0.01)
+      .map(([farmId, amt]) => ({ id: farmId, name: farmMap[farmId] || farmId, balance: amt }))
+      .sort((a, b) => a.name.localeCompare(b.name))
+  }, [farms, farmExp, farmExpRet])
+
   // ─── Build sections ───────────────────────────────────────────────────────
 
   const sections = useMemo(() => {
@@ -263,7 +280,16 @@ export default function TrialBalance() {
       })
     }
 
-    // 6. FARM ACCOUNTS (growing fee outstanding)
+    // 6. FARM EXPENSES (feed/medicine/other distributed to each farm in FY)
+    if (farmExpRows.length > 0) {
+      list.push({
+        code: 'FEXP',
+        title: 'FARM EXPENSES',
+        items: farmExpRows.map(f => ({ name: f.name, debit: f.balance, credit: 0 })),
+      })
+    }
+
+    // 7. FARM ACCOUNTS (growing fee outstanding — cumulative)
     if (farmRows.length > 0) {
       list.push({
         code: 'FARM',
@@ -276,7 +302,7 @@ export default function TrialBalance() {
       })
     }
 
-    // 7. CASH / BANK
+    // 8. CASH / BANK
     if (accountRows.length > 0) {
       list.push({
         code: 'CASH',
@@ -290,7 +316,7 @@ export default function TrialBalance() {
     }
 
     return list
-  }, [chickenSalesAmt, goodsSalesAmt, ancillaryAmt, chickCostAmt, feedCostAmt, medCostAmt, otherFarmAmt, expByCategory, growingFeeAmt, vendorRows, supplierRows, farmRows, accountRows])
+  }, [chickenSalesAmt, goodsSalesAmt, ancillaryAmt, chickCostAmt, feedCostAmt, medCostAmt, otherFarmAmt, expByCategory, growingFeeAmt, vendorRows, supplierRows, farmExpRows, farmRows, accountRows])
 
   const grandDebit  = useMemo(() => sections.reduce((s, sec) => s + sec.items.reduce((a, i) => a + i.debit,  0), 0), [sections])
   const grandCredit = useMemo(() => sections.reduce((s, sec) => s + sec.items.reduce((a, i) => a + i.credit, 0), 0), [sections])
