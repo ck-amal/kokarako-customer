@@ -65,6 +65,18 @@ export default function OrgSetup() {
     const { data: { user: authUser } } = await supabase.auth.getUser()
     if (!authUser) { setLoading(false); navigate('/login'); return }
 
+    // Guard: prevent duplicate orgs if the user already belongs to one
+    const { data: existing } = await supabase
+      .from('organization_users')
+      .select('organization_id')
+      .eq('user_id', authUser.id)
+      .limit(1)
+    if (existing?.length > 0) {
+      await refreshOrg()
+      navigate('/dashboard')
+      return
+    }
+
     // Create the organisation (defaults to the Free plan); the plan is chosen next.
     const { error: orgErr } = await supabase.rpc('create_organization', {
       p_name:    name.trim(),
