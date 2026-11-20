@@ -45,6 +45,10 @@ export default function TrialBalance() {
   const [allSupPayments, setAllSupPayments] = useState([])
   const [accounts,       setAccounts]       = useState([])
   const [transactions,   setTransactions]   = useState([])
+  const [farms,          setFarms]          = useState([])
+  const [gfLedgerAll,    setGfLedgerAll]    = useState([])
+  const [gfAdvAll,       setGfAdvAll]       = useState([])
+  const [gfPayAll,       setGfPayAll]       = useState([])
 
   useEffect(() => {
     const { label } = fyRange()
@@ -92,6 +96,7 @@ export default function TrialBalance() {
       { data: vs },   { data: aSales }, { data: aCollect },
       { data: sups }, { data: aProc },  { data: aSupPay },
       { data: accts },{ data: txns },
+      { data: fms },  { data: gfla },   { data: gfaa },   { data: gfpa },
     ] = await Promise.all([
       supabase.from('contacts').select('id, name').eq('organization_id', oid).eq('is_vendor', true).order('name'),
       supabase.from('sales').select('vendor_id, total_amount, final_amount').eq('organization_id', oid).eq('status', 'confirmed').lte('date', end),
@@ -101,6 +106,10 @@ export default function TrialBalance() {
       supabase.from('supplier_payments').select('supplier_id, amount').eq('organization_id', oid).lte('payment_date', end),
       supabase.from('accounts').select('id, name, type, opening_balance').eq('organization_id', oid).eq('is_active', true).order('name'),
       supabase.from('transactions').select('account_id, transaction_type, amount').eq('organization_id', oid).lte('transaction_date', end),
+      supabase.from('farms').select('id, name').eq('organization_id', oid).order('name'),
+      supabase.from('growing_fee_ledger').select('farm_id, total_fee').eq('organization_id', oid).lte('created_at', end + 'T23:59:59Z'),
+      supabase.from('growing_fee_advances').select('farm_id, amount').eq('organization_id', oid).lte('payment_date', end),
+      supabase.from('growing_fee_payments').select('farm_id, amount').eq('organization_id', oid).lte('payment_date', end),
     ])
 
     setChickenSales(cs || [])
@@ -118,6 +127,10 @@ export default function TrialBalance() {
     setAllSupPayments(aSupPay || [])
     setAccounts(accts || [])
     setTransactions(txns || [])
+    setFarms(fms || [])
+    setGfLedgerAll(gfla || [])
+    setGfAdvAll(gfaa || [])
+    setGfPayAll(gfpa || [])
     setLoading(false)
   }
 
@@ -185,6 +198,16 @@ export default function TrialBalance() {
     return accounts.map(a => ({ ...a, balance: Number(a.opening_balance || 0) + (txMap[a.id]?.in || 0) - (txMap[a.id]?.out || 0) })).filter(a => Math.abs(a.balance) > 0.01)
   }, [accounts, transactions])
 
+  const farmRows = useMemo(() => {
+    const feeMap = {}; const advMap = {}; const payMap = {}
+    for (const r of gfLedgerAll) feeMap[r.farm_id] = (feeMap[r.farm_id] || 0) + Number(r.total_fee || 0)
+    for (const r of gfAdvAll)    advMap[r.farm_id] = (advMap[r.farm_id] || 0) + Number(r.amount || 0)
+    for (const r of gfPayAll)    payMap[r.farm_id] = (payMap[r.farm_id] || 0) + Number(r.amount || 0)
+    return farms
+      .map(f => ({ ...f, balance: (feeMap[f.id] || 0) - (advMap[f.id] || 0) - (payMap[f.id] || 0) }))
+      .filter(f => Math.abs(f.balance) > 0.01)
+  }, [farms, gfLedgerAll, gfAdvAll, gfPayAll])
+
   // ─── Build sections ───────────────────────────────────────────────────────
 
   const sections = useMemo(() => {
@@ -240,7 +263,20 @@ export default function TrialBalance() {
       })
     }
 
-    // 6. CASH / BANK
+    // 6. FARM ACCOUNTS (growing fee outstanding)
+    if (farmRows.length > 0) {
+      list.push({
+        code: 'FARM',
+        title: 'FARM ACCOUNTS',
+        items: farmRows.map(f => ({
+          name:   f.name,
+          debit:  f.balance < 0 ? Math.abs(f.balance) : 0,
+          credit: f.balance > 0 ? f.balance : 0,
+        })),
+      })
+    }
+
+    // 7. CASH / BANK
     if (accountRows.length > 0) {
       list.push({
         code: 'CASH',
@@ -254,7 +290,7 @@ export default function TrialBalance() {
     }
 
     return list
-  }, [chickenSalesAmt, goodsSalesAmt, ancillaryAmt, chickCostAmt, feedCostAmt, medCostAmt, otherFarmAmt, expByCategory, growingFeeAmt, vendorRows, supplierRows, accountRows])
+  }, [chickenSalesAmt, goodsSalesAmt, ancillaryAmt, chickCostAmt, feedCostAmt, medCostAmt, otherFarmAmt, expByCategory, growingFeeAmt, vendorRows, supplierRows, farmRows, accountRows])
 
   const grandDebit  = useMemo(() => sections.reduce((s, sec) => s + sec.items.reduce((a, i) => a + i.debit,  0), 0), [sections])
   const grandCredit = useMemo(() => sections.reduce((s, sec) => s + sec.items.reduce((a, i) => a + i.credit, 0), 0), [sections])
