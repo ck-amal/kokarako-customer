@@ -96,7 +96,7 @@ export default function TrialBalance() {
       supabase.from('contacts').select('id, name').eq('organization_id', oid).eq('is_vendor', true).order('name'),
       supabase.from('sales').select('vendor_id, total_amount, final_amount').eq('organization_id', oid).eq('status', 'confirmed').lte('date', end),
       supabase.from('cash_collection').select('vendor_id, amount_paid').eq('organization_id', oid).lte('date', end),
-      supabase.from('suppliers').select('id, name, opening_balance').eq('organization_id', oid).order('name'),
+      supabase.from('contacts').select('id, name, opening_balance').eq('organization_id', oid).eq('is_supplier', true).order('name'),
       supabase.from('procurement').select('supplier_id, cost, is_return').eq('organization_id', oid).lte('date', end),
       supabase.from('supplier_payments').select('supplier_id, amount').eq('organization_id', oid).lte('payment_date', end),
       supabase.from('accounts').select('id, name, type, opening_balance').eq('organization_id', oid).eq('is_active', true).order('name'),
