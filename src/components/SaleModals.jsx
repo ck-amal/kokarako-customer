@@ -397,7 +397,7 @@ export function GoodsSaleModal({ vendors, onClose, onSaved }) {
 
       const { error: ledgerErr } = await supabase.from('stock_ledger').insert({
         item_name:       selectedItem.name,
-        item_type:       selectedItem.item_types?.name || '',
+        item_type:       (selectedItem.item_types?.name || '').toLowerCase(),
         change_type:     'out',
         quantity:        qty,
         unit:            selectedItem.unit,
