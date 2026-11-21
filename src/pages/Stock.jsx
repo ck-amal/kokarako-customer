@@ -460,10 +460,10 @@ export default function Stock() {
 
   // ─── Filters ────────────────────────────────────────────────────────────────
 
-  const allTypes = [...new Set(items.map(i => i.item_type))]
+  const allTypes = [...new Set(items.map(i => (i.item_type || '').toLowerCase()))].filter(Boolean)
   const filtered = items.filter(item => {
     const matchSearch = item.item_name.toLowerCase().includes(search.toLowerCase())
-    const matchType   = typeFilter === 'all' || item.item_type === typeFilter
+    const matchType   = typeFilter === 'all' || (item.item_type || '').toLowerCase() === typeFilter
     return matchSearch && matchType
   })
 
