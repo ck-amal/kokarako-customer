@@ -177,15 +177,14 @@ export async function getProcurementLots({ itemId, itemName, itemTypeName, organ
     }
   })
 
-  // Subtract manual stock adjustments (reference_type='adjustment') from FIFO lots.
-  // Adjustments only write to stock_ledger (not to procurement rows), so they are
-  // invisible to the consumed calc above — reduce from oldest lots first.
+  // Subtract stock_ledger OUT entries that bypass procurement tracking
+  // (adjustments and goods_sales) from FIFO lots, oldest-first.
   const itemNames = [...new Set(rawLots.map(l => l.itemName).filter(Boolean))]
   if (itemNames.length > 0) {
     const { data: adjRows } = await supabase.from('stock_ledger')
       .select('item_name, change_type, quantity')
       .eq('organization_id', organizationId)
-      .eq('reference_type', 'adjustment')
+      .in('reference_type', ['adjustment', 'goods_sale'])
       .in('item_name', itemNames)
 
     const netAdjMap = {} // item_name → net out (positive = stock removed via adjustment)
