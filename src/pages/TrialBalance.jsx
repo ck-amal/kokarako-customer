@@ -246,14 +246,6 @@ export default function TrialBalance() {
     ].filter(i => i.credit > 0)
     if (incItems.length > 0) list.push({ code: 'INC', title: 'DIRECT INCOME', items: incItems })
 
-    // 2. DIRECT EXPENSE (chick cost moved to per-farm FEXP section)
-    const expItems = [
-      { name: 'Feed Expenses Account',     debit: feedCostAmt, credit: 0 },
-      { name: 'Medicine Expenses Account', debit: medCostAmt,  credit: 0 },
-      ...(otherFarmAmt > 0 ? [{ name: 'Other Farm Expenses Account', debit: otherFarmAmt, credit: 0 }] : []),
-    ].filter(i => i.debit > 0)
-    if (expItems.length > 0) list.push({ code: 'DEXP', title: 'DIRECT EXPENSE', items: expItems })
-
     // 3. INDIRECT EXPENSE
     const indItems = [
       ...expByCategory.filter(([, amt]) => amt > 0).map(([cat, amt]) => ({ name: cat, debit: amt, credit: 0 })),
