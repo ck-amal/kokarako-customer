@@ -50,6 +50,7 @@ export default function TrialBalance() {
   const [gfLedgerAll,    setGfLedgerAll]    = useState([])
   const [gfAdvAll,       setGfAdvAll]       = useState([])
   const [gfPayAll,       setGfPayAll]       = useState([])
+  const [batchFarmMap,   setBatchFarmMap]   = useState({})
 
   useEffect(() => {
     fetchData(fromDate, asOf)
@@ -75,10 +76,11 @@ export default function TrialBalance() {
     ])
 
     // Chick purchases for batches started in period
-    const { data: stB } = await supabase.from('batches').select('id').eq('organization_id', oid).gte('start_date', start).lte('start_date', end)
+    const { data: stB } = await supabase.from('batches').select('id, farm_id').eq('organization_id', oid).gte('start_date', start).lte('start_date', end)
+    const bfMap = Object.fromEntries((stB || []).map(b => [b.id, b.farm_id]))
     let cpData = []
     if ((stB || []).length > 0) {
-      const { data } = await supabase.from('batch_chick_purchases').select('quantity, price_per_chick, ancillary_per_chick').eq('organization_id', oid).in('batch_id', stB.map(b => b.id))
+      const { data } = await supabase.from('batch_chick_purchases').select('batch_id, quantity, price_per_chick, ancillary_per_chick, total_cost').eq('organization_id', oid).in('batch_id', stB.map(b => b.id))
       cpData = data || []
     }
 
@@ -130,6 +132,7 @@ export default function TrialBalance() {
     setGfLedgerAll(gfla || [])
     setGfAdvAll(gfaa || [])
     setGfPayAll(gfpa || [])
+    setBatchFarmMap(bfMap)
     setLoading(false)
   }
 
@@ -218,11 +221,17 @@ export default function TrialBalance() {
       if (!r.farm_id) continue
       expMap[r.farm_id] = (expMap[r.farm_id] || 0) - Number(r.total_cost || 0)
     }
+    // Add chick purchase cost per farm
+    for (const r of chickPurch) {
+      const farmId = batchFarmMap[r.batch_id]
+      if (!farmId) continue
+      expMap[farmId] = (expMap[farmId] || 0) + Number(r.total_cost || r.price_per_chick * r.quantity || 0)
+    }
     return Object.entries(expMap)
       .filter(([, amt]) => amt > 0.01)
       .map(([farmId, amt]) => ({ id: farmId, name: farmMap[farmId] || farmId, balance: amt }))
       .sort((a, b) => a.name.localeCompare(b.name))
-  }, [farms, farmExp, farmExpRet])
+  }, [farms, farmExp, farmExpRet, chickPurch, batchFarmMap])
 
   // ─── Build sections ───────────────────────────────────────────────────────
 
@@ -237,11 +246,10 @@ export default function TrialBalance() {
     ].filter(i => i.credit > 0)
     if (incItems.length > 0) list.push({ code: 'INC', title: 'DIRECT INCOME', items: incItems })
 
-    // 2. DIRECT EXPENSE
+    // 2. DIRECT EXPENSE (chick cost moved to per-farm FEXP section)
     const expItems = [
-      { name: 'Chick Procurement Account',   debit: chickCostAmt,  credit: 0 },
-      { name: 'Feed Expenses Account',        debit: feedCostAmt,   credit: 0 },
-      { name: 'Medicine Expenses Account',    debit: medCostAmt,    credit: 0 },
+      { name: 'Feed Expenses Account',     debit: feedCostAmt, credit: 0 },
+      { name: 'Medicine Expenses Account', debit: medCostAmt,  credit: 0 },
       ...(otherFarmAmt > 0 ? [{ name: 'Other Farm Expenses Account', debit: otherFarmAmt, credit: 0 }] : []),
     ].filter(i => i.debit > 0)
     if (expItems.length > 0) list.push({ code: 'DEXP', title: 'DIRECT EXPENSE', items: expItems })
