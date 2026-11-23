@@ -18,7 +18,7 @@ const PRINT_STYLE = `
 @media print {
   body * { visibility: hidden !important; }
   #tb-print-area, #tb-print-area * { visibility: visible !important; }
-  #tb-print-area { position: fixed; top: 0; left: 0; width: 100%; }
+  #tb-print-area { position: absolute; top: 0; left: 0; width: 100%; }
   #tb-no-print { display: none !important; }
 }
 `
