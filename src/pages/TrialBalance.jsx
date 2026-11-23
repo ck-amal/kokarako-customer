@@ -25,9 +25,10 @@ const PRINT_STYLE = `
 
 export default function TrialBalance() {
   const { organization } = useAuth()
-  const [loading,  setLoading]  = useState(false)
-  const [asOf,     setAsOf]     = useState(new Date().toISOString().slice(0, 10))
-  const [fyLabel,  setFyLabel]  = useState(fyRange().label)
+  const [loading,   setLoading]   = useState(false)
+  const [fromDate,  setFromDate]  = useState(fyRange().start)
+  const [asOf,      setAsOf]      = useState(new Date().toISOString().slice(0, 10))
+  const [fyLabel,   setFyLabel]   = useState(fyRange().label)
 
   // Raw data
   const [chickenSales,   setChickenSales]   = useState([])
@@ -51,10 +52,8 @@ export default function TrialBalance() {
   const [gfPayAll,       setGfPayAll]       = useState([])
 
   useEffect(() => {
-    const { label } = fyRange()
-    setFyLabel(label)
-    fetchData(fyRange().start, asOf)
-  }, [organization, asOf])
+    fetchData(fromDate, asOf)
+  }, [organization, fromDate, asOf])
 
   async function fetchData(start, end) {
     if (!organization?.id) return
@@ -333,7 +332,10 @@ export default function TrialBalance() {
         {/* Controls */}
         <div id="tb-no-print" className="flex flex-wrap items-center justify-between gap-3 bg-white rounded-2xl border border-gray-100 shadow-sm px-5 py-4">
           <div className="flex items-center gap-3 flex-wrap">
-            <label className="text-sm font-medium text-gray-700">As on:</label>
+            <label className="text-sm font-medium text-gray-700">From:</label>
+            <input type="date" value={fromDate} onChange={e => setFromDate(e.target.value)}
+              className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+            <label className="text-sm font-medium text-gray-700">To:</label>
             <input type="date" value={asOf} onChange={e => setAsOf(e.target.value)}
               className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" />
             {loading && <span className="text-sm text-indigo-500 animate-pulse">Loading…</span>}
@@ -358,7 +360,9 @@ export default function TrialBalance() {
                 {fyLabel}
               </div>
             </div>
-            <p className="text-lg font-bold text-gray-800 mt-3">Trial Balance as on {new Date(asOf).toLocaleDateString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric' })}</p>
+            <p className="text-lg font-bold text-gray-800 mt-3">
+              Trial Balance: {new Date(fromDate).toLocaleDateString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric' })} — {new Date(asOf).toLocaleDateString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric' })}
+            </p>
           </div>
 
           {/* Table */}
