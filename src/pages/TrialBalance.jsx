@@ -51,6 +51,8 @@ export default function TrialBalance() {
   const [gfAdvAll,       setGfAdvAll]       = useState([])
   const [gfPayAll,       setGfPayAll]       = useState([])
   const [batchFarmMap,   setBatchFarmMap]   = useState({})
+  const [farmExpAllAmt,  setFarmExpAllAmt]  = useState(0)
+  const [farmExpRetAllAmt, setFarmExpRetAllAmt] = useState(0)
 
   useEffect(() => {
     fetchData(fromDate, asOf)
@@ -98,6 +100,7 @@ export default function TrialBalance() {
       { data: sups }, { data: aProc },  { data: aSupPay },
       { data: accts },{ data: txns },
       { data: fms },  { data: gfla },   { data: gfaa },   { data: gfpa },
+      { data: fea },  { data: fera },
     ] = await Promise.all([
       supabase.from('contacts').select('id, name').eq('organization_id', oid).eq('is_vendor', true).order('name'),
       supabase.from('sales').select('vendor_id, total_amount, final_amount').eq('organization_id', oid).eq('status', 'confirmed').lte('date', end),
@@ -111,6 +114,8 @@ export default function TrialBalance() {
       supabase.from('growing_fee_ledger').select('farm_id, total_fee').eq('organization_id', oid).lte('created_at', end + 'T23:59:59Z'),
       supabase.from('growing_fee_advances').select('farm_id, amount').eq('organization_id', oid).lte('payment_date', end),
       supabase.from('growing_fee_payments').select('farm_id, amount').eq('organization_id', oid).lte('payment_date', end),
+      supabase.from('farm_expenses').select('total_cost').eq('organization_id', oid).lte('date', end),
+      supabase.from('farm_expense_returns').select('total_cost').eq('organization_id', oid).lte('date', end),
     ])
 
     setChickenSales(cs || [])
@@ -133,6 +138,8 @@ export default function TrialBalance() {
     setGfAdvAll(gfaa || [])
     setGfPayAll(gfpa || [])
     setBatchFarmMap(bfMap)
+    setFarmExpAllAmt((fea || []).reduce((s, r) => s + Number(r.total_cost || 0), 0))
+    setFarmExpRetAllAmt((fera || []).reduce((s, r) => s + Number(r.total_cost || 0), 0))
     setLoading(false)
   }
 
@@ -199,6 +206,15 @@ export default function TrialBalance() {
     }
     return accounts.map(a => ({ ...a, balance: Number(a.opening_balance || 0) + (txMap[a.id]?.in || 0) - (txMap[a.id]?.out || 0) })).filter(a => Math.abs(a.balance) > 0.01)
   }, [accounts, transactions])
+
+  // Stock value = cumulative procurement cost − cumulative distributions cost
+  const cumulProcCost = useMemo(() =>
+    allProcurement.reduce((s, p) => s + (p.is_return ? -1 : 1) * Number(p.cost || 0), 0),
+  [allProcurement])
+
+  const stockValue = useMemo(() =>
+    Math.max(0, cumulProcCost - (farmExpAllAmt - farmExpRetAllAmt)),
+  [cumulProcCost, farmExpAllAmt, farmExpRetAllAmt])
 
   const farmRows = useMemo(() => {
     const feeMap = {}; const advMap = {}; const payMap = {}
@@ -288,6 +304,15 @@ export default function TrialBalance() {
       })
     }
 
+    // 6b. STOCK ACCOUNT (closing inventory — cumulative procurement minus distributions)
+    if (stockValue > 0.01) {
+      list.push({
+        code: 'STCK',
+        title: 'STOCK ACCOUNT',
+        items: [{ name: 'Closing Stock (Inventory)', debit: stockValue, credit: 0 }],
+      })
+    }
+
     // 7. FARM ACCOUNTS (growing fee outstanding — cumulative)
     if (farmRows.length > 0) {
       list.push({
@@ -315,7 +340,7 @@ export default function TrialBalance() {
     }
 
     return list
-  }, [chickenSalesAmt, goodsSalesAmt, ancillaryAmt, chickCostAmt, feedCostAmt, medCostAmt, otherFarmAmt, expByCategory, growingFeeAmt, vendorRows, supplierRows, farmExpRows, farmRows, accountRows])
+  }, [chickenSalesAmt, goodsSalesAmt, ancillaryAmt, chickCostAmt, feedCostAmt, medCostAmt, otherFarmAmt, expByCategory, growingFeeAmt, vendorRows, supplierRows, farmExpRows, stockValue, farmRows, accountRows])
 
   const grandDebit  = useMemo(() => sections.reduce((s, sec) => s + sec.items.reduce((a, i) => a + i.debit,  0), 0), [sections])
   const grandCredit = useMemo(() => sections.reduce((s, sec) => s + sec.items.reduce((a, i) => a + i.credit, 0), 0), [sections])
