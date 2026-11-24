@@ -51,8 +51,9 @@ export default function TrialBalance() {
   const [gfAdvAll,       setGfAdvAll]       = useState([])
   const [gfPayAll,       setGfPayAll]       = useState([])
   const [batchFarmMap,   setBatchFarmMap]   = useState({})
-  const [farmExpAllAmt,  setFarmExpAllAmt]  = useState(0)
-  const [farmExpRetAllAmt, setFarmExpRetAllAmt] = useState(0)
+  const [farmExpAllAmt,     setFarmExpAllAmt]     = useState(0)
+  const [farmExpRetAllAmt,  setFarmExpRetAllAmt]  = useState(0)
+  const [chickPurchCumul,   setChickPurchCumul]   = useState(0)
 
   useEffect(() => {
     fetchData(fromDate, asOf)
@@ -140,6 +141,16 @@ export default function TrialBalance() {
     setBatchFarmMap(bfMap)
     setFarmExpAllAmt((fea || []).reduce((s, r) => s + Number(r.total_cost || 0), 0))
     setFarmExpRetAllAmt((fera || []).reduce((s, r) => s + Number(r.total_cost || 0), 0))
+
+    // Cumulative chick purchases (all batches up to `end`) — for Chick Cost Payable on CR side
+    const { data: allBatches } = await supabase.from('batches').select('id').eq('organization_id', oid).lte('start_date', end)
+    let chickCumulTotal = 0
+    if ((allBatches || []).length > 0) {
+      const { data: cpAll } = await supabase.from('batch_chick_purchases').select('total_cost').eq('organization_id', oid).in('batch_id', allBatches.map(b => b.id))
+      chickCumulTotal = (cpAll || []).reduce((s, r) => s + Number(r.total_cost || 0), 0)
+    }
+    setChickPurchCumul(chickCumulTotal)
+
     setLoading(false)
   }
 
@@ -295,6 +306,15 @@ export default function TrialBalance() {
       })
     }
 
+    // 5b. CHICK COST PAYABLE — CR side matching the chick purchase expense in FEXP
+    if (chickPurchCumul > 0.01) {
+      list.push({
+        code: 'CHKP',
+        title: 'CHICK COST PAYABLE',
+        items: [{ name: 'Chick Supplier Payable', debit: 0, credit: chickPurchCumul }],
+      })
+    }
+
     // 6. FARM EXPENSES (feed/medicine/other distributed to each farm in FY)
     if (farmExpRows.length > 0) {
       list.push({
@@ -340,7 +360,7 @@ export default function TrialBalance() {
     }
 
     return list
-  }, [chickenSalesAmt, goodsSalesAmt, ancillaryAmt, chickCostAmt, feedCostAmt, medCostAmt, otherFarmAmt, expByCategory, growingFeeAmt, vendorRows, supplierRows, farmExpRows, stockValue, farmRows, accountRows])
+  }, [chickenSalesAmt, goodsSalesAmt, ancillaryAmt, chickCostAmt, feedCostAmt, medCostAmt, otherFarmAmt, expByCategory, growingFeeAmt, vendorRows, supplierRows, chickPurchCumul, farmExpRows, stockValue, farmRows, accountRows])
 
   const grandDebit  = useMemo(() => sections.reduce((s, sec) => s + sec.items.reduce((a, i) => a + i.debit,  0), 0), [sections])
   const grandCredit = useMemo(() => sections.reduce((s, sec) => s + sec.items.reduce((a, i) => a + i.credit, 0), 0), [sections])
