@@ -221,21 +221,15 @@ export default function TrialBalance() {
     return accounts.map(a => ({ ...a, balance: Number(a.opening_balance || 0) + (txMap[a.id]?.in || 0) - (txMap[a.id]?.out || 0) })).filter(a => Math.abs(a.balance) > 0.01)
   }, [accounts, transactions])
 
-  // Stock value = actual stock quantity × weighted average procurement cost per unit
-  const stockValue = useMemo(() => {
-    const avgCostMap = {}
-    for (const p of allProcurement) {
-      if (p.is_return || !p.item_name) continue
-      if (!avgCostMap[p.item_name]) avgCostMap[p.item_name] = { totalCost: 0, totalQty: 0 }
-      avgCostMap[p.item_name].totalCost += Number(p.cost || 0)
-      avgCostMap[p.item_name].totalQty  += Number(p.quantity || 0)
-    }
-    return stockItems.reduce((sum, s) => {
-      const d = avgCostMap[s.item_name]
-      const avgCpu = d && d.totalQty > 0 ? d.totalCost / d.totalQty : 0
-      return sum + Number(s.quantity) * avgCpu
-    }, 0)
-  }, [allProcurement, stockItems])
+  // Closing stock (accounting) = cumulative procurement cost − cumulative distribution cost
+  // This is the standard accounting formula: Purchases − Cost of Goods Distributed = Closing Stock
+  const cumulProcCost = useMemo(() =>
+    allProcurement.reduce((s, p) => s + (p.is_return ? -1 : 1) * Number(p.cost || 0), 0),
+  [allProcurement])
+
+  const stockValue = useMemo(() =>
+    Math.max(0, cumulProcCost - (farmExpAllAmt - farmExpRetAllAmt)),
+  [cumulProcCost, farmExpAllAmt, farmExpRetAllAmt])
 
   const farmRows = useMemo(() => {
     const feeMap = {}; const advMap = {}; const payMap = {}
