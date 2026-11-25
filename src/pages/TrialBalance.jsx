@@ -55,6 +55,7 @@ export default function TrialBalance() {
   const [farmExpRetAllAmt,  setFarmExpRetAllAmt]  = useState(0)
   const [chickPurchCumul,   setChickPurchCumul]   = useState(0)
   const [stockItems,        setStockItems]        = useState([])
+  const [chickProcIds,      setChickProcIds]      = useState(new Set())
 
   useEffect(() => {
     fetchData(fromDate, asOf)
@@ -108,7 +109,7 @@ export default function TrialBalance() {
       supabase.from('sales').select('vendor_id, total_amount, final_amount').eq('organization_id', oid).eq('status', 'confirmed').lte('date', end),
       supabase.from('cash_collection').select('vendor_id, amount_paid').eq('organization_id', oid).lte('date', end),
       supabase.from('contacts').select('id, name, opening_balance').eq('organization_id', oid).eq('is_supplier', true).order('name'),
-      supabase.from('procurement').select('supplier_id, cost, is_return, item_name, quantity, cost_per_unit').eq('organization_id', oid).lte('date', end),
+      supabase.from('procurement').select('id, supplier_id, cost, is_return, item_name, quantity, cost_per_unit').eq('organization_id', oid).lte('date', end),
       supabase.from('supplier_payments').select('supplier_id, amount').eq('organization_id', oid).lte('payment_date', end),
       supabase.from('accounts').select('id, name, type, opening_balance').eq('organization_id', oid).eq('is_active', true).order('name'),
       supabase.from('transactions').select('account_id, transaction_type, amount').eq('organization_id', oid).lte('transaction_date', end),
@@ -148,11 +149,14 @@ export default function TrialBalance() {
     // Cumulative chick purchases (all batches up to `end`) — for Chick Cost Payable on CR side
     const { data: allBatches } = await supabase.from('batches').select('id').eq('organization_id', oid).lte('start_date', end)
     let chickCumulTotal = 0
+    const chickProcIdSet = new Set()
     if ((allBatches || []).length > 0) {
-      const { data: cpAll } = await supabase.from('batch_chick_purchases').select('total_cost').eq('organization_id', oid).in('batch_id', allBatches.map(b => b.id))
+      const { data: cpAll } = await supabase.from('batch_chick_purchases').select('total_cost, procurement_id').eq('organization_id', oid).in('batch_id', allBatches.map(b => b.id))
       chickCumulTotal = (cpAll || []).reduce((s, r) => s + Number(r.total_cost || 0), 0)
+      for (const r of (cpAll || [])) { if (r.procurement_id) chickProcIdSet.add(r.procurement_id) }
     }
     setChickPurchCumul(chickCumulTotal)
+    setChickProcIds(chickProcIdSet)
 
     setLoading(false)
   }
@@ -204,12 +208,13 @@ export default function TrialBalance() {
   const supplierRows = useMemo(() => {
     const purchMap = {}; const payMap = {}
     for (const p of allProcurement) {
+      if (chickProcIds.has(p.id)) continue  // chick procurement is tracked under CHKP, not SUP
       const sign = p.is_return ? -1 : 1
       purchMap[p.supplier_id] = (purchMap[p.supplier_id] || 0) + sign * Number(p.cost)
     }
     for (const p of allSupPayments) payMap[p.supplier_id] = (payMap[p.supplier_id] || 0) + Number(p.amount)
     return suppliers.map(s => ({ ...s, balance: Number(s.opening_balance || 0) + (purchMap[s.id] || 0) - (payMap[s.id] || 0) })).filter(s => Math.abs(s.balance) > 0.01)
-  }, [suppliers, allProcurement, allSupPayments])
+  }, [suppliers, allProcurement, allSupPayments, chickProcIds])
 
   const accountRows = useMemo(() => {
     const txMap = {}
@@ -221,11 +226,13 @@ export default function TrialBalance() {
     return accounts.map(a => ({ ...a, balance: Number(a.opening_balance || 0) + (txMap[a.id]?.in || 0) - (txMap[a.id]?.out || 0) })).filter(a => Math.abs(a.balance) > 0.01)
   }, [accounts, transactions])
 
-  // Closing stock (accounting) = cumulative procurement cost − cumulative distribution cost
-  // This is the standard accounting formula: Purchases − Cost of Goods Distributed = Closing Stock
+  // Closing stock = feed/medicine procurement cost − cumulative distribution cost
+  // Chick procurement excluded because chick cost is fully expensed (no inventory remains)
   const cumulProcCost = useMemo(() =>
-    allProcurement.reduce((s, p) => s + (p.is_return ? -1 : 1) * Number(p.cost || 0), 0),
-  [allProcurement])
+    allProcurement
+      .filter(p => !chickProcIds.has(p.id))
+      .reduce((s, p) => s + (p.is_return ? -1 : 1) * Number(p.cost || 0), 0),
+  [allProcurement, chickProcIds])
 
   const stockValue = useMemo(() =>
     Math.max(0, cumulProcCost - (farmExpAllAmt - farmExpRetAllAmt)),
