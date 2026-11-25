@@ -54,6 +54,7 @@ export default function TrialBalance() {
   const [farmExpAllAmt,     setFarmExpAllAmt]     = useState(0)
   const [farmExpRetAllAmt,  setFarmExpRetAllAmt]  = useState(0)
   const [chickPurchCumul,   setChickPurchCumul]   = useState(0)
+  const [stockItems,        setStockItems]        = useState([])
 
   useEffect(() => {
     fetchData(fromDate, asOf)
@@ -101,13 +102,13 @@ export default function TrialBalance() {
       { data: sups }, { data: aProc },  { data: aSupPay },
       { data: accts },{ data: txns },
       { data: fms },  { data: gfla },   { data: gfaa },   { data: gfpa },
-      { data: fea },  { data: fera },
+      { data: fea },  { data: fera },   { data: stk },
     ] = await Promise.all([
       supabase.from('contacts').select('id, name').eq('organization_id', oid).eq('is_vendor', true).order('name'),
       supabase.from('sales').select('vendor_id, total_amount, final_amount').eq('organization_id', oid).eq('status', 'confirmed').lte('date', end),
       supabase.from('cash_collection').select('vendor_id, amount_paid').eq('organization_id', oid).lte('date', end),
       supabase.from('contacts').select('id, name, opening_balance').eq('organization_id', oid).eq('is_supplier', true).order('name'),
-      supabase.from('procurement').select('supplier_id, cost, is_return').eq('organization_id', oid).lte('date', end),
+      supabase.from('procurement').select('supplier_id, cost, is_return, item_name, quantity, cost_per_unit').eq('organization_id', oid).lte('date', end),
       supabase.from('supplier_payments').select('supplier_id, amount').eq('organization_id', oid).lte('payment_date', end),
       supabase.from('accounts').select('id, name, type, opening_balance').eq('organization_id', oid).eq('is_active', true).order('name'),
       supabase.from('transactions').select('account_id, transaction_type, amount').eq('organization_id', oid).lte('transaction_date', end),
@@ -117,6 +118,7 @@ export default function TrialBalance() {
       supabase.from('growing_fee_payments').select('farm_id, amount').eq('organization_id', oid).lte('payment_date', end),
       supabase.from('farm_expenses').select('total_cost').eq('organization_id', oid).lte('date', end),
       supabase.from('farm_expense_returns').select('total_cost').eq('organization_id', oid).lte('date', end),
+      supabase.from('stock').select('item_name, quantity').eq('organization_id', oid).gt('quantity', 0),
     ])
 
     setChickenSales(cs || [])
@@ -141,6 +143,7 @@ export default function TrialBalance() {
     setBatchFarmMap(bfMap)
     setFarmExpAllAmt((fea || []).reduce((s, r) => s + Number(r.total_cost || 0), 0))
     setFarmExpRetAllAmt((fera || []).reduce((s, r) => s + Number(r.total_cost || 0), 0))
+    setStockItems(stk || [])
 
     // Cumulative chick purchases (all batches up to `end`) — for Chick Cost Payable on CR side
     const { data: allBatches } = await supabase.from('batches').select('id').eq('organization_id', oid).lte('start_date', end)
@@ -218,14 +221,21 @@ export default function TrialBalance() {
     return accounts.map(a => ({ ...a, balance: Number(a.opening_balance || 0) + (txMap[a.id]?.in || 0) - (txMap[a.id]?.out || 0) })).filter(a => Math.abs(a.balance) > 0.01)
   }, [accounts, transactions])
 
-  // Stock value = cumulative procurement cost − cumulative distributions cost
-  const cumulProcCost = useMemo(() =>
-    allProcurement.reduce((s, p) => s + (p.is_return ? -1 : 1) * Number(p.cost || 0), 0),
-  [allProcurement])
-
-  const stockValue = useMemo(() =>
-    Math.max(0, cumulProcCost - (farmExpAllAmt - farmExpRetAllAmt)),
-  [cumulProcCost, farmExpAllAmt, farmExpRetAllAmt])
+  // Stock value = actual stock quantity × weighted average procurement cost per unit
+  const stockValue = useMemo(() => {
+    const avgCostMap = {}
+    for (const p of allProcurement) {
+      if (p.is_return || !p.item_name) continue
+      if (!avgCostMap[p.item_name]) avgCostMap[p.item_name] = { totalCost: 0, totalQty: 0 }
+      avgCostMap[p.item_name].totalCost += Number(p.cost || 0)
+      avgCostMap[p.item_name].totalQty  += Number(p.quantity || 0)
+    }
+    return stockItems.reduce((sum, s) => {
+      const d = avgCostMap[s.item_name]
+      const avgCpu = d && d.totalQty > 0 ? d.totalCost / d.totalQty : 0
+      return sum + Number(s.quantity) * avgCpu
+    }, 0)
+  }, [allProcurement, stockItems])
 
   const farmRows = useMemo(() => {
     const feeMap = {}; const advMap = {}; const payMap = {}
