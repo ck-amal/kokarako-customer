@@ -275,16 +275,36 @@ export default function DistributionModal({ farmId, initialBatchId, onClose, onS
           date, organizationId: organization?.id,
         })
 
-        await supabase.from('farm_expenses').insert({
-          farm_id: farmId, batch_id: batchId || null, distribution_id: dist.id,
-          item_name: item.name, item_type: typeName,
-          quantity: qty, unit: item.unit,
-          cost_per_unit: costPerUnit, total_cost: roundCurrency(qty * costPerUnit),
-          extra_cost_per_unit: extraExpensePerUnit,
-          extra_total_cost: extraExpensePerUnit > 0 ? roundCurrency(qty * extraExpensePerUnit) : 0,
-          date, organization_id: organization?.id,
-          created_by_id: user?.id, created_by_name: userName,
-        })
+        const isChick = typeName.includes('chick')
+        if (isChick && batchId) {
+          // Chick distribution: add to batch_chick_purchases (shows in CHKP) and increment batch count
+          // Do NOT create a farm_expenses row — chick cost flows into FEXP via batch_chick_purchases
+          await supabase.from('batch_chick_purchases').insert({
+            batch_id: batchId,
+            organization_id: organization?.id,
+            quantity: qty,
+            price_per_chick: costPerUnit,
+            ancillary_per_chick: 0,
+            total_cost: roundCurrency(qty * costPerUnit),
+            source: 'stock',
+            procurement_id: procId || null,
+          })
+          const { data: batchRow } = await supabase.from('batches').select('chick_count').eq('id', batchId).single()
+          if (batchRow) {
+            await supabase.from('batches').update({ chick_count: Number(batchRow.chick_count || 0) + qty }).eq('id', batchId)
+          }
+        } else {
+          await supabase.from('farm_expenses').insert({
+            farm_id: farmId, batch_id: batchId || null, distribution_id: dist.id,
+            item_name: item.name, item_type: typeName,
+            quantity: qty, unit: item.unit,
+            cost_per_unit: costPerUnit, total_cost: roundCurrency(qty * costPerUnit),
+            extra_cost_per_unit: extraExpensePerUnit,
+            extra_total_cost: extraExpensePerUnit > 0 ? roundCurrency(qty * extraExpensePerUnit) : 0,
+            date, organization_id: organization?.id,
+            created_by_id: user?.id, created_by_name: userName,
+          })
+        }
       }
 
       if (anyFailed) { setError(`Item ${i + 1}: some records failed to save`); setSaving(false); return }
