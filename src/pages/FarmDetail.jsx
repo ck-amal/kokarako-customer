@@ -1091,7 +1091,7 @@ export default function FarmDetail() {
       { data: farmStockData },
       salesResult,
     ] = await Promise.all([
-      supabase.from('distributions').select('*, procurement:procurement_id(id, invoice_number, date), batches(start_date), created_by_name, created_at, updated_by_name, updated_at').eq('farm_id', id).eq('organization_id', organization?.id).order('date', { ascending: false }),
+      supabase.from('distributions').select('*, procurement:procurement_id(id, invoice_number, date), batches(start_date), created_by_name, created_at, updated_by_name, updated_at').eq('farm_id', id).eq('organization_id', organization?.id).order('date', { ascending: true }),
       supabase.from('stock').select('id, item_name, quantity, unit').eq('organization_id', organization?.id).gt('quantity', 0).order('item_name'),
       supabase.from('contacts').select('id, name').eq('is_vendor', true).eq('organization_id', organization?.id).order('name'),
       batchIds.length
