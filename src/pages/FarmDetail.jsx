@@ -1945,56 +1945,62 @@ export default function FarmDetail() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-50">
-                  {/* Chick placement rows */}
-                  {(distFilter === 'all') && allChickProcurement.map(cp => {
-                    const batchObj = batches.find(b => b.id === cp.batch_id)
-                    return (
-                      <tr key={`chick-${cp.id}`} className="hover:bg-indigo-50 transition" style={{ backgroundColor: 'rgba(99,102,241,0.04)' }}>
-                        <td className="px-5 py-3 text-gray-600">{fmtDate(batchObj?.start_date)}</td>
-                        <td className="px-5 py-3 text-xs text-gray-500">
-                          {batchObj?.start_date ? `Batch ${fmtDate(batchObj.start_date)}` : '—'}
-                        </td>
-                        <td className="px-5 py-3">
-                          <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold bg-indigo-100 text-indigo-700">
-                            chick
-                          </span>
-                        </td>
-                        <td className="px-5 py-3 font-medium text-gray-800">Chick Placement</td>
-                        <td className="px-5 py-3 text-right text-gray-700">
-                          {Number(cp.quantity).toLocaleString('en-IN')} birds
-                        </td>
-                        <td className="px-5 py-3 text-right">
-                          <span className="text-gray-300">—</span>
-                        </td>
-                        <td className="px-5 py-3 text-right text-gray-700">
-                          {cp.total_cost > 0 ? formatCurrency(Number(cp.total_cost)) : '—'}
-                        </td>
-                        <td className="px-5 py-3">
-                          {cp.procurement ? (
-                            <button
-                              onClick={() => navigate('/procurement', { state: { openProcurementId: cp.procurement.id } })}
-                              className="text-xs text-indigo-600 hover:text-indigo-800 hover:underline font-medium"
-                            >
-                              {cp.procurement.invoice_number || fmtDate(cp.procurement.date)}
-                            </button>
-                          ) : <span className="text-gray-300">—</span>}
-                        </td>
-                        <td className="px-4 py-3"></td>
-                        <td className="px-5 py-3 text-right">
-                          {canEdit && (
-                            <button
-                              onClick={() => setEditingChickPlacement({ ...cp, batchObj })}
-                              className="text-xs text-indigo-600 hover:text-indigo-800 font-medium hover:underline"
-                            >
-                              Edit
-                            </button>
-                          )}
-                        </td>
-                      </tr>
-                    )
-                  })}
-                  {/* Regular distribution rows */}
-                  {filteredDists.map(d => {
+                  {[
+                    ...(distFilter === 'all' ? allChickProcurement.map(cp => {
+                      const batchObj = batches.find(b => b.id === cp.batch_id)
+                      return { _type: 'chick', _sortDate: batchObj?.start_date || '', batchObj, ...cp }
+                    }) : []),
+                    ...filteredDists.map(d => ({ _type: 'dist', _sortDate: d.date || '', ...d })),
+                  ].sort((a, b) => a._sortDate < b._sortDate ? -1 : a._sortDate > b._sortDate ? 1 : 0)
+                  .map(row => {
+                    if (row._type === 'chick') {
+                      const { batchObj } = row
+                      return (
+                        <tr key={`chick-${row.id}`} className="hover:bg-indigo-50 transition" style={{ backgroundColor: 'rgba(99,102,241,0.04)' }}>
+                          <td className="px-5 py-3 text-gray-600">{fmtDate(batchObj?.start_date)}</td>
+                          <td className="px-5 py-3 text-xs text-gray-500">
+                            {batchObj?.start_date ? `Batch ${fmtDate(batchObj.start_date)}` : '—'}
+                          </td>
+                          <td className="px-5 py-3">
+                            <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold bg-indigo-100 text-indigo-700">
+                              chick
+                            </span>
+                          </td>
+                          <td className="px-5 py-3 font-medium text-gray-800">Chick Placement</td>
+                          <td className="px-5 py-3 text-right text-gray-700">
+                            {Number(row.quantity).toLocaleString('en-IN')} birds
+                          </td>
+                          <td className="px-5 py-3 text-right">
+                            <span className="text-gray-300">—</span>
+                          </td>
+                          <td className="px-5 py-3 text-right text-gray-700">
+                            {row.total_cost > 0 ? formatCurrency(Number(row.total_cost)) : '—'}
+                          </td>
+                          <td className="px-5 py-3">
+                            {row.procurement ? (
+                              <button
+                                onClick={() => navigate('/procurement', { state: { openProcurementId: row.procurement.id } })}
+                                className="text-xs text-indigo-600 hover:text-indigo-800 hover:underline font-medium"
+                              >
+                                {row.procurement.invoice_number || fmtDate(row.procurement.date)}
+                              </button>
+                            ) : <span className="text-gray-300">—</span>}
+                          </td>
+                          <td className="px-4 py-3"></td>
+                          <td className="px-5 py-3 text-right">
+                            {canEdit && (
+                              <button
+                                onClick={() => setEditingChickPlacement({ ...row, batchObj })}
+                                className="text-xs text-indigo-600 hover:text-indigo-800 font-medium hover:underline"
+                              >
+                                Edit
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      )
+                    }
+                    const d = row
                     const returned    = Number(d.returned_quantity || 0)
                     const netQty      = Number(d.quantity) - returned
                     const grossCost   = distCostMap[d.id] || 0

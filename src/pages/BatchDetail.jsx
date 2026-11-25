@@ -1685,46 +1685,51 @@ ${sale.notes ? `<div class="notes"><strong>Notes</strong>${sale.notes}</div>` : 
                 </tr>
               </thead>
               <tbody>
-                {/* Chick placement rows from batch_chick_purchases */}
-                {chickPurchases.map((cp, i) => (
-                  <tr key={`chick-${cp.id}`}
-                    style={{ borderBottom: '1px solid var(--border)', backgroundColor: 'rgba(99,102,241,0.04)' }}>
-                    <td className="px-5 py-3" style={{ color: 'var(--text-muted)' }}>{fmtDate(batch?.start_date)}</td>
-                    <td className="px-5 py-3 font-medium" style={{ color: 'var(--text)' }}>
-                      Chick Placement
-                    </td>
-                    <td className="px-5 py-3">
-                      <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold bg-indigo-100 text-indigo-700">
-                        chick
-                      </span>
-                    </td>
-                    <td className="px-5 py-3 text-right" style={{ color: 'var(--text-muted)' }}>
-                      {Number(cp.quantity).toLocaleString('en-IN')} birds
-                    </td>
-                    <td className="px-5 py-3 text-right">
-                      <span style={{ color: '#d1d5db' }}>—</span>
-                    </td>
-                    {canViewFinancials && (
-                      <td className="px-5 py-3 text-right" style={{ color: 'var(--text-muted)' }}>
-                        {cp.total_cost > 0 ? formatCurrency(Number(cp.total_cost)) : '—'}
-                      </td>
-                    )}
-                    <td className="px-5 py-3">
-                      {cp.procurement ? (
-                        <button
-                          onClick={() => navigate('/procurement', { state: { openProcurementId: cp.procurement.id } })}
-                          className="text-xs text-indigo-600 hover:text-indigo-800 hover:underline font-medium"
-                        >
-                          {cp.procurement.invoice_number || fmtDate(cp.procurement.date)}
-                        </button>
-                      ) : <span style={{ color: '#d1d5db' }}>—</span>}
-                    </td>
-                    <td className="px-4 py-3"></td>
-                    <td className="px-5 py-3"></td>
-                  </tr>
-                ))}
-                {/* Regular distribution rows */}
-                {distributions.map((d, i) => {
+                {[
+                  ...chickPurchases.map(cp => ({ _type: 'chick', _sortDate: batch?.start_date || '', ...cp })),
+                  ...distributions.map(d => ({ _type: 'dist', _sortDate: d.date || '', ...d })),
+                ].sort((a, b) => a._sortDate < b._sortDate ? -1 : a._sortDate > b._sortDate ? 1 : 0)
+                .map((row, i, arr) => {
+                  if (row._type === 'chick') {
+                    return (
+                      <tr key={`chick-${row.id}`}
+                        style={{ borderBottom: '1px solid var(--border)', backgroundColor: 'rgba(99,102,241,0.04)' }}>
+                        <td className="px-5 py-3" style={{ color: 'var(--text-muted)' }}>{fmtDate(batch?.start_date)}</td>
+                        <td className="px-5 py-3 font-medium" style={{ color: 'var(--text)' }}>
+                          Chick Placement
+                        </td>
+                        <td className="px-5 py-3">
+                          <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold bg-indigo-100 text-indigo-700">
+                            chick
+                          </span>
+                        </td>
+                        <td className="px-5 py-3 text-right" style={{ color: 'var(--text-muted)' }}>
+                          {Number(row.quantity).toLocaleString('en-IN')} birds
+                        </td>
+                        <td className="px-5 py-3 text-right">
+                          <span style={{ color: '#d1d5db' }}>—</span>
+                        </td>
+                        {canViewFinancials && (
+                          <td className="px-5 py-3 text-right" style={{ color: 'var(--text-muted)' }}>
+                            {row.total_cost > 0 ? formatCurrency(Number(row.total_cost)) : '—'}
+                          </td>
+                        )}
+                        <td className="px-5 py-3">
+                          {row.procurement ? (
+                            <button
+                              onClick={() => navigate('/procurement', { state: { openProcurementId: row.procurement.id } })}
+                              className="text-xs text-indigo-600 hover:text-indigo-800 hover:underline font-medium"
+                            >
+                              {row.procurement.invoice_number || fmtDate(row.procurement.date)}
+                            </button>
+                          ) : <span style={{ color: '#d1d5db' }}>—</span>}
+                        </td>
+                        <td className="px-4 py-3"></td>
+                        <td className="px-5 py-3"></td>
+                      </tr>
+                    )
+                  }
+                  const d = row
                   const returned    = Number(d.returned_quantity || 0)
                   const returnCredit= returnCostByDist[d.id] || 0
                   const expRow      = expenses.find(e => e.distribution_id === d.id)
@@ -1733,7 +1738,7 @@ ${sale.notes ? `<div class="notes"><strong>Notes</strong>${sale.notes}</div>` : 
                   const canReturn   = Number(d.quantity) - returned > 0
                   return (
                     <tr key={d.id}
-                      style={{ borderBottom: i < distributions.length - 1 ? '1px solid var(--border)' : 'none' }}>
+                      style={{ borderBottom: i < arr.length - 1 ? '1px solid var(--border)' : 'none' }}>
                       <td className="px-5 py-3" style={{ color: 'var(--text-muted)' }}>{fmtDate(d.date)}</td>
                       <td className="px-5 py-3 font-medium" style={{ color: 'var(--text)' }}>{d.item_name}</td>
                       <td className="px-5 py-3">
